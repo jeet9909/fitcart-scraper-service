@@ -18,7 +18,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="FitCart Scraper Service",
-    version="0.1.0",
+    version="0.2.0",
     description="Fetch normalized product details through Bright Data MCP.",
     lifespan=lifespan,
 )
@@ -39,7 +39,7 @@ async def health() -> HealthResponse:
 
 @app.get("/ready", response_model=HealthResponse, tags=["system"])
 async def ready(settings: Settings = Depends(get_runtime_settings)) -> HealthResponse:
-    if not settings.openai_api_key.get_secret_value() or not settings.brightdata_api_token.get_secret_value():
+    if not settings.brightdata_api_token.get_secret_value():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Service is not configured")
     return HealthResponse()
 
@@ -57,4 +57,3 @@ async def scrape_product(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except ScrapeProviderError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-

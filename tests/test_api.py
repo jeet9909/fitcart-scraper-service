@@ -163,6 +163,27 @@ def test_gallery_requires_bearer_token() -> None:
         app.dependency_overrides.clear()
 
 
+def test_swagger_double_bearer_format_is_accepted() -> None:
+    session_settings = Settings(
+        openai_api_key="test",
+        brightdata_api_token="test",
+        anonymous_token_secret="a-secure-test-secret-that-is-long-enough",
+    )
+    app.dependency_overrides[get_runtime_settings] = lambda: session_settings
+    try:
+        with TestClient(app) as client:
+            session = client.post("/v1/sessions/anonymous").json()
+            response = client.get(
+                "/v1/gallery",
+                headers={"Authorization": f"Bearer Bearer {session['access_token']}"},
+            )
+        # Authentication succeeded; gallery configuration is intentionally absent.
+        assert response.status_code == 503
+        assert response.json()["detail"].startswith("Try-on service is not configured")
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_tryon_rejects_non_image_upload() -> None:
     session_settings = Settings(
         openai_api_key="test",

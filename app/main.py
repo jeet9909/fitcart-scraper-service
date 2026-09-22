@@ -41,7 +41,10 @@ def get_tryon_service(request: Request) -> TryOnService:
     return request.app.state.tryon
 
 
-bearer = HTTPBearer(auto_error=False)
+bearer = HTTPBearer(
+    auto_error=False,
+    description="Paste the access_token returned by POST /v1/sessions/anonymous. The API also accepts a value beginning with 'Bearer '.",
+)
 
 
 def get_anonymous_user(
@@ -50,7 +53,10 @@ def get_anonymous_user(
 ) -> str:
     if not credentials or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required")
-    return verify_anonymous_token(credentials.credentials, settings)
+    token = credentials.credentials.strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    return verify_anonymous_token(token, settings)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["system"])

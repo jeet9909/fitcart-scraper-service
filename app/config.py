@@ -4,6 +4,9 @@ from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+OFFICIAL_PRODUCT_SHARE_HOSTS = ("amzn.in", "fkrt.it")
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -16,11 +19,14 @@ class Settings(BaseSettings):
 
     @property
     def allowed_product_hosts(self) -> tuple[str, ...]:
-        return tuple(
+        configured_hosts = tuple(
             host.strip().lower()
             for host in self.allowed_product_hosts_csv.split(",")
             if host.strip()
         )
+        # Official store share links use separate redirect domains. Keep these
+        # accepted even when a production allowlist is configured.
+        return tuple(dict.fromkeys((*configured_hosts, *OFFICIAL_PRODUCT_SHARE_HOSTS)))
 
     @property
     def brightdata_mcp_url(self) -> str:

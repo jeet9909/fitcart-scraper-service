@@ -69,7 +69,10 @@ def _resolve_share_url(url: str) -> str:
         except Exception as exc:
             last_error = exc
     logger.warning("Could not resolve product share URL host=%s error=%s", host, last_error)
-    raise ScrapeProviderError("The product share URL could not be resolved")
+    raise ScrapeProviderError(
+        "The product share URL is invalid, expired, or unavailable",
+        code="invalid_share_link",
+    )
 
 
 def _parse_product(markdown: str, url: str) -> ProductData:

@@ -56,7 +56,12 @@ async def scrape_product(
     except UnsafeUrlError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except ScrapeProviderError as exc:
+        response_status = (
+            status.HTTP_400_BAD_REQUEST
+            if exc.code == "invalid_share_link"
+            else status.HTTP_502_BAD_GATEWAY
+        )
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
+            status_code=response_status,
             detail={"code": exc.code, "message": str(exc)},
         ) from exc

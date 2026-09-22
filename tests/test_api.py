@@ -41,6 +41,11 @@ class FailingScraper:
         raise ScrapeProviderError("Product scraping failed")
 
 
+class InvalidShareLinkScraper:
+    async def scrape(self, url: str, country: str) -> ScrapeResponse:
+        raise ScrapeProviderError("The product share URL is invalid", code="invalid_share_link")
+
+
 def test_health() -> None:
     with TestClient(app) as client:
         assert client.get("/health").json() == {"status": "ok"}
@@ -107,3 +112,19 @@ def test_amazon_share_url_is_accepted_with_configured_allowlist(monkeypatch) -> 
 def test_security_wrapper_is_removed() -> None:
     wrapped = "SECURITY NOTICE\n=====UNTRUSTED_abc123_BEGIN=====\n# Product title\n₹599\n=====UNTRUSTED_abc123_END====="
     assert _strip_security_wrapper(wrapped) == "# Product title\n₹599"
+
+
+def test_invalid_share_link_becomes_bad_request(monkeypatch) -> None:
+    monkeypatch.setattr("app.security.socket.getaddrinfo", lambda *_: [(None, None, None, None, ("13.32.151.88", 0))])
+    app.dependency_overrides[get_runtime_settings] = lambda: SETTINGS
+    app.dependency_overrides[get_scraper] = lambda: InvalidShareLinkScraper()
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/v1/products/scrape",
+                json={"url": "https://amzn.in/d/expired", "country": "IN"},
+            )
+        assert response.status_code == 400
+        assert response.json()["detail"]["code"] == "invalid_share_link"
+    finally:
+        app.dependency_overrides.clear()

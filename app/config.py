@@ -12,6 +12,7 @@ class Settings(BaseSettings):
 
     openai_api_key: SecretStr
     brightdata_api_token: SecretStr
+    brightdata_zone: str = Field(default="agent_unlocker", validation_alias="BRIGHTDATA_ZONE")
     openai_model: str = "gpt-4o"
     scrape_timeout_seconds: float = Field(default=60, gt=0, le=180)
     max_concurrent_scrapes: int = Field(default=5, ge=1, le=100)
@@ -24,8 +25,6 @@ class Settings(BaseSettings):
             for host in self.allowed_product_hosts_csv.split(",")
             if host.strip()
         )
-        # Official store share links use separate redirect domains. Keep these
-        # accepted even when a production allowlist is configured.
         return tuple(dict.fromkeys((*configured_hosts, *OFFICIAL_PRODUCT_SHARE_HOSTS)))
 
     @property

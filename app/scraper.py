@@ -4,6 +4,7 @@ import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
 
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
@@ -14,9 +15,16 @@ from app.models import Money, ProductData, ScrapeResponse
 
 logger = logging.getLogger(__name__)
 
+SHARE_HOST_DESTINATIONS = {
+    "amzn.in": ("amazon.in",),
+    "fkrt.it": ("flipkart.com",),
+}
+
 
 class ScrapeProviderError(RuntimeError):
-    pass
+    def __init__(self, message: str, code: str = "provider_failed") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 def _amount(value: str) -> float | None:
@@ -26,13 +34,51 @@ def _amount(value: str) -> float | None:
         return None
 
 
+def _strip_security_wrapper(text: str) -> str:
+    match = re.search(
+        r"=====UNTRUSTED_([A-Za-z0-9]+)_BEGIN=====\s*(.*?)\s*=====UNTRUSTED_\1_END=====",
+        text,
+        flags=re.DOTALL,
+    )
+    return match.group(2).strip() if match else text.strip()
+
+
+def _is_allowed_destination(host: str, allowed_roots: tuple[str, ...]) -> bool:
+    return any(host == root or host.endswith(f".{root}") for root in allowed_roots)
+
+
+def _resolve_share_url(url: str) -> str:
+    host = (urlsplit(url).hostname or "").lower()
+    allowed_roots = SHARE_HOST_DESTINATIONS.get(host)
+    if not allowed_roots:
+        return url
+
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; FitCartScraper/1.0)"}
+    last_error: Exception | None = None
+    for method in ("HEAD", "GET"):
+        try:
+            request = Request(url, headers=headers, method=method)
+            with urlopen(request, timeout=12) as response:
+                resolved = response.geturl()
+            resolved_host = (urlsplit(resolved).hostname or "").lower()
+            if not _is_allowed_destination(resolved_host, allowed_roots):
+                raise ScrapeProviderError("Product share link redirected to an unexpected domain")
+            return resolved
+        except ScrapeProviderError:
+            raise
+        except Exception as exc:
+            last_error = exc
+    logger.warning("Could not resolve product share URL host=%s error=%s", host, last_error)
+    raise ScrapeProviderError("The product share URL could not be resolved")
+
+
 def _parse_product(markdown: str, url: str) -> ProductData:
     lines = [line.strip() for line in markdown.splitlines() if line.strip()]
     headings = [re.sub(r"^#+\s*", "", line).strip() for line in lines if re.match(r"^#{1,3}\s+", line)]
     title = headings[0] if headings else (lines[0][:300] if lines else urlsplit(url).hostname or "Product")
 
-    matches = re.findall(r"(?:₹|INR\s*)\s*([0-9][0-9,]*(?:\.\d{1,2})?)", markdown, flags=re.IGNORECASE)
-    prices = [amount for raw in matches if (amount := _amount(raw)) is not None]
+    price_matches = re.findall(r"(?:₹|INR\s*)\s*([0-9][0-9,]*(?:\.\d{1,2})?)", markdown, flags=re.IGNORECASE)
+    prices = [amount for raw in price_matches if (amount := _amount(raw)) is not None]
     price = prices[0] if prices else None
     original = next((candidate for candidate in prices[1:] if price is not None and candidate > price), None)
     discount = round((original - price) / original * 100, 2) if price is not None and original else None
@@ -89,7 +135,11 @@ class BrightDataScraper:
         del country
         try:
             async with self._semaphore:
-                content = await asyncio.wait_for(self._fetch_page(url), timeout=self.settings.scrape_timeout_seconds)
+                resolved_url = await asyncio.to_thread(_resolve_share_url, url)
+                content = await asyncio.wait_for(self._fetch_page(resolved_url), timeout=self.settings.scrape_timeout_seconds)
+                content = _strip_security_wrapper(content)
+                if "page not found" in content.lower() and len(content) < 500:
+                    raise ScrapeProviderError("The product page was not found")
                 product = _parse_product(content, url)
         except TimeoutError as exc:
             raise ScrapeProviderError("Product scraping timed out") from exc

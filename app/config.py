@@ -25,6 +25,8 @@ class Settings(BaseSettings):
             for host in self.allowed_product_hosts_csv.split(",")
             if host.strip()
         )
+        # Official store share links use separate redirect domains. Keep these
+        # accepted even when a production allowlist is configured.
         return tuple(dict.fromkeys((*configured_hosts, *OFFICIAL_PRODUCT_SHARE_HOSTS)))
 
     @property

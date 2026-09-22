@@ -18,7 +18,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="FitCart Scraper Service",
-    version="0.2.0",
+    version="0.1.0",
     description="Fetch normalized product details through Bright Data MCP.",
     lifespan=lifespan,
 )
@@ -56,4 +56,7 @@ async def scrape_product(
     except UnsafeUrlError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except ScrapeProviderError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc

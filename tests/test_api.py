@@ -12,9 +12,14 @@ from app.config import Settings
 from app.main import app, get_runtime_settings, get_scraper
 from app.models import Money, ProductData, ScrapeResponse
 from app.scraper import ScrapeProviderError
+from app.scraper import _strip_security_wrapper
 
 
-SETTINGS = Settings(openai_api_key="test", brightdata_api_token="test")
+SETTINGS = Settings(
+    openai_api_key="test",
+    brightdata_api_token="test",
+    ALLOWED_PRODUCT_HOSTS="example.com",
+)
 
 
 class FakeScraper:
@@ -73,5 +78,32 @@ def test_provider_failure_becomes_bad_gateway(monkeypatch) -> None:
         with TestClient(app) as client:
             response = client.post("/v1/products/scrape", json={"url": "https://example.com/product/1", "country": "IN"})
         assert response.status_code == 502
+        assert response.json()["detail"]["code"] == "provider_failed"
     finally:
         app.dependency_overrides.clear()
+
+
+def test_amazon_share_url_is_accepted_with_configured_allowlist(monkeypatch) -> None:
+    monkeypatch.setattr("app.security.socket.getaddrinfo", lambda *_: [(None, None, None, None, ("13.32.151.88", 0))])
+    restricted_settings = Settings(
+        openai_api_key="test",
+        brightdata_api_token="test",
+        ALLOWED_PRODUCT_HOSTS="amazon.in,myntra.com",
+    )
+    app.dependency_overrides[get_runtime_settings] = lambda: restricted_settings
+    app.dependency_overrides[get_scraper] = lambda: FakeScraper()
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/v1/products/scrape",
+                json={"url": "https://amzn.in/d/OdACsne", "country": "IN"},
+            )
+        assert response.status_code == 200
+        assert response.json()["data"]["source_url"] == "https://amzn.in/d/OdACsne"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_security_wrapper_is_removed() -> None:
+    wrapped = "SECURITY NOTICE\n=====UNTRUSTED_abc123_BEGIN=====\n# Product title\n₹599\n=====UNTRUSTED_abc123_END====="
+    assert _strip_security_wrapper(wrapped) == "# Product title\n₹599"

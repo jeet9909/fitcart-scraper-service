@@ -1,11 +1,16 @@
 import asyncio
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 
 from openai import OpenAI
 
 from app.config import Settings
 from app.models import ProductData, ScrapeResponse
+
+
+logger = logging.getLogger(__name__)
 
 
 class ScrapeProviderError(RuntimeError):
@@ -57,6 +62,17 @@ class BrightDataScraper:
             raise ScrapeProviderError("The provider returned no product data")
         return response.output_parsed
 
+    def _safe_error_text(self, exc: Exception) -> str:
+        message = str(exc)
+        secrets = (
+            self.settings.openai_api_key.get_secret_value(),
+            self.settings.brightdata_api_token.get_secret_value(),
+        )
+        for secret in secrets:
+            if secret:
+                message = message.replace(secret, "[REDACTED]")
+        return message[:2000]
+
     async def scrape(self, url: str, country: str) -> ScrapeResponse:
         try:
             async with self._semaphore:
@@ -65,10 +81,17 @@ class BrightDataScraper:
                     timeout=self.settings.scrape_timeout_seconds,
                 )
         except TimeoutError as exc:
+            logger.warning("Product scraping timed out host=%s", urlsplit(url).hostname)
             raise ScrapeProviderError("Product scraping timed out") from exc
         except ScrapeProviderError:
             raise
         except Exception as exc:
+            logger.error(
+                "Product scraping failed host=%s type=%s error=%s",
+                urlsplit(url).hostname,
+                type(exc).__name__,
+                self._safe_error_text(exc),
+            )
             raise ScrapeProviderError("Product scraping failed") from exc
 
         return ScrapeResponse(data=product, scraped_at=self.clock())

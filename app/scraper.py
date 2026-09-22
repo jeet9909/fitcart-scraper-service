@@ -79,5 +79,5 @@ class BrightDataScraper:
             raise
         except Exception as exc:
             logger.error("Product scraping failed host=%s type=%s error=%s", urlsplit(url).hostname, type(exc).__name__, self._safe_error_text(exc))
-            raise ScrapeProviderError("Product scraping failed") from exc
+            raise ScrapeProviderError(f"Product scraping failed: {self._safe_error_text(exc)}") from exc
         return ScrapeResponse(data=product, scraped_at=self.clock())

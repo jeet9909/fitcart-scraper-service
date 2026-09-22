@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,14 +12,15 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o"
     scrape_timeout_seconds: float = Field(default=60, gt=0, le=180)
     max_concurrent_scrapes: int = Field(default=5, ge=1, le=100)
-    allowed_product_hosts: tuple[str, ...] = ()
+    allowed_product_hosts_csv: str = Field(default="", validation_alias="ALLOWED_PRODUCT_HOSTS")
 
-    @field_validator("allowed_product_hosts", mode="before")
-    @classmethod
-    def parse_hosts(cls, value: object) -> object:
-        if isinstance(value, str):
-            return tuple(host.strip().lower() for host in value.split(",") if host.strip())
-        return value
+    @property
+    def allowed_product_hosts(self) -> tuple[str, ...]:
+        return tuple(
+            host.strip().lower()
+            for host in self.allowed_product_hosts_csv.split(",")
+            if host.strip()
+        )
 
     @property
     def brightdata_mcp_url(self) -> str:
@@ -30,4 +31,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()  # type: ignore[call-arg]
-

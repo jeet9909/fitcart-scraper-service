@@ -1,0 +1,2 @@
+"""FitCart product scraper service."""
+

@@ -1,0 +1,23 @@
+[project]
+name = "fitcart-scraper-service"
+version = "0.1.0"
+description = "Deployable product scraping API for FitCart using OpenAI and Bright Data MCP"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.116,<1",
+  "openai>=1.109,<2",
+  "pydantic-settings>=2.10,<3",
+  "uvicorn[standard]>=0.35,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.28,<1",
+  "pytest>=8.4,<9",
+  "pytest-asyncio>=1.1,<2",
+]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+

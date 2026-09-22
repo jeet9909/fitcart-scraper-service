@@ -1,29 +1,36 @@
-# FitCart Scraper Service
+# FitCart Product and Virtual Try-On API
 
-Standalone product scraping API for FitCart. It uses the OpenAI Responses API to connect to the hosted Bright Data MCP server and returns a stable, validated product schema.
+Standalone product scraping and Gemini virtual try-on API for FitCart. Product pages are fetched through Bright Data MCP. Try-on images are generated with Gemini and saved in a private Supabase gallery.
 
 ## What this repository contains
 
 - `POST /v1/products/scrape` for a single product-share URL
-- Bright Data MCP integration through the OpenAI Python SDK
+- `POST /v1/sessions/anonymous` for a private anonymous gallery token
+- `POST /v1/try-ons` with a full-body photo plus a product upload, image URL, or scraped product-page URL
+- `GET /v1/gallery` for that anonymous user's private gallery
+- Direct Bright Data MCP integration without OpenAI credits
+- Gemini multi-reference image editing and private Supabase Storage
 - Normalized price, inventory, images, variants, rating, seller, and product metadata
 - Public-URL validation to block localhost/private-network targets
 - Concurrency and timeout controls
 - Docker deployment and automated tests
 
-It intentionally does **not** contain image generation, authentication, carts, affiliate redirects, or the FitCart frontend.
+It intentionally does not contain carts, affiliate redirects, or the FitCart frontend.
 
 ## Configure
 
-Create a Bright Data API token and an OpenAI API key. Copy `.env.example` to `.env` and set:
+Copy `.env.example` to `.env` and configure Bright Data, Gemini, Supabase, and a random token secret:
 
 ```env
 OPENAI_API_KEY=...
 BRIGHTDATA_API_TOKEN=...
-OPENAI_MODEL=gpt-4o
+GEMINI_API_KEY=...
+SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=...
+ANONYMOUS_TOKEN_SECRET=...
 ```
 
-Never commit `.env` or paste secrets into source files.
+Run `supabase/schema.sql` once in the Supabase SQL Editor. Keep the bucket private. Never expose the service-role key to a browser or mobile client.
 
 ## Run locally
 

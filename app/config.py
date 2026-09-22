@@ -10,8 +10,17 @@ OFFICIAL_PRODUCT_SHARE_HOSTS = ("amzn.in", "fkrt.it")
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    openai_api_key: SecretStr
+    openai_api_key: SecretStr = SecretStr("")
     brightdata_api_token: SecretStr
+    gemini_api_key: SecretStr = SecretStr("")
+    gemini_image_model: str = "gemini-3.1-flash-image"
+    supabase_url: str = ""
+    supabase_service_role_key: SecretStr = SecretStr("")
+    supabase_storage_bucket: str = "fitcart-tryons"
+    anonymous_token_secret: SecretStr = SecretStr("")
+    anonymous_token_days: int = Field(default=30, ge=1, le=365)
+    gallery_signed_url_seconds: int = Field(default=3600, ge=60, le=86400)
+    max_image_bytes: int = Field(default=10_000_000, ge=100_000, le=20_000_000)
     brightdata_zone: str = Field(default="agent_unlocker", validation_alias="BRIGHTDATA_ZONE")
     openai_model: str = "gpt-4o"
     scrape_timeout_seconds: float = Field(default=60, gt=0, le=180)

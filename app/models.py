@@ -44,3 +44,26 @@ class ScrapeResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
 
+
+class AnonymousSessionResponse(BaseModel):
+    anonymous_user_id: str
+    access_token: str
+    token_type: Literal["bearer"] = "bearer"
+    expires_at: datetime
+
+
+class GalleryItem(BaseModel):
+    id: str
+    anonymous_user_id: str
+    category: str
+    product_source: str
+    product_url: str | None = None
+    person_image_url: str
+    product_image_url: str
+    result_image_url: str
+    model: str
+    created_at: datetime
+
+
+class GalleryResponse(BaseModel):
+    items: list[GalleryItem]

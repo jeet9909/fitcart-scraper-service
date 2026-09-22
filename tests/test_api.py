@@ -1,5 +1,8 @@
 import os
+from io import BytesIO
 from datetime import UTC, datetime
+
+from PIL import Image
 
 os.environ.setdefault("OPENAI_API_KEY", "test")
 os.environ.setdefault("BRIGHTDATA_API_TOKEN", "test")
@@ -9,10 +12,11 @@ for proxy_variable in ("ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy", "HT
 from fastapi.testclient import TestClient
 
 from app.config import Settings
-from app.main import app, get_runtime_settings, get_scraper
+from app.main import app, get_runtime_settings, get_scraper, get_tryon_service
 from app.models import Money, ProductData, ScrapeResponse
 from app.scraper import ScrapeProviderError
 from app.scraper import _strip_security_wrapper
+from app.tryon import TryOnService
 
 
 SETTINGS = Settings(
@@ -128,3 +132,66 @@ def test_invalid_share_link_becomes_bad_request(monkeypatch) -> None:
         assert response.json()["detail"]["code"] == "invalid_share_link"
     finally:
         app.dependency_overrides.clear()
+
+
+def test_anonymous_session_returns_signed_token() -> None:
+    session_settings = Settings(
+        openai_api_key="test",
+        brightdata_api_token="test",
+        anonymous_token_secret="a-secure-test-secret-that-is-long-enough",
+    )
+    app.dependency_overrides[get_runtime_settings] = lambda: session_settings
+    app.dependency_overrides[get_tryon_service] = lambda: TryOnService(session_settings)
+    try:
+        with TestClient(app) as client:
+            response = client.post("/v1/sessions/anonymous")
+        assert response.status_code == 200
+        assert response.json()["token_type"] == "bearer"
+        assert response.json()["anonymous_user_id"]
+        assert response.json()["access_token"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_gallery_requires_bearer_token() -> None:
+    app.dependency_overrides[get_runtime_settings] = lambda: SETTINGS
+    try:
+        with TestClient(app) as client:
+            response = client.get("/v1/gallery")
+        assert response.status_code == 401
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_tryon_rejects_non_image_upload() -> None:
+    session_settings = Settings(
+        openai_api_key="test",
+        brightdata_api_token="test",
+        gemini_api_key="test",
+        supabase_url="https://example.supabase.co",
+        supabase_service_role_key="test",
+        anonymous_token_secret="a-secure-test-secret-that-is-long-enough",
+    )
+    app.dependency_overrides[get_runtime_settings] = lambda: session_settings
+    app.dependency_overrides[get_tryon_service] = lambda: TryOnService(session_settings)
+    try:
+        with TestClient(app) as client:
+            session = client.post("/v1/sessions/anonymous").json()
+            response = client.post(
+                "/v1/try-ons",
+                headers={"Authorization": f"Bearer {session['access_token']}"},
+                files={
+                    "person_image": ("person.txt", b"not an image", "text/plain"),
+                    "product_image": ("product.png", _tiny_png(), "image/png"),
+                },
+                data={"category": "shirt"},
+            )
+        assert response.status_code == 400
+    finally:
+        app.dependency_overrides.clear()
+
+
+def _tiny_png() -> bytes:
+    buffer = BytesIO()
+    Image.new("RGB", (2, 2), "white").save(buffer, format="PNG")
+    return buffer.getvalue()

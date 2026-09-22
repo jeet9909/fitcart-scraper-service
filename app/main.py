@@ -1,11 +1,15 @@
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+import httpx
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.anonymous_auth import create_anonymous_session, verify_anonymous_token
 from app.config import Settings, get_settings
-from app.models import HealthResponse, ScrapeRequest, ScrapeResponse
+from app.models import AnonymousSessionResponse, GalleryItem, GalleryResponse, HealthResponse, ScrapeRequest, ScrapeResponse
 from app.scraper import BrightDataScraper, ScrapeProviderError
 from app.security import UnsafeUrlError, validate_public_url
+from app.tryon import TryOnError, TryOnService, validate_image
 
 
 @asynccontextmanager
@@ -13,13 +17,14 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     app.state.settings = settings
     app.state.scraper = BrightDataScraper(settings)
+    app.state.tryon = TryOnService(settings)
     yield
 
 
 app = FastAPI(
-    title="FitCart Scraper Service",
-    version="0.1.0",
-    description="Fetch normalized product details through Bright Data MCP.",
+    title="FitCart Product and Virtual Try-On API",
+    version="0.3.0",
+    description="Scrape product details and create private Gemini virtual try-on images.",
     lifespan=lifespan,
 )
 
@@ -30,6 +35,22 @@ def get_scraper(request: Request) -> BrightDataScraper:
 
 def get_runtime_settings(request: Request) -> Settings:
     return request.app.state.settings
+
+
+def get_tryon_service(request: Request) -> TryOnService:
+    return request.app.state.tryon
+
+
+bearer = HTTPBearer(auto_error=False)
+
+
+def get_anonymous_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+    settings: Settings = Depends(get_runtime_settings),
+) -> str:
+    if not credentials or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required")
+    return verify_anonymous_token(credentials.credentials, settings)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["system"])
@@ -65,3 +86,66 @@ async def scrape_product(
             status_code=response_status,
             detail={"code": exc.code, "message": str(exc)},
         ) from exc
+
+
+@app.post("/v1/sessions/anonymous", response_model=AnonymousSessionResponse, tags=["sessions"])
+async def create_session(settings: Settings = Depends(get_runtime_settings)) -> AnonymousSessionResponse:
+    return create_anonymous_session(settings)
+
+
+@app.post("/v1/try-ons", response_model=GalleryItem, tags=["virtual try-on"])
+async def create_tryon(
+    person_image: UploadFile = File(..., description="Front-facing, full-body user photo"),
+    product_image: UploadFile | None = File(None, description="Direct product image upload"),
+    product_page_url: str | None = Form(None, description="Product page/share URL to scrape for its image"),
+    product_image_url: str | None = Form(None, description="Direct public product image URL"),
+    category: str = Form("clothing"),
+    country: str = Form("IN"),
+    user_id: str = Depends(get_anonymous_user),
+    settings: Settings = Depends(get_runtime_settings),
+    scraper: BrightDataScraper = Depends(get_scraper),
+    service: TryOnService = Depends(get_tryon_service),
+) -> GalleryItem:
+    try:
+        service.ensure_configured()
+        sources = sum(value is not None for value in (product_image, product_page_url, product_image_url))
+        if sources != 1:
+            raise TryOnError("Provide exactly one product source: product_image, product_page_url, or product_image_url", 400)
+        person = validate_image(await person_image.read(), person_image.content_type, settings.max_image_bytes)
+        source_url: str | None = None
+        if product_image is not None:
+            product = validate_image(await product_image.read(), product_image.content_type, settings.max_image_bytes)
+            product_source = "upload"
+        elif product_image_url is not None:
+            source_url = validate_public_url(product_image_url)
+            product = await service.fetch_image(source_url)
+            product_source = "image_url"
+        else:
+            source_url = validate_public_url(product_page_url or "", settings.allowed_product_hosts)
+            scraped = await scraper.scrape(source_url, country.upper())
+            if not scraped.data.image_urls:
+                raise TryOnError("The scraped product page did not provide a usable product image; upload the product image directly", 422)
+            product = await service.fetch_image(validate_public_url(scraped.data.image_urls[0]))
+            product_source = "scraped_url"
+        result = await service.generate(person, product, category.strip()[:80] or "clothing")
+        return await service.save(user_id, person, product, result, category.strip()[:80] or "clothing", product_source, source_url)
+    except UnsafeUrlError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ScrapeProviderError as exc:
+        raise HTTPException(status_code=502, detail={"code": exc.code, "message": str(exc)}) from exc
+    except TryOnError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Could not download the product image") from exc
+
+
+@app.get("/v1/gallery", response_model=GalleryResponse, tags=["virtual try-on"])
+async def get_gallery(
+    user_id: str = Depends(get_anonymous_user),
+    service: TryOnService = Depends(get_tryon_service),
+) -> GalleryResponse:
+    try:
+        service.ensure_configured()
+        return GalleryResponse(items=await service.list_gallery(user_id))
+    except TryOnError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc

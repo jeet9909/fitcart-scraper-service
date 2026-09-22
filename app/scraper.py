@@ -62,6 +62,8 @@ class BrightDataScraper:
             timeout=self.settings.scrape_timeout_seconds,
             follow_redirects=True,
         )
+        if response.is_error:
+            logger.error("Bright Data request rejected status=%s body=%s", response.status_code, response.text[:1000])
         response.raise_for_status()
         return response.text
 

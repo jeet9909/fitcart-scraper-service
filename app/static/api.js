@@ -3,7 +3,7 @@
 
 const SESSION_KEY = 'fitcart-anonymous-session-v1';
 // Empty when the UI is served by the API itself; set by static/config.js to the
-// Supabase Edge Function URL when the UI is hosted on GitHub Pages.
+// Render API URL when the UI is hosted on GitHub Pages.
 const API_BASE = String(window.FITCART_API_BASE || '').replace(/\/+$/, '');
 const apiUrl = path => `${API_BASE}${path}`;
 

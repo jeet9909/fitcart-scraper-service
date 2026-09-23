@@ -130,6 +130,12 @@ def test_amazon_share_url_is_accepted_with_configured_allowlist(monkeypatch) -> 
         app.dependency_overrides.clear()
 
 
+def test_empty_allowlist_accepts_any_public_host() -> None:
+    assert Settings(brightdata_api_token="test", ALLOWED_PRODUCT_HOSTS="").allowed_product_hosts == ()
+    configured = Settings(brightdata_api_token="test", ALLOWED_PRODUCT_HOSTS="amazon.in").allowed_product_hosts
+    assert configured == ("amazon.in", "amzn.in", "fkrt.it")
+
+
 def test_security_wrapper_is_removed() -> None:
     wrapped = "SECURITY NOTICE\n=====UNTRUSTED_abc123_BEGIN=====\n# Product title\n₹599\n=====UNTRUSTED_abc123_END====="
     assert _strip_security_wrapper(wrapped) == "# Product title\n₹599"

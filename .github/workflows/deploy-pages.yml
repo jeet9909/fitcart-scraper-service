@@ -21,27 +21,23 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
+      # Public URL of the Render web service, e.g. https://fitcart-scraper-service.onrender.com
       FITCART_API_BASE: ${{ vars.FITCART_API_BASE }}
-      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Build site
         run: |
-          api_base="${FITCART_API_BASE:-}"
-          if [ -z "$api_base" ] && [ -n "$SUPABASE_PROJECT_REF" ]; then
-            api_base="https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/fitcart-api"
-          fi
-          if [ -z "$api_base" ]; then
-            echo "::error::Set the SUPABASE_PROJECT_REF (or FITCART_API_BASE) repository variable so the UI knows where the API lives."
+          if [ -z "$FITCART_API_BASE" ]; then
+            echo "::error::Set the FITCART_API_BASE repository variable to your Render service URL (Settings → Secrets and variables → Actions → Variables)."
             exit 1
           fi
           mkdir -p _site/static
           cp app/static/index.html _site/index.html
           cp app/static/api.js _site/static/api.js
-          printf "window.FITCART_API_BASE = %s;\n" "$(jq -Rn --arg v "$api_base" '$v')" > _site/static/config.js
+          printf "window.FITCART_API_BASE = %s;\n" "$(jq -Rn --arg v "${FITCART_API_BASE%/}" '$v')" > _site/static/config.js
           touch _site/.nojekyll
-          echo "UI will call: $api_base"
+          echo "UI will call: $FITCART_API_BASE"
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

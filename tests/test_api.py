@@ -294,9 +294,41 @@ def test_scraper_falls_back_to_html_when_markdown_has_no_images() -> None:
         async def _fetch_page(self, url: str) -> str:
             return "# Linen Shirt\n₹1,299\nAdd to cart"
 
+        async def _fetch_html_via_unlocker(self, url: str) -> str | None:
+            return None
+
         async def _fetch_html_directly(self, url: str) -> str | None:
             return '<meta property="og:image" content="https://m.media-amazon.com/images/I/61shirt.jpg">'
 
     result = asyncio.run(StubScraper(SETTINGS).scrape("https://www.amazon.in/dp/B0TEST", "IN"))
     assert result.data.image_urls == ["https://m.media-amazon.com/images/I/61shirt.jpg"]
     assert result.data.price.amount == 1299
+
+
+def test_scraper_uses_unlocker_html_before_direct_fetch() -> None:
+    import asyncio
+
+    from app.scraper import BrightDataScraper
+
+    class StubScraper(BrightDataScraper):
+        async def _fetch_page(self, url: str) -> str:
+            return "# Roadster Men Shirt\nRs. 699"
+
+        async def _fetch_html_via_unlocker(self, url: str) -> str | None:
+            return (
+                '<script>window.__myx = {"images":[{"src":"http:\\/\\/assets.myntassets.com\\/'
+                'h_($height),q_($qualityPercentage),w_($width)\\/v1\\/assets\\/images\\/9\\/shirt.jpg"}]}</script>'
+            )
+
+        async def _fetch_html_directly(self, url: str) -> str | None:
+            raise AssertionError("direct fetch should not run")
+
+    result = asyncio.run(StubScraper(SETTINGS).scrape("https://www.myntra.com/shirts/roadster/9/buy", "IN"))
+    assert result.data.image_urls == ["https://assets.myntassets.com/h_1440,q_90,w_1080/v1/assets/images/9/shirt.jpg"]
+
+
+def test_amazon_captcha_image_is_not_a_product_image() -> None:
+    from app.scraper import _images_from_html
+
+    page = '<img src="https://images-na.ssl-images-amazon.com/captcha/abc/Captcha_xyz.jpg">'
+    assert _images_from_html(page, "https://www.amazon.in/dp/B0TEST") == []

@@ -90,7 +90,7 @@ PRODUCT_IMAGE_HOSTS = (
 )
 JUNK_IMAGE_MARKERS = (
     "sprite", "icon", "logo", "pixel", "badge", "banner", "placeholder", "loading",
-    "transparent", "/nav-", "prime_", "star", "rating", "avatar", "flag", "1x1",
+    "transparent", "/nav-", "prime_", "star", "rating", "avatar", "flag", "1x1", "captcha",
 )
 IMAGE_EXTENSION = r"\.(?:jpe?g|png|webp)"
 # Myntra serves templated image URLs such as
@@ -127,6 +127,8 @@ def _rank_images(urls: list[str]) -> list[str]:
 
 
 def _extract_image_urls(text: str, base_url: str | None = None) -> list[str]:
+    # Page JSON often escapes slashes: "https:\/\/assets.myntassets.com\/...".
+    text = text.replace("\\/", "/").replace("\\u002F", "/").replace("\\u002f", "/")
     raw: list[str] = []
     # Markdown images, including titles: ![alt](url "title") and Myntra templates with parentheses.
     raw += re.findall(r"!\[[^\]]*\]\(\s*<?((?:https?:)?//(?:[^\s()<>]|\([^\s()]*\))+)", text)
@@ -251,6 +253,31 @@ class BrightDataScraper:
     async def _fetch_page(self, url: str) -> str:
         return await self._call_brightdata("scrape_as_markdown", url) or ""
 
+    async def _fetch_html_via_unlocker(self, url: str) -> str | None:
+        """Fetch raw page HTML through the Bright Data Web Unlocker REST API.
+
+        Uses the same API token as the MCP server, whose hosted default zone is
+        ``mcp_unlocker``. Store bot walls block the direct fetch from Render.
+        """
+        token = self.settings.brightdata_api_token.get_secret_value()
+        zones = list(dict.fromkeys(zone for zone in (self.settings.brightdata_zone, "mcp_unlocker") if zone))
+        async with httpx.AsyncClient(timeout=self.settings.scrape_timeout_seconds) as client:
+            for zone in zones:
+                response = await client.post(
+                    "https://api.brightdata.com/request",
+                    headers={"Authorization": f"Bearer {token}"},
+                    json={"zone": zone, "url": url, "format": "raw", "country": "in"},
+                )
+                if response.status_code < 400 and response.text.strip():
+                    return response.text
+                logger.info(
+                    "Bright Data unlocker zone=%s status=%s error=%s",
+                    zone,
+                    response.status_code,
+                    (response.headers.get("x-brd-error") or response.text)[:200].replace(token, "[REDACTED]"),
+                )
+        return None
+
     async def _fetch_html_directly(self, url: str) -> str | None:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36",
@@ -270,6 +297,7 @@ class BrightDataScraper:
     async def _fallback_images(self, url: str) -> list[str]:
         """Find product images in the page HTML when the markdown has none."""
         for source, fetch in (
+            ("brightdata_unlocker", lambda: self._fetch_html_via_unlocker(url)),
             ("direct", lambda: self._fetch_html_directly(url)),
             ("brightdata_html", lambda: self._call_brightdata("scrape_as_html", url, optional=True)),
         ):
@@ -279,8 +307,8 @@ class BrightDataScraper:
                 logger.info("Image fallback %s failed host=%s type=%s", source, urlsplit(url).hostname, type(exc).__name__)
                 continue
             images = _images_from_html(_strip_security_wrapper(page), url) if page else []
+            logger.info("Image fallback %s host=%s html_bytes=%d images=%d", source, urlsplit(url).hostname, len(page or ""), len(images))
             if images:
-                logger.info("Image fallback %s found %d images host=%s", source, len(images), urlsplit(url).hostname)
                 return images
         return []
 

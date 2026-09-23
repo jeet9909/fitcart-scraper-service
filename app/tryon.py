@@ -6,7 +6,7 @@ from urllib.parse import quote
 from uuid import uuid4
 
 import httpx
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app.config import Settings
 from app.models import GalleryItem
@@ -34,6 +34,23 @@ def validate_image(data: bytes, content_type: str | None, max_bytes: int) -> tup
     if mime not in ALLOWED_IMAGE_TYPES:
         raise TryOnError("Only JPEG, PNG, and WebP images are supported", 400)
     return data, mime, ALLOWED_IMAGE_TYPES[mime]
+
+
+MODEL_IMAGE_MAX_SIDE = 1536
+
+
+def _prepare_for_model(data: bytes, mime: str) -> tuple[bytes, str]:
+    """Downscale large photos and apply EXIF rotation so requests stay well under Gemini's inline size limit."""
+    with Image.open(io.BytesIO(data)) as image:
+        image = ImageOps.exif_transpose(image)
+        if max(image.size) <= MODEL_IMAGE_MAX_SIDE and len(data) <= 4_000_000:
+            return data, mime
+        image.thumbnail((MODEL_IMAGE_MAX_SIDE, MODEL_IMAGE_MAX_SIDE))
+        if image.mode not in ("RGB", "L"):
+            image = image.convert("RGB")
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=90)
+    return buffer.getvalue(), "image/jpeg"
 
 
 class TryOnService:
@@ -70,22 +87,28 @@ class TryOnService:
             "Do not alter unrelated clothing or add accessories. Return one full-body front-view image with no text or collage."
         )
         payload = {
-            "model": self.settings.gemini_image_model,
-            "input": [
-                {"type": "text", "text": prompt},
-                {"type": "image", "mime_type": person[1], "data": base64.b64encode(person[0]).decode()},
-                {"type": "image", "mime_type": product[1], "data": base64.b64encode(product[0]).decode()},
-            ],
-            "response_format": {"type": "image", "mime_type": "image/png", "aspect_ratio": "3:4", "image_size": "1K"},
+            "contents": [{
+                "role": "user",
+                "parts": [
+                    {"text": prompt},
+                    self._inline_part(person),
+                    self._inline_part(product),
+                ],
+            }],
+            "generationConfig": {
+                "responseModalities": ["TEXT", "IMAGE"],
+                "imageConfig": {"aspectRatio": "3:4"},
+            },
         }
+        model = quote(self.settings.gemini_image_model.removeprefix("models/"), safe="-._")
         async with httpx.AsyncClient(timeout=180) as client:
             response = await client.post(
-                "https://generativelanguage.googleapis.com/v1beta/interactions",
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
                 headers={"x-goog-api-key": self.settings.gemini_api_key.get_secret_value()},
                 json=payload,
             )
         if response.status_code >= 400:
-            raise TryOnError(f"Gemini image generation failed ({response.status_code})")
+            raise TryOnError(f"Gemini image generation failed ({response.status_code}): {self._error_message(response)}")
         image = self._find_image(response.json())
         if not image:
             raise TryOnError("Gemini returned no generated image")
@@ -93,13 +116,29 @@ class TryOnService:
             data = base64.b64decode(image["data"], validate=True)
         except (KeyError, ValueError) as exc:
             raise TryOnError("Gemini returned an invalid image") from exc
-        return validate_image(data, image.get("mime_type", "image/png"), 20_000_000)
+        return validate_image(data, image.get("mime_type") or image.get("mimeType") or "image/png", 20_000_000)
+
+    @staticmethod
+    def _inline_part(image: tuple[bytes, str, str]) -> dict[str, Any]:
+        data, mime = _prepare_for_model(image[0], image[1])
+        return {"inline_data": {"mime_type": mime, "data": base64.b64encode(data).decode()}}
+
+    @staticmethod
+    def _error_message(response: httpx.Response) -> str:
+        try:
+            message = response.json().get("error", {}).get("message")
+        except ValueError:
+            message = None
+        return (message or response.text or "unknown error").strip()[:300]
 
     def _find_image(self, value: Any) -> dict[str, Any] | None:
         if isinstance(value, dict):
             if isinstance(value.get("data"), str) and str(value.get("mime_type", "")).startswith("image/"):
                 return value
-            for key in ("output_image", "outputs", "output", "content", "steps"):
+            inline = value.get("inlineData") or value.get("inline_data")
+            if isinstance(inline, dict) and isinstance(inline.get("data"), str):
+                return {"data": inline["data"], "mime_type": inline.get("mimeType") or inline.get("mime_type")}
+            for key in ("candidates", "parts", "output_image", "outputs", "output", "content", "steps"):
                 found = self._find_image(value.get(key)) if key in value else None
                 if found: return found
         elif isinstance(value, list):

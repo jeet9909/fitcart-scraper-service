@@ -390,3 +390,34 @@ def test_tryon_reuses_scraped_image_without_scraping_again() -> None:
         assert saved == {"product_source": "image_url", "product_url": "https://www.example.com/p/shirt"}
     finally:
         app.dependency_overrides.clear()
+
+
+def test_gemini_usage_requires_admin_token() -> None:
+    admin_settings = Settings(brightdata_api_token="test", admin_api_token="admin-secret")
+    app.dependency_overrides[get_runtime_settings] = lambda: admin_settings
+    try:
+        with TestClient(app) as client:
+            assert client.get("/v1/admin/gemini/usage").status_code == 401
+            assert client.get("/v1/admin/gemini/usage", headers={"X-Admin-Token": "wrong"}).status_code == 401
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_gemini_usage_reports_key_check_and_counters() -> None:
+    admin_settings = Settings(brightdata_api_token="test", admin_api_token="admin-secret")
+    service = TryOnService(admin_settings)
+    service.usage.requests, service.usage.succeeded, service.usage.total_tokens = 3, 2, 4500
+    app.dependency_overrides[get_runtime_settings] = lambda: admin_settings
+    app.dependency_overrides[get_tryon_service] = lambda: service
+    try:
+        with TestClient(app) as client:
+            response = client.get("/v1/admin/gemini/usage", headers={"X-Admin-Token": "admin-secret"})
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 200
+    body = response.json()
+    assert body["key_valid"] is False
+    assert body["check_message"] == "GEMINI_API_KEY is not configured"
+    assert body["remaining_credits"] is None
+    assert body["since_server_start"]["requests"] == 3
+    assert body["since_server_start"]["total_tokens"] == 4500

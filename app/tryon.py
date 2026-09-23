@@ -1,6 +1,7 @@
 import base64
 import io
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
 from uuid import uuid4
@@ -9,7 +10,7 @@ import httpx
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app.config import Settings
-from app.models import GalleryItem
+from app.models import GalleryItem, GeminiUsageResponse, GeminiUsageSinceStart
 
 
 ALLOWED_IMAGE_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
@@ -53,6 +54,19 @@ def _prepare_for_model(data: bytes, mime: str) -> tuple[bytes, str]:
     return buffer.getvalue(), "image/jpeg"
 
 
+@dataclass
+class GeminiUsage:
+    """Usage counted by this process. Resets when the server restarts."""
+    since: datetime = field(default_factory=lambda: datetime.now(UTC))
+    requests: int = 0
+    succeeded: int = 0
+    failed: int = 0
+    prompt_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    last_error: str | None = None
+
+
 class TryOnService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -60,6 +74,7 @@ class TryOnService:
             "apikey": settings.supabase_service_role_key.get_secret_value(),
             "Authorization": f"Bearer {settings.supabase_service_role_key.get_secret_value()}",
         }
+        self.usage = GeminiUsage()
 
     def ensure_configured(self) -> None:
         missing = []
@@ -100,23 +115,91 @@ class TryOnService:
                 "imageConfig": {"aspectRatio": "3:4"},
             },
         }
-        model = quote(self.settings.gemini_image_model.removeprefix("models/"), safe="-._")
+        self.usage.requests += 1
         async with httpx.AsyncClient(timeout=180) as client:
             response = await client.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                f"{self._model_url()}:generateContent",
                 headers={"x-goog-api-key": self.settings.gemini_api_key.get_secret_value()},
                 json=payload,
             )
         if response.status_code >= 400:
-            raise TryOnError(f"Gemini image generation failed ({response.status_code}): {self._error_message(response)}")
-        image = self._find_image(response.json())
+            self.usage.failed += 1
+            self.usage.last_error = f"{response.status_code}: {self._error_message(response)}"
+            raise TryOnError(f"Gemini image generation failed ({self.usage.last_error})")
+        body = response.json()
+        self._record_tokens(body.get("usageMetadata") or {})
+        image = self._find_image(body)
         if not image:
+            self.usage.failed += 1
+            self.usage.last_error = "Gemini returned no generated image"
             raise TryOnError("Gemini returned no generated image")
+        self.usage.succeeded += 1
         try:
             data = base64.b64decode(image["data"], validate=True)
         except (KeyError, ValueError) as exc:
             raise TryOnError("Gemini returned an invalid image") from exc
         return validate_image(data, image.get("mime_type") or image.get("mimeType") or "image/png", 20_000_000)
+
+    def _model_url(self) -> str:
+        model = quote(self.settings.gemini_image_model.removeprefix("models/"), safe="-._")
+        return f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
+
+    def _record_tokens(self, metadata: dict[str, Any]) -> None:
+        prompt = int(metadata.get("promptTokenCount") or 0)
+        output = int(metadata.get("candidatesTokenCount") or 0)
+        self.usage.prompt_tokens += prompt
+        self.usage.output_tokens += output
+        self.usage.total_tokens += int(metadata.get("totalTokenCount") or prompt + output)
+
+    async def gemini_usage(self) -> GeminiUsageResponse:
+        """Checks the key against the configured model and reports usage this server has recorded.
+
+        Gemini API keys cannot read remaining quota or billing balance, so that is left to AI Studio.
+        """
+        key_valid = model_available = False
+        message: str | None = None
+        if not self.settings.gemini_api_key.get_secret_value():
+            message = "GEMINI_API_KEY is not configured"
+        else:
+            try:
+                async with httpx.AsyncClient(timeout=20) as client:
+                    response = await client.get(self._model_url(), headers={"x-goog-api-key": self.settings.gemini_api_key.get_secret_value()})
+                if response.status_code < 400:
+                    key_valid = model_available = True
+                else:
+                    message = f"{response.status_code}: {self._error_message(response)}"
+                    # 404 means the key was accepted but the model ID is unknown.
+                    key_valid = response.status_code == 404
+            except httpx.HTTPError as exc:
+                message = f"Could not reach Gemini: {exc.__class__.__name__}"
+        usage = self.usage
+        return GeminiUsageResponse(
+            model=self.settings.gemini_image_model,
+            key_valid=key_valid,
+            model_available=model_available,
+            check_message=message,
+            total_saved_tryons=await self._count_saved_tryons(),
+            since_server_start=GeminiUsageSinceStart(
+                since=usage.since, requests=usage.requests, succeeded=usage.succeeded, failed=usage.failed,
+                prompt_tokens=usage.prompt_tokens, output_tokens=usage.output_tokens, total_tokens=usage.total_tokens,
+                last_error=usage.last_error,
+            ),
+        )
+
+    async def _count_saved_tryons(self) -> int | None:
+        if not self.settings.supabase_url or not self.settings.supabase_service_role_key.get_secret_value():
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                response = await client.head(
+                    f"{self.settings.supabase_url.rstrip('/')}/rest/v1/try_on_gallery",
+                    headers={**self._headers, "Prefer": "count=exact", "Range": "0-0"},
+                    params={"select": "id"},
+                )
+        except httpx.HTTPError:
+            return None
+        total = response.headers.get("content-range", "").rpartition("/")[2]
+        return int(total) if response.status_code < 400 and total.isdigit() else None
 
     @staticmethod
     def _inline_part(image: tuple[bytes, str, str]) -> dict[str, Any]:

@@ -29,6 +29,7 @@ GEMINI_API_KEY=...
 SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=...
 ANONYMOUS_TOKEN_SECRET=...
+ADMIN_API_TOKEN=...
 ```
 
 Run `supabase/schema.sql` once in the Supabase SQL Editor. Keep the bucket private. Never expose the service-role key to a browser or mobile client.
@@ -66,7 +67,7 @@ The Render service also serves the UI at its own root URL.
 
 ### Render (API)
 
-Configure every variable from `.env.example` in the Render service's **Environment** tab: `BRIGHTDATA_API_TOKEN`, `GEMINI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ANONYMOUS_TOKEN_SECRET`, and optionally `ALLOWED_PRODUCT_HOSTS`. Render redeploys automatically on every push to `main` when auto-deploy is on. Check `https://<your-service>.onrender.com/health`.
+Configure every variable from `.env.example` in the Render service's **Environment** tab: `BRIGHTDATA_API_TOKEN`, `GEMINI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ANONYMOUS_TOKEN_SECRET`, `ADMIN_API_TOKEN`, and optionally `ALLOWED_PRODUCT_HOSTS`. Render redeploys automatically on every push to `main` when auto-deploy is on. Check `https://<your-service>.onrender.com/health`.
 
 ### Supabase (storage)
 
@@ -93,6 +94,14 @@ docker run --rm -p 8000:8000 --env-file .env fitcart-scraper-service
 - Put this service behind FitCart authentication and per-user rate limiting before public launch.
 - The endpoint maps provider/timeout failures to HTTP `502` and invalid or unsafe URLs to `400`.
 - Product imports consume Bright Data requests and virtual try-ons consume Gemini requests. Monitor both provider dashboards.
+
+## Gemini usage check
+
+```bash
+curl -H "X-Admin-Token: $ADMIN_API_TOKEN" https://<your-service>.onrender.com/v1/admin/gemini/usage
+```
+
+Returns whether the Gemini key and model work, the all-time number of saved try-ons, and requests and tokens counted since the server last started. Gemini API keys cannot read their remaining quota or credit balance, so `remaining_credits` is always `null`; check [Google AI Studio usage](https://aistudio.google.com/usage) and your Cloud billing for that.
 
 ## Tests
 

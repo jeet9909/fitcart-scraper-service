@@ -67,3 +67,28 @@ class GalleryItem(BaseModel):
 
 class GalleryResponse(BaseModel):
     items: list[GalleryItem]
+
+
+class GeminiUsageSinceStart(BaseModel):
+    since: datetime
+    requests: int
+    succeeded: int
+    failed: int
+    prompt_tokens: int
+    output_tokens: int
+    total_tokens: int
+    last_error: str | None = None
+
+
+class GeminiUsageResponse(BaseModel):
+    model: str
+    key_valid: bool
+    model_available: bool
+    check_message: str | None = None
+    remaining_credits: None = Field(
+        default=None,
+        description="Always null: Gemini API keys cannot read their remaining quota or billing balance. Check Google AI Studio.",
+    )
+    quota_dashboard_url: str = "https://aistudio.google.com/usage"
+    total_saved_tryons: int | None = Field(default=None, description="Successful try-ons saved in the Supabase gallery, all time")
+    since_server_start: GeminiUsageSinceStart

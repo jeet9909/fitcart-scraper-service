@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
 
+import hmac
+
 import httpx
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -9,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.anonymous_auth import create_anonymous_session, verify_anonymous_token
 from app.config import Settings, get_settings
-from app.models import AnonymousSessionResponse, GalleryItem, GalleryResponse, HealthResponse, ScrapeRequest, ScrapeResponse
+from app.models import AnonymousSessionResponse, GalleryItem, GalleryResponse, GeminiUsageResponse, HealthResponse, ScrapeRequest, ScrapeResponse
 from app.scraper import BrightDataScraper, ScrapeProviderError
 from app.security import UnsafeUrlError, validate_public_url
 from app.tryon import TryOnError, TryOnService, validate_image
@@ -40,7 +42,7 @@ app.add_middleware(
     ],
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "X-Admin-Token"],
 )
 
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -183,3 +185,23 @@ async def get_gallery(
         return GalleryResponse(items=await service.list_gallery(user_id))
     except TryOnError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+def require_admin(
+    x_admin_token: str | None = Header(None, description="Must match the ADMIN_API_TOKEN environment variable"),
+    settings: Settings = Depends(get_runtime_settings),
+) -> None:
+    expected = settings.admin_api_token.get_secret_value()
+    if not expected:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="ADMIN_API_TOKEN is not configured")
+    if not x_admin_token or not hmac.compare_digest(x_admin_token, expected):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin token")
+
+
+@app.get("/v1/admin/gemini/usage", response_model=GeminiUsageResponse, tags=["system"], dependencies=[Depends(require_admin)])
+async def gemini_usage(service: TryOnService = Depends(get_tryon_service)) -> GeminiUsageResponse:
+    """Check the Gemini key and model, and report usage recorded by this server.
+
+    Google does not let an API key read its remaining quota or credit balance; see quota_dashboard_url for that.
+    """
+    return await service.gemini_usage()

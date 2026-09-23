@@ -193,6 +193,8 @@ generate = async function liveGenerate() {
     if (state.mode === 'manual') {
       form.append('product_image', dataUrlBlob(state.product.image), 'product.jpg');
     } else {
+      // Reuse the image found by the scrape in step 1 instead of scraping the page again.
+      if (state.product.image) form.append('product_image_url', state.product.image);
       form.append('product_page_url', state.sourceUrl);
     }
     $('#generationStatus').textContent = 'Generating your virtual try-on…';

@@ -332,3 +332,61 @@ def test_amazon_captcha_image_is_not_a_product_image() -> None:
 
     page = '<img src="https://images-na.ssl-images-amazon.com/captcha/abc/Captcha_xyz.jpg">'
     assert _images_from_html(page, "https://www.amazon.in/dp/B0TEST") == []
+
+
+def test_tryon_reuses_scraped_image_without_scraping_again() -> None:
+    from app.models import GalleryItem
+
+    session_settings = Settings(
+        brightdata_api_token="test",
+        anonymous_token_secret="a-secure-test-secret-that-is-long-enough",
+        ALLOWED_PRODUCT_HOSTS="example.com",
+    )
+    fetched: list[str] = []
+    saved: dict[str, object] = {}
+
+    class NoScrape:
+        async def scrape(self, url: str, country: str) -> ScrapeResponse:
+            raise AssertionError("the product page must not be scraped again")
+
+    class StubTryOn:
+        def ensure_configured(self) -> None:
+            pass
+
+        async def fetch_image(self, url: str) -> tuple[bytes, str, str]:
+            fetched.append(url)
+            return _tiny_png(), "image/png", "png"
+
+        async def generate(self, person, product, category):
+            return _tiny_png(), "image/png", "png"
+
+        async def save(self, user_id, person, product, result, category, product_source, product_url) -> GalleryItem:
+            saved.update(product_source=product_source, product_url=product_url)
+            return GalleryItem(
+                id="1", anonymous_user_id=user_id, category=category, product_source=product_source,
+                product_url=product_url, person_image_url="https://example.com/p.png",
+                product_image_url="https://example.com/i.png", result_image_url="https://example.com/r.png",
+                model="test", created_at=datetime(2026, 9, 23, tzinfo=UTC),
+            )
+
+    app.dependency_overrides[get_runtime_settings] = lambda: session_settings
+    app.dependency_overrides[get_scraper] = lambda: NoScrape()
+    app.dependency_overrides[get_tryon_service] = lambda: StubTryOn()
+    try:
+        with TestClient(app) as client:
+            session = client.post("/v1/sessions/anonymous").json()
+            response = client.post(
+                "/v1/try-ons",
+                headers={"Authorization": f"Bearer {session['access_token']}"},
+                files={"person_image": ("person.png", _tiny_png(), "image/png")},
+                data={
+                    "category": "top",
+                    "product_image_url": "https://m.media-amazon.com/images/I/61shirt.jpg",
+                    "product_page_url": "https://www.example.com/p/shirt",
+                },
+            )
+        assert response.status_code == 200, response.text
+        assert fetched == ["https://m.media-amazon.com/images/I/61shirt.jpg"]
+        assert saved == {"product_source": "image_url", "product_url": "https://www.example.com/p/shirt"}
+    finally:
+        app.dependency_overrides.clear()

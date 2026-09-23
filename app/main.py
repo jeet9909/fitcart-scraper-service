@@ -125,8 +125,11 @@ async def create_session(settings: Settings = Depends(get_runtime_settings)) -> 
 async def create_tryon(
     person_image: UploadFile = File(..., description="Front-facing, full-body user photo"),
     product_image: UploadFile | None = File(None, description="Direct product image upload"),
-    product_page_url: str | None = Form(None, description="Product page/share URL to scrape for its image"),
-    product_image_url: str | None = Form(None, description="Direct public product image URL"),
+    product_page_url: str | None = Form(
+        None,
+        description="Product page/share URL. Scraped for its image unless product_image_url is also sent, in which case it is only saved with the result",
+    ),
+    product_image_url: str | None = Form(None, description="Direct public product image URL, e.g. image_urls[0] from /v1/products/scrape"),
     category: str = Form("clothing"),
     country: str = Form("IN"),
     user_id: str = Depends(get_anonymous_user),
@@ -136,7 +139,9 @@ async def create_tryon(
 ) -> GalleryItem:
     try:
         service.ensure_configured()
-        sources = sum(value is not None for value in (product_image, product_page_url, product_image_url))
+        # A product_page_url sent with product_image_url is the listing the image came from, not a second source.
+        page_is_source = product_page_url is not None and product_image_url is None
+        sources = sum(value is not None for value in (product_image, product_image_url)) + page_is_source
         if sources != 1:
             raise TryOnError("Provide exactly one product source: product_image, product_page_url, or product_image_url", 400)
         person = validate_image(await person_image.read(), person_image.content_type, settings.max_image_bytes)
@@ -145,8 +150,9 @@ async def create_tryon(
             product = validate_image(await product_image.read(), product_image.content_type, settings.max_image_bytes)
             product_source = "upload"
         elif product_image_url is not None:
-            source_url = validate_public_url(product_image_url)
-            product = await service.fetch_image(source_url)
+            image_url = validate_public_url(product_image_url)
+            source_url = validate_public_url(product_page_url, settings.allowed_product_hosts) if product_page_url else image_url
+            product = await service.fetch_image(image_url)
             product_source = "image_url"
         else:
             source_url = validate_public_url(product_page_url or "", settings.allowed_product_hosts)

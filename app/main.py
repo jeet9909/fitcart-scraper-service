@@ -151,6 +151,7 @@ async def create_tryon(
     ),
     product_image_url: str | None = Form(None, description="Direct public product image URL, e.g. image_urls[0] from /v1/products/scrape"),
     category: str = Form("clothing"),
+    product_name: str | None = Form(None, max_length=200, description="Product title, helps the model pick the right garment from the product photo"),
     country: str = Form("IN"),
     user_id: str = Depends(get_anonymous_user),
     settings: Settings = Depends(get_runtime_settings),
@@ -181,7 +182,8 @@ async def create_tryon(
                 raise TryOnError("The scraped product page did not provide a usable product image; upload the product image directly", 422)
             product = await service.fetch_image(validate_public_url(scraped.data.image_urls[0]))
             product_source = "scraped_url"
-        result = await service.generate(person, product, category.strip()[:80] or "clothing")
+        name = product_name.strip()[:200] if product_name and product_name.strip() else None
+        result = await service.generate(person, product, category.strip()[:80] or "clothing", product_name=name)
         return await service.save(user_id, person, product, result, category.strip()[:80] or "clothing", product_source, source_url)
     except UnsafeUrlError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

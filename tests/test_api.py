@@ -357,7 +357,7 @@ def test_tryon_reuses_scraped_image_without_scraping_again() -> None:
             fetched.append(url)
             return _tiny_png(), "image/png", "png"
 
-        async def generate(self, person, product, category):
+        async def generate(self, person, product, category, product_name=None):
             return _tiny_png(), "image/png", "png"
 
         async def save(self, user_id, person, product, result, category, product_source, product_url) -> GalleryItem:
@@ -544,7 +544,8 @@ def test_amazon_html_price_sizes_and_brand() -> None:
     assert data["title"] == "Levi's Men's Slim Fit T-Shirt"
     assert data["brand"] == "Levi's"
     assert data["price"] == 649 and data["mrp"] == 1299
-    assert data["sizes"] == ["S", "M", "L", "XL"] and data["colors"] == ["Black", "White"]
+    assert data["sizes"] == ["S", "M", "L", "XL"]
+    assert "colors" not in data  # two colour variants and no current one: do not guess
 
 
 def test_markdown_price_uses_mrp_pair_not_first_rupee_amount() -> None:
@@ -677,3 +678,31 @@ def test_outfit_tryon_endpoint_uses_wardrobe_items() -> None:
         assert len(response.json()["items"]) == 2
     finally:
         app.dependency_overrides.clear()
+
+
+def test_brand_words_do_not_decide_the_outfit_slot() -> None:
+    from app.scraper import outfit_slot
+
+    assert outfit_slot(None, "Calvin Klein Jeans Men Shirt", brand="Calvin Klein Jeans") == "top"
+    assert outfit_slot(None, "Calvin Klein Jeans Men Shirt") == "top"
+    assert outfit_slot(None, "Men Slim Fit Denim Jacket") == "outerwear"
+    assert outfit_slot(None, "Women Kurta Set") == "dress"
+    assert outfit_slot(None, "Levi's Men 511 Slim Fit Jeans") == "bottom"
+
+
+def test_amazon_sizes_missing_or_marked_unavailable_are_sold_out() -> None:
+    from app.scraper import _structured_product
+
+    page = """<span id="productTitle">Calvin Klein Jeans Men Shirt</span>
+<a id="bylineInfo">Brand: Calvin Klein Jeans</a>
+<script>var twister = {"currentAsin" : "B0SHIRTM01", "dimensions" : ["size_name","color_name"],
+"variationValues" : {"size_name":["S","M","L","XL","2XL"],"color_name":["CK BLACK","CK NAVY"]},
+"dimensionValuesDisplayData" : {"B0SHIRTS01":["S","CK BLACK"],"B0SHIRTM01":["M","CK BLACK"],"B0SHIRTL01":["L","CK BLACK"],
+"B0SHIRTX01":["XL","CK BLACK"],"B0SHIRT2N1":["2XL","CK NAVY"],"B0SHIRTMN1":["M","CK NAVY"]}};</script>
+<ul><li id="size_name_3" class="swatchUnavailable" title="Click to select XL"><span class="a-button-text">XL</span></li>
+<li id="size_name_1" class="swatchSelect" title="Click to select M"><span>M</span></li></ul>"""
+    data = _structured_product(page, "https://www.amazon.in/dp/B0SHIRTM01")
+    assert data["sizes"] == ["S", "M", "L"]
+    assert data["unavailable_sizes"] == ["XL", "2XL"]
+    assert data["colors"] == ["CK BLACK"]
+    assert data["brand"] == "Calvin Klein Jeans"

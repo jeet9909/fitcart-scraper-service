@@ -132,8 +132,8 @@ class TryOnService:
         validate_public_url(str(response.url))
         return validate_image(response.content, response.headers.get("content-type", "").split(";")[0], self.settings.max_image_bytes)
 
-    async def generate(self, person: tuple[bytes, str, str], product: tuple[bytes, str, str], category: str) -> tuple[bytes, str, str]:
-        return await self.generate_outfit(person, [OutfitPiece(image=product, category=category)])
+    async def generate(self, person: tuple[bytes, str, str], product: tuple[bytes, str, str], category: str, product_name: str | None = None) -> tuple[bytes, str, str]:
+        return await self.generate_outfit(person, [OutfitPiece(image=product, category=category, label=product_name)])
 
     async def generate_outfit(self, person: tuple[bytes, str, str], pieces: list["OutfitPiece"]) -> tuple[bytes, str, str]:
         """Dress the person in one or more products (top, bottom, footwear, jewelry...) in a single image."""
@@ -144,8 +144,11 @@ class TryOnService:
                 "Create a photorealistic virtual try-on using the first image as the person identity and body reference "
                 "and the second image as the exact product reference. Put the product naturally on the person. "
                 "Preserve the person's face, identity, skin tone, body proportions, pose, background, camera angle, and lighting. "
-                f"The product category is {pieces[0].category}. Preserve its color, texture, print, logo, shape, and design. "
-                "Do not alter unrelated clothing or add accessories. Return one full-body front-view image with no text or collage."
+                f"The product is a {pieces[0].category}" + (f": {pieces[0].label}" if pieces[0].label else "") + ". "
+                "The product photo may show a model wearing other clothes; transfer only this product and ignore everything else the model wears. "
+                f"Replace only what the person wears in the {pieces[0].category} area and keep the rest of their own clothing unchanged. "
+                "Preserve the product's color, texture, print, logo, shape, and design. "
+                "Do not add accessories. Return one full-body front-view image with no text or collage."
             )
         else:
             listing = "; ".join(
@@ -155,6 +158,7 @@ class TryOnService:
             prompt = (
                 "Create a photorealistic virtual try-on of a complete outfit. Image 1 is the person identity and body reference. "
                 f"The other images are the exact product references: {listing}. "
+                "Product photos may show models wearing other clothes; take only the listed product from each photo. "
                 "Dress the person in every one of these products at the same time, replacing the clothing they currently wear in the same body areas. "
                 "Preserve the person's face, identity, skin tone, body proportions, pose, background, camera angle, and lighting. "
                 "Preserve each product's color, texture, print, logo, shape, and design exactly. Do not add items that were not provided. "

@@ -312,6 +312,8 @@ generate = async function liveGenerate() {
       if (state.product.image) form.append('product_image_url', state.product.image);
       form.append('product_page_url', state.sourceUrl);
     }
+    const extraPieces = typeof appendOutfitItems === 'function' ? appendOutfitItems(form) : 0;
+    if (extraPieces) $('#generationNote').textContent = `Gemini is dressing you in all ${extraPieces + 1} pieces of your look. This may take a minute.`;
     $('#generationStatus').textContent = 'Generating your virtual try-on…';
     const response = await authorizedFetch(apiUrl('/v1/try-ons'), { method: 'POST', body: form, signal: controller.signal });
     const payload = await response.json().catch(() => ({}));

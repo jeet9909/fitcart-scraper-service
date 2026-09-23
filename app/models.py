@@ -137,3 +137,16 @@ class OutfitSuggestion(BaseModel):
 
 class OutfitSuggestionResponse(BaseModel):
     outfits: list[OutfitSuggestion]
+
+
+class OutfitExtraItem(BaseModel):
+    """An extra piece worn with the main product in one try-on, e.g. shoes from another store."""
+
+    slot: OutfitSlot
+    name: str = Field(default="", max_length=200)
+    image_url: str | None = Field(default=None, max_length=2000, description="Public product image URL")
+    upload: int | None = Field(default=None, ge=0, le=3, description="Index into the outfit_images uploads")
+    page_url: str | None = Field(default=None, max_length=2000)
+    store: str | None = Field(default=None, max_length=120)
+    price: float | None = Field(default=None, ge=0)
+    size: str | None = Field(default=None, max_length=40)

@@ -239,3 +239,64 @@ def _tiny_png() -> bytes:
     buffer = BytesIO()
     Image.new("RGB", (2, 2), "white").save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def test_amazon_images_found_outside_markdown_image_syntax() -> None:
+    from app.scraper import _parse_product
+
+    markdown = """# Men's Cotton Shirt
+[Visit the Brand Store](https://www.amazon.in/stores/brand)
+![](https://m.media-amazon.com/images/G/31/nav-sprite-global-1x.png)
+[Image: https://m.media-amazon.com/images/I/71abcXYZ._SY879_.jpg](https://www.amazon.in/dp/B0TEST)
+₹799 M.R.P.: ₹1,999
+"""
+    product = _parse_product(markdown, "https://www.amazon.in/dp/B0TEST")
+    assert product.image_urls == ["https://m.media-amazon.com/images/I/71abcXYZ._SY879_.jpg"]
+
+
+def test_myntra_templated_images_are_expanded() -> None:
+    from app.scraper import _parse_product
+
+    markdown = """# Roadster Men Checked Shirt
+![Roadster](http://assets.myntassets.com/h_($height),q_($qualityPercentage),w_($width)/v1/assets/images/123/2024/shirt-1.jpg)
+Rs. 699
+"""
+    product = _parse_product(markdown, "https://www.myntra.com/shirts/roadster/123/buy")
+    assert product.image_urls == [
+        "https://assets.myntassets.com/h_1440,q_90,w_1080/v1/assets/images/123/2024/shirt-1.jpg"
+    ]
+
+
+def test_images_are_read_from_html_metadata() -> None:
+    from app.scraper import _images_from_html
+
+    page = """<html><head>
+<meta property="og:image" content="https://assets.myntassets.com/v1/assets/images/1/og.jpg">
+<script type="application/ld+json">{"@type":"Product","image":["https://assets.myntassets.com/v1/assets/images/1/ld.jpg"]}</script>
+</head><body><img id="landingImage" data-old-hires="https://m.media-amazon.com/images/I/81hires.jpg"
+data-a-dynamic-image="{&quot;https://m.media-amazon.com/images/I/81dyn._SX679_.jpg&quot;:[679,679]}">
+<img src="/images/logo.svg"></body></html>"""
+    images = _images_from_html(page, "https://www.example.com/p")
+    assert images[:4] == [
+        "https://assets.myntassets.com/v1/assets/images/1/og.jpg",
+        "https://assets.myntassets.com/v1/assets/images/1/ld.jpg",
+        "https://m.media-amazon.com/images/I/81hires.jpg",
+        "https://m.media-amazon.com/images/I/81dyn._SX679_.jpg",
+    ]
+
+
+def test_scraper_falls_back_to_html_when_markdown_has_no_images() -> None:
+    import asyncio
+
+    from app.scraper import BrightDataScraper
+
+    class StubScraper(BrightDataScraper):
+        async def _fetch_page(self, url: str) -> str:
+            return "# Linen Shirt\n₹1,299\nAdd to cart"
+
+        async def _fetch_html_directly(self, url: str) -> str | None:
+            return '<meta property="og:image" content="https://m.media-amazon.com/images/I/61shirt.jpg">'
+
+    result = asyncio.run(StubScraper(SETTINGS).scrape("https://www.amazon.in/dp/B0TEST", "IN"))
+    assert result.data.image_urls == ["https://m.media-amazon.com/images/I/61shirt.jpg"]
+    assert result.data.price.amount == 1299

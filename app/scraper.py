@@ -200,13 +200,25 @@ _SLOT_KEYWORDS = (
 )
 
 
-def outfit_slot(*texts: str | None) -> str | None:
-    """Map store category / title text to one outfit slot, checking the most specific text first."""
+def outfit_slot(*texts: str | None, brand: str | None = None) -> str | None:
+    """Map store category / title text to one outfit slot, checking the most specific text first.
+
+    Within a text the garment word that ends last wins, because titles end with the product type
+    ("Calvin Klein Jeans Men Shirt" is a shirt), and the brand name is ignored.
+    """
     for text in texts:
         lowered = f" {(text or '').lower()} "
+        if brand and len(brand.strip()) > 1:
+            lowered = lowered.replace(brand.strip().lower(), " ")
+        best: tuple[int, str] | None = None
         for slot, words in _SLOT_KEYWORDS:
-            if any(re.search(rf"\b{re.escape(word)}", lowered) for word in words):
-                return slot
+            for word in words:
+                for match in re.finditer(rf"\b{re.escape(word)}", lowered):
+                    end = match.end()
+                    if best is None or end > best[0]:
+                        best = (end, slot)
+        if best:
+            return best[1]
     return None
 
 
@@ -373,6 +385,51 @@ def _structured_from_myntra(page: str) -> dict:
     return {key: value for key, value in found.items() if value not in (None, [], "")}
 
 
+def _amazon_unavailable_sizes(page: str, sizes: list[str]) -> tuple[str | None, set[str]]:
+    """Sizes that are not buyable in the colour being viewed on an Amazon listing.
+
+    A size is unavailable when no child ASIN exists for it in the current colour, or when the size
+    swatch / dropdown option is marked unavailable.
+    """
+    unavailable: set[str] = set()
+    current_color: str | None = None
+    dimensions_match = re.search(r'"dimensions"\s*:\s*(\[[^\]]*\])', page)
+    display = _json_after(page, '"dimensionValuesDisplayData"')
+    current = re.search(r'"currentAsin"\s*:\s*"([A-Z0-9]{10})"', page)
+    if dimensions_match and isinstance(display, dict) and current:
+        try:
+            dimensions = json.loads(dimensions_match.group(1))
+        except ValueError:
+            dimensions = []
+        values = display.get(current.group(1))
+        if "size_name" in dimensions and isinstance(values, list) and len(values) == len(dimensions):
+            size_index = dimensions.index("size_name")
+            color_index = dimensions.index("color_name") if "color_name" in dimensions else None
+            if color_index is not None:
+                current_color = str(values[color_index])
+            existing = {
+                str(other[size_index])
+                for other in display.values()
+                if isinstance(other, list) and len(other) == len(dimensions)
+                and (color_index is None or str(other[color_index]) == current_color)
+            }
+            unavailable |= {size for size in sizes if size not in existing}
+    markers = re.compile(r"swatchUnavailable|dropdownUnavailable|a-button-unavailable|initiallyUnavailable=\"true\"|swatch-unavailable|unavailable-swatch", re.IGNORECASE)
+    labels = sorted(sizes, key=len, reverse=True)
+    for element in re.finditer(r"<(li|option)\b[^>]*>", page):
+        tag = element.group(0)
+        if "size" not in tag.lower() or not markers.search(tag):
+            continue
+        chunk = page[element.start(): element.start() + 1500]
+        chunk = re.split(r"<(?:li|option)\b", chunk[1:], maxsplit=1)[0]
+        for label in labels:
+            escaped = re.escape(label)
+            if re.search(rf"(?:>\s*{escaped}\s*<|title=\"Click to select {escaped}\"|data-a-html-content=\"{escaped}\"|value=\"\d+,{escaped}\")", tag + chunk):
+                unavailable.add(label)
+                break
+    return current_color, unavailable
+
+
 def _structured_from_amazon(page: str) -> dict:
     found: dict = {}
     if match := re.search(r'id="productTitle"[^>]*>(.*?)</span>', page, re.DOTALL):
@@ -390,9 +447,15 @@ def _structured_from_amazon(page: str) -> dict:
         found["currency"] = "INR"
     variations = _json_after(page, '"variationValues"')
     if isinstance(variations, dict):
-        found["sizes"] = [str(size) for size in variations.get("size_name") or [] if size]
+        sizes = [str(size) for size in variations.get("size_name") or [] if size]
         colors = [str(color) for color in variations.get("color_name") or [] if color]
-        if colors:
+        current_color, unavailable = _amazon_unavailable_sizes(page, sizes)
+        if sizes:
+            found["sizes"] = [size for size in sizes if size not in unavailable]
+            found["unavailable_sizes"] = [size for size in sizes if size in unavailable]
+        if current_color:
+            found["colors"] = [current_color]
+        elif len(colors) == 1:
             found["colors"] = colors
     for label, key in (("Material composition", "material"), ("Material type", "material"), ("Material", "material"), ("Colour", "color"), ("Color", "color")):
         if key in found:
@@ -520,7 +583,7 @@ def _apply_structured(product: ProductData, data: dict, url: str) -> ProductData
     images = [image for item in data.get("images") or [] if (image := _normalize_image_url(str(item), url))]
     if images:
         product.image_urls = _rank_images(images + product.image_urls)
-    product.outfit_slot = outfit_slot(product.category, product.title) or product.outfit_slot
+    product.outfit_slot = outfit_slot(product.category, product.title, brand=product.brand) or product.outfit_slot
     return product
 
 

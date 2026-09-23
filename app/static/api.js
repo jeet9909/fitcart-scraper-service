@@ -82,6 +82,7 @@ function productFromApi(item, sourceUrl) {
     brand: item.brand || item.store || 'Imported listing',
     color: item.colors?.join(', ') || 'Colour not listed',
     category: item.category || SLOT_NAMES[item.outfit_slot] || 'Wearable',
+    storeCategory: Boolean(item.category),
     slot: item.outfit_slot || 'other',
     price: item.price?.amount ?? null,
     originalPrice: item.original_price?.amount ?? null,
@@ -108,7 +109,13 @@ product = function liveProduct() {
     ? `<span class="muted" style="text-decoration:line-through">${money(p.originalPrice)}</span>${p.discount ? `<span class="badge sand">${Math.round(p.discount)}% off</span>` : ''}`
     : '';
   const rating = p.rating ? `<span class="small muted">★ ${esc(p.rating)}${p.reviews ? ` · ${esc(p.reviews.toLocaleString('en-IN'))} ratings` : ''}</span>` : '';
-  screen.innerHTML = `<div class="sectionhead"><p class="eyebrow" style="margin:0">Your find / ${esc(p.category)}</p><span class="badge">Live from ${esc(state.sourceStore)}</span></div><div class="productgrid"><div><div class="productphoto"><img src="${esc(p.image)}" alt="${esc(p.name)}"><span class="badge outline" style="background:var(--card)">Store image</span></div><p class="micro muted" style="margin:10px 0">Fetched from the original listing. Prices and stock can change; confirm on the store.</p></div><section class="productinfo"><div class="eyebrow">${esc(p.brand)}</div><h1>${esc(p.name)}</h1><p class="muted">${esc(p.color)} · ${esc(p.category)}</p><div class="row"><span class="price">${money(p.price)}</span>${mrp}${rating}</div><dl class="detailgrid"><div><dt>Fabric / material</dt><dd>${esc(p.material)}</dd></div><div><dt>Store product ID</dt><dd>${esc(p.style)}</dd></div><div><dt>Sizes in stock</dt><dd>${p.sizesKnown ? esc(p.sizes.filter(size => !p.soldOut.includes(size)).join(', ') || 'None') : 'Not listed'}</dd></div><div><dt>Data status</dt><dd>Fetched live · ${esc(state.sourceStore)}</dd></div></dl><div class="rule"></div><div class="row between"><strong class="small">Choose your size</strong><a class="linkbtn" href="${esc(state.sourceUrl)}" target="_blank" rel="noopener noreferrer">Store size chart</a></div><div class="sizes">${sizeButtons()}</div><p id="sizeAvailability" class="small muted">${sizeAvailability()}</p><div style="margin-top:22px" class="row"><button class="btn wide" data-action="toCompare" ${!state.size ? 'disabled' : ''}>${state.size ? 'Continue with size ' + esc(state.size) : 'Select a size to continue'} ${icon('arrow')}</button><button class="btn secondary wide" data-action="saveToWardrobe">Save to my shopping wardrobe</button></div></section></div>`;
+  screen.innerHTML = `<div class="sectionhead"><p class="eyebrow" style="margin:0">Your find / ${esc(p.category)}</p><span class="badge">Live from ${esc(state.sourceStore)}</span></div><div class="productgrid"><div><div class="productphoto"><img src="${esc(p.image)}" alt="${esc(p.name)}"><span class="badge outline" style="background:var(--card)">Store image</span></div><p class="micro muted" style="margin:10px 0">Fetched from the original listing. Prices and stock can change; confirm on the store.</p></div><section class="productinfo"><div class="eyebrow">${esc(p.brand)}</div><h1>${esc(p.name)}</h1><p class="muted">${esc(p.color)} · ${esc(p.category)}</p><div class="row"><span class="price">${money(p.price)}</span>${mrp}${rating}</div><dl class="detailgrid"><div><dt>Fabric / material</dt><dd>${esc(p.material)}</dd></div><div><dt>Store product ID</dt><dd>${esc(p.style)}</dd></div><div><dt>Sizes in stock</dt><dd>${p.sizesKnown ? esc(p.sizes.filter(size => !p.soldOut.includes(size)).join(', ') || 'None') : 'Not listed'}</dd></div><div><dt>Data status</dt><dd>Fetched live · ${esc(state.sourceStore)}</dd></div></dl><label class="field" style="margin-top:14px">This product is a<select class="input" id="productSlot">${Object.entries(SLOT_NAMES).map(([value, label]) => `<option value="${value}" ${p.slot === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label><p class="micro muted" style="margin-top:-6px">Detected automatically. Change it if it's wrong: the try-on only swaps this part of your outfit.</p><div class="rule"></div><div class="row between"><strong class="small">Choose your size</strong><a class="linkbtn" href="${esc(state.sourceUrl)}" target="_blank" rel="noopener noreferrer">Store size chart</a></div><div class="sizes">${sizeButtons()}</div><p id="sizeAvailability" class="small muted">${sizeAvailability()}</p><div style="margin-top:22px" class="row"><button class="btn wide" data-action="toCompare" ${!state.size ? 'disabled' : ''}>${state.size ? 'Continue with size ' + esc(state.size) : 'Select a size to continue'} ${icon('arrow')}</button><button class="btn secondary wide" data-action="saveToWardrobe">Save to my shopping wardrobe</button></div></section></div>`;
+  $('#productSlot').onchange = event => {
+    p.slot = event.target.value;
+    if (!p.storeCategory) p.category = SLOT_NAMES[p.slot];
+    state.result = false;
+    product();
+  };
 };
 
 const standaloneSizeButtons = sizeButtons;
@@ -227,7 +234,7 @@ upload = function liveUpload() {
 };
 
 function categoryForApi(product) {
-  if (product.slot && product.slot !== 'other') return String(product.category || product.slot).toLowerCase();
+  if (product.slot && product.slot !== 'other') return SLOT_NAMES[product.slot].toLowerCase();
   return ({ Tops: 'top', Bottoms: 'bottom', Shoes: 'shoes', Watch: 'watch' })[product.category] || String(product.category || 'wearable').toLowerCase();
 }
 
@@ -296,6 +303,7 @@ generate = async function liveGenerate() {
     const form = new FormData();
     form.append('person_image', dataUrlBlob(state.photos[0].data), 'person.jpg');
     form.append('category', categoryForApi(state.product));
+    if (state.product.name) form.append('product_name', [state.product.color && !/not (listed|provided)/i.test(state.product.color) ? state.product.color : '', state.product.name].filter(Boolean).join(' ').slice(0, 200));
     form.append('country', 'IN');
     if (state.mode === 'manual') {
       form.append('product_image', dataUrlBlob(state.product.image), 'product.jpg');

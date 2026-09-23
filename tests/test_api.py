@@ -55,6 +55,22 @@ def test_health() -> None:
         assert client.get("/health").json() == {"status": "ok"}
 
 
+def test_storefront_serves_approved_ui() -> None:
+    with TestClient(app) as client:
+        response = client.get("/")
+    assert response.status_code == 200
+    assert "Your next find" in response.text
+    assert "/static/api.js" in response.text
+
+
+def test_live_ui_adapter_is_served() -> None:
+    with TestClient(app) as client:
+        response = client.get("/static/api.js")
+    assert response.status_code == 200
+    assert "/v1/products/scrape" in response.text
+    assert "/v1/try-ons" in response.text
+
+
 def test_scrape_returns_normalized_product(monkeypatch) -> None:
     monkeypatch.setattr("app.security.socket.getaddrinfo", lambda *_: [(None, None, None, None, ("93.184.216.34", 0))])
     app.dependency_overrides[get_runtime_settings] = lambda: SETTINGS

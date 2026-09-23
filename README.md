@@ -14,8 +14,9 @@ Standalone product scraping and Gemini virtual try-on API for FitCart. Product p
 - Public-URL validation to block localhost/private-network targets
 - Concurrency and timeout controls
 - Docker deployment and automated tests
+- The approved earthy FitCart storefront, served from `/` and connected directly to the API
 
-It intentionally does not contain carts, affiliate redirects, or the FitCart frontend.
+It intentionally does not contain carts or affiliate checkout redirects.
 
 ## Configure
 
@@ -41,7 +42,7 @@ pip install -e '.[dev]'
 uvicorn app.main:app --reload
 ```
 
-Open `http://localhost:8000/docs` for the interactive API documentation.
+Open `http://localhost:8000/` for the FitCart interface or `http://localhost:8000/docs` for the interactive API documentation.
 
 ## Request
 
@@ -65,14 +66,14 @@ docker run --rm -p 8000:8000 \
   fitcart-scraper-service
 ```
 
-For Render, Railway, Fly.io, or another container platform, deploy the repository with this `Dockerfile`, expose the platform-provided `PORT`, and add the two secrets as environment variables.
+For Render, Railway, Fly.io, or another container platform, deploy the repository with this `Dockerfile`, expose the platform-provided `PORT`, and configure every variable shown in `.env.example`. The UI and API share one origin, so the deployed service URL opens the application directly.
 
 ## Production notes
 
 - Set `ALLOWED_PRODUCT_HOSTS=amazon.in,flipkart.com,myntra.com,ajio.com,meesho.com` to restrict accepted URLs.
 - Put this service behind FitCart authentication and per-user rate limiting before public launch.
 - The endpoint maps provider/timeout failures to HTTP `502` and invalid or unsafe URLs to `400`.
-- A request may consume both OpenAI tokens and Bright Data credits. Monitor both provider dashboards.
+- Product imports consume Bright Data requests and virtual try-ons consume Gemini requests. Monitor both provider dashboards.
 
 ## Tests
 

@@ -4,6 +4,8 @@ import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.anonymous_auth import create_anonymous_session, verify_anonymous_token
 from app.config import Settings, get_settings
@@ -41,6 +43,8 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
 
 def get_scraper(request: Request) -> BrightDataScraper:
     return request.app.state.scraper
@@ -58,6 +62,11 @@ bearer = HTTPBearer(
     auto_error=False,
     description="Paste the access_token returned by POST /v1/sessions/anonymous. The API also accepts a value beginning with 'Bearer '.",
 )
+
+
+@app.get("/", include_in_schema=False)
+async def storefront() -> FileResponse:
+    return FileResponse("app/static/index.html")
 
 
 def get_anonymous_user(

@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 import hmac
@@ -8,6 +9,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import TypeAdapter, ValidationError
 
 from app.anonymous_auth import create_anonymous_session, verify_anonymous_token
 from app.config import Settings, get_settings
@@ -17,6 +19,7 @@ from app.models import (
     GalleryResponse,
     GeminiUsageResponse,
     HealthResponse,
+    OutfitExtraItem,
     OutfitSuggestionRequest,
     OutfitSuggestionResponse,
     ScrapeRequest,
@@ -26,8 +29,8 @@ from app.models import (
 )
 from app.scraper import BrightDataScraper, ScrapeProviderError
 from app.security import UnsafeUrlError, validate_public_url
-from app.tryon import TryOnError, TryOnService, validate_image
-from app.wardrobe import WardrobeService
+from app.tryon import MAX_OUTFIT_PIECES, OutfitPiece, TryOnError, TryOnService, validate_image
+from app.wardrobe import SLOT_LABELS, WardrobeService
 
 
 @asynccontextmanager
@@ -153,6 +156,11 @@ async def create_tryon(
     category: str = Form("clothing"),
     product_name: str | None = Form(None, max_length=200, description="Product title, helps the model pick the right garment from the product photo"),
     country: str = Form("IN"),
+    outfit_items: str | None = Form(
+        None,
+        description='JSON list of up to 4 extra pieces worn with this product, e.g. [{"slot": "footwear", "name": "White sneakers", "image_url": "https://..."}]. Use "upload": 0 to point at outfit_images[0].',
+    ),
+    outfit_images: list[UploadFile] | None = File(None, description="Photos for extra pieces that have no image URL"),
     user_id: str = Depends(get_anonymous_user),
     settings: Settings = Depends(get_runtime_settings),
     scraper: BrightDataScraper = Depends(get_scraper),
@@ -160,6 +168,7 @@ async def create_tryon(
 ) -> GalleryItem:
     try:
         service.ensure_configured()
+        extras = _parse_outfit_items(outfit_items, len(outfit_images or []))
         # A product_page_url sent with product_image_url is the listing the image came from, not a second source.
         page_is_source = product_page_url is not None and product_image_url is None
         sources = sum(value is not None for value in (product_image, product_image_url)) + page_is_source
@@ -183,8 +192,29 @@ async def create_tryon(
             product = await service.fetch_image(validate_public_url(scraped.data.image_urls[0]))
             product_source = "scraped_url"
         name = product_name.strip()[:200] if product_name and product_name.strip() else None
-        result = await service.generate(person, product, category.strip()[:80] or "clothing", product_name=name)
-        return await service.save(user_id, person, product, result, category.strip()[:80] or "clothing", product_source, source_url)
+        category = category.strip()[:80] or "clothing"
+        if not extras:
+            result = await service.generate(person, product, category, product_name=name)
+            return await service.save(user_id, person, product, result, category, product_source, source_url)
+
+        async def extra_image(item: OutfitExtraItem) -> tuple[bytes, str, str]:
+            if item.upload is not None:
+                upload = (outfit_images or [])[item.upload]
+                return validate_image(await upload.read(), upload.content_type, settings.max_image_bytes)
+            return await service.fetch_image(validate_public_url(item.image_url or ""))
+
+        images = await asyncio.gather(*(extra_image(item) for item in extras))
+        pieces = [OutfitPiece(image=product, category=category, label=name)]
+        pieces += [OutfitPiece(image=image, category=SLOT_LABELS[item.slot], label=item.name.strip() or None) for item, image in zip(extras, images)]
+        result = await service.generate_outfit(person, pieces)
+        summary = [{"slot": None, "category": category, "name": name, "product_url": source_url}]
+        summary += [
+            {"slot": item.slot, "name": item.name, "store": item.store, "price": item.price, "size": item.size,
+             "product_url": validate_public_url(item.page_url) if item.page_url else None}
+            for item in extras
+        ]
+        outfit_category = " + ".join([category, *(item.slot for item in extras)])[:80]
+        return await service.save(user_id, person, product, result, outfit_category, product_source, source_url, items=summary)
     except UnsafeUrlError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ScrapeProviderError as exc:
@@ -193,6 +223,23 @@ async def create_tryon(
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail="Could not download the product image") from exc
+
+
+def _parse_outfit_items(raw: str | None, upload_count: int) -> list[OutfitExtraItem]:
+    if not raw or not raw.strip():
+        return []
+    try:
+        items = TypeAdapter(list[OutfitExtraItem]).validate_json(raw)
+    except ValidationError as exc:
+        raise TryOnError(f"outfit_items is not valid: {exc.errors()[0].get('msg', 'invalid value')}", 400) from exc
+    if len(items) > MAX_OUTFIT_PIECES - 1:
+        raise TryOnError(f"Add at most {MAX_OUTFIT_PIECES - 1} extra pieces to one try-on", 400)
+    for item in items:
+        if (item.image_url is None) == (item.upload is None):
+            raise TryOnError("Each extra piece needs exactly one of image_url or upload", 400)
+        if item.upload is not None and item.upload >= upload_count:
+            raise TryOnError("An extra piece points at a photo that was not uploaded", 400)
+    return items
 
 
 @app.post("/v1/try-ons/outfit", response_model=GalleryItem, tags=["virtual try-on"])

@@ -1,4 +1,6 @@
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 import base64
 import io
 import json
@@ -39,7 +41,7 @@ def validate_image(data: bytes, content_type: str | None, max_bytes: int) -> tup
     return data, mime, ALLOWED_IMAGE_TYPES[mime]
 
 
-MODEL_IMAGE_MAX_SIDE = 1536
+MODEL_IMAGE_MAX_SIDE = 1024
 GEMINI_RETRY_MAX_SECONDS = 20
 
 
@@ -73,7 +75,7 @@ def _prepare_for_model(data: bytes, mime: str) -> tuple[bytes, str]:
     """Downscale large photos and apply EXIF rotation so requests stay well under Gemini's inline size limit."""
     with Image.open(io.BytesIO(data)) as image:
         image = ImageOps.exif_transpose(image)
-        if max(image.size) <= MODEL_IMAGE_MAX_SIDE and len(data) <= 4_000_000:
+        if max(image.size) <= MODEL_IMAGE_MAX_SIDE and len(data) <= 1_500_000:
             return data, mime
         image.thumbnail((MODEL_IMAGE_MAX_SIDE, MODEL_IMAGE_MAX_SIDE))
         if image.mode not in ("RGB", "L"):
@@ -114,6 +116,15 @@ class TryOnService:
             "Authorization": f"Bearer {settings.supabase_service_role_key.get_secret_value()}",
         }
         self.usage = GeminiUsage()
+        self._pool: tuple[asyncio.AbstractEventLoop, httpx.AsyncClient] | None = None
+
+    @asynccontextmanager
+    async def _supabase(self) -> AsyncIterator[httpx.AsyncClient]:
+        """One pooled client per event loop: Supabase calls reuse warm TLS connections instead of reconnecting."""
+        loop = asyncio.get_running_loop()
+        if self._pool is None or self._pool[0] is not loop or self._pool[1].is_closed:
+            self._pool = (loop, httpx.AsyncClient(timeout=60, limits=httpx.Limits(max_connections=20, max_keepalive_connections=10)))
+        yield self._pool[1]
 
     def ensure_configured(self) -> None:
         missing = []
@@ -301,7 +312,7 @@ class TryOnService:
         if not self.settings.supabase_url or not self.settings.supabase_service_role_key.get_secret_value():
             return None
         try:
-            async with httpx.AsyncClient(timeout=20) as client:
+            async with self._supabase() as client:
                 response = await client.head(
                     f"{self.settings.supabase_url.rstrip('/')}/rest/v1/try_on_gallery",
                     headers={**self._headers, "Prefer": "count=exact", "Range": "0-0"},
@@ -343,25 +354,14 @@ class TryOnService:
 
     async def _upload(self, path: str, image: tuple[bytes, str, str]) -> None:
         url = f"{self.settings.supabase_url.rstrip('/')}/storage/v1/object/{self.settings.supabase_storage_bucket}/{quote(path)}"
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with self._supabase() as client:
             response = await client.post(url, headers={**self._headers, "Content-Type": image[1], "x-upsert": "false"}, content=image[0])
         if response.status_code >= 400:
             raise TryOnError("Could not save image to the private gallery")
 
-    async def _signed_url(self, path: str) -> str:
-        base = self.settings.supabase_url.rstrip("/")
-        url = f"{base}/storage/v1/object/sign/{self.settings.supabase_storage_bucket}/{quote(path)}"
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(url, headers={**self._headers, "Content-Type": "application/json"}, json={"expiresIn": self.settings.gallery_signed_url_seconds})
-        if response.status_code >= 400:
-            raise TryOnError("Could not create a private gallery URL")
-        signed = response.json().get("signedURL") or response.json().get("signedUrl")
-        if not signed: raise TryOnError("Supabase returned no signed URL")
-        return signed if signed.startswith("http") else f"{base}/storage/v1{signed}"
-
     async def download(self, path: str) -> tuple[bytes, str, str]:
         url = f"{self.settings.supabase_url.rstrip('/')}/storage/v1/object/{self.settings.supabase_storage_bucket}/{quote(path)}"
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with self._supabase() as client:
             response = await client.get(url, headers=self._headers)
         if response.status_code >= 400:
             raise TryOnError("Could not read a saved wardrobe image")
@@ -371,7 +371,7 @@ class TryOnService:
         if not paths:
             return
         url = f"{self.settings.supabase_url.rstrip('/')}/storage/v1/object/{self.settings.supabase_storage_bucket}"
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with self._supabase() as client:
             await client.request("DELETE", url, headers={**self._headers, "Content-Type": "application/json"}, json={"prefixes": paths})
 
     async def signed_urls(self, paths: list[str]) -> dict[str, str]:
@@ -379,7 +379,7 @@ class TryOnService:
         if not paths:
             return {}
         base = self.settings.supabase_url.rstrip("/")
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with self._supabase() as client:
             response = await client.post(
                 f"{base}/storage/v1/object/sign/{self.settings.supabase_storage_bucket}",
                 headers={**self._headers, "Content-Type": "application/json"},
@@ -398,7 +398,7 @@ class TryOnService:
         headers = {**self._headers, "Content-Type": "application/json"}
         if prefer:
             headers["Prefer"] = prefer
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with self._supabase() as client:
             return await client.request(method, f"{self.settings.supabase_url.rstrip('/')}/rest/v1/{table}", headers=headers, params=params, json=json_body)
 
     async def upload(self, path: str, image: tuple[bytes, str, str]) -> None:
@@ -408,13 +408,11 @@ class TryOnService:
         item_id = str(uuid4())
         prefix = f"{user_id}/{item_id}"
         paths = {"person": f"{prefix}/person.{person[2]}", "product": f"{prefix}/product.{product[2]}", "result": f"{prefix}/result.{result[2]}"}
-        await self._upload(paths["person"], person)
-        await self._upload(paths["product"], product)
-        await self._upload(paths["result"], result)
+        await asyncio.gather(self._upload(paths["person"], person), self._upload(paths["product"], product), self._upload(paths["result"], result))
         row = {"id": item_id, "anonymous_user_id": user_id, "category": category, "product_source": product_source, "product_url": product_url, "person_path": paths["person"], "product_path": paths["product"], "result_path": paths["result"], "model": self.settings.gemini_image_model}
         if items:
             row["items"] = items
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with self._supabase() as client:
             response = await client.post(f"{self.settings.supabase_url.rstrip('/')}/rest/v1/try_on_gallery", headers={**self._headers, "Content-Type": "application/json", "Prefer": "return=representation"}, json=row)
         if response.status_code >= 400: raise TryOnError("Could not save the gallery record")
         created = response.json()[0]
@@ -422,10 +420,17 @@ class TryOnService:
 
     async def list_gallery(self, user_id: str) -> list[GalleryItem]:
         params = {"anonymous_user_id": f"eq.{user_id}", "select": "*", "order": "created_at.desc"}
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with self._supabase() as client:
             response = await client.get(f"{self.settings.supabase_url.rstrip('/')}/rest/v1/try_on_gallery", headers=self._headers, params=params)
         if response.status_code >= 400: raise TryOnError("Could not load the gallery")
-        return [await self._to_item(row) for row in response.json()]
+        rows = response.json()
+        signed = await self.signed_urls([row[key] for row in rows for key in ("person_path", "product_path", "result_path")])
+        return [await self._to_item(row, signed) for row in rows]
 
-    async def _to_item(self, row: dict[str, Any]) -> GalleryItem:
-        return GalleryItem(id=row["id"], anonymous_user_id=row["anonymous_user_id"], category=row["category"], product_source=row["product_source"], product_url=row.get("product_url"), person_image_url=await self._signed_url(row["person_path"]), product_image_url=await self._signed_url(row["product_path"]), result_image_url=await self._signed_url(row["result_path"]), model=row["model"], items=row.get("items") or [], created_at=datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")))
+    async def _to_item(self, row: dict[str, Any], signed: dict[str, str] | None = None) -> GalleryItem:
+        if signed is None:
+            signed = await self.signed_urls([row["person_path"], row["product_path"], row["result_path"]])
+        missing = [path for path in (row["person_path"], row["product_path"], row["result_path"]) if path not in signed]
+        if missing:
+            raise TryOnError("Could not create a private gallery URL")
+        return GalleryItem(id=row["id"], anonymous_user_id=row["anonymous_user_id"], category=row["category"], product_source=row["product_source"], product_url=row.get("product_url"), person_image_url=signed[row["person_path"]], product_image_url=signed[row["product_path"]], result_image_url=signed[row["result_path"]], model=row["model"], items=row.get("items") or [], created_at=datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")))

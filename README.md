@@ -101,6 +101,7 @@ docker run --rm -p 8000:8000 --env-file .env fitcart-scraper-service
 | `POST` | `/v1/wardrobe` | Add an item (multipart: `collection`, `slot`, `name`, and `image` or `image_url`) |
 | `DELETE` | `/v1/wardrobe/{id}` | Remove an item and its photo |
 | `POST` | `/v1/wardrobe/suggestions` | `{"collection": "all", "occasion": "office", "count": 3}` → outfit ideas |
+| `POST` | `/v1/try-ons` + `outfit_items` | Main product plus up to 4 extra pieces from any store in one try-on. `outfit_items` is a JSON list of `{"slot", "name", "image_url" or "upload", "page_url", "store", "price", "size"}`; `"upload": 0` points at the first `outfit_images` file |
 | `POST` | `/v1/try-ons/outfit` | Multipart `person_image` + `item_ids=id1,id2,id3` → saved gallery item |
 
 Wardrobes belong to the anonymous session stored in the browser, like the gallery.

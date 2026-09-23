@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     brightdata_zone: str = Field(default="agent_unlocker", validation_alias="BRIGHTDATA_ZONE")
     openai_model: str = "gpt-4o"
     scrape_timeout_seconds: float = Field(default=60, gt=0, le=180)
+    scrape_cache_seconds: int = Field(default=900, ge=0, le=86400, description="Reuse a scraped product for this long; 0 disables the cache")
     max_concurrent_scrapes: int = Field(default=5, ge=1, le=100)
     allowed_product_hosts_csv: str = Field(default="", validation_alias="ALLOWED_PRODUCT_HOSTS")
 

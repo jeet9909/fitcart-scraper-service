@@ -188,15 +188,288 @@ def _images_from_html(page: str, base_url: str) -> list[str]:
     return _rank_images(images + _extract_image_urls(page, base_url))
 
 
+OUTFIT_SLOTS = ("top", "bottom", "dress", "outerwear", "footwear", "jewelry", "accessory", "other")
+_SLOT_KEYWORDS = (
+    ("footwear", ("shoe", "sneaker", "sandal", "slipper", "flip flop", "flip-flop", "loafer", "boot", "heel", "footwear", "mojari", "jutti", "clog")),
+    ("jewelry", ("jewel", "necklace", "earring", "ring", "bracelet", "bangle", "pendant", "chain", "anklet", "nose pin", "mangalsutra", "kada")),
+    ("dress", ("dress", "gown", "jumpsuit", "saree", "sari", "lehenga", "playsuit", "romper", "co-ord", "kurta set", "anarkali")),
+    ("outerwear", ("jacket", "blazer", "coat", "hoodie", "sweatshirt", "cardigan", "shrug", "sweater", "pullover", "waistcoat", "nehru")),
+    ("bottom", ("trouser", "jean", "pant", "short", "skirt", "legging", "jogger", "chino", "cargo", "palazzo", "track pant", "dhoti", "salwar", "churidar", "pyjama")),
+    ("top", ("shirt", "t-shirt", "tshirt", "tee", "top", "kurta", "kurti", "polo", "blouse", "tunic", "vest", "tank", "camisole", "crop")),
+    ("accessory", ("watch", "belt", "bag", "wallet", "cap", "hat", "sunglass", "scarf", "stole", "tie", "sock", "backpack", "clutch")),
+)
+
+
+def outfit_slot(*texts: str | None) -> str | None:
+    """Map store category / title text to one outfit slot, checking the most specific text first."""
+    for text in texts:
+        lowered = f" {(text or '').lower()} "
+        for slot, words in _SLOT_KEYWORDS:
+            if any(re.search(rf"\b{re.escape(word)}", lowered) for word in words):
+                return slot
+    return None
+
+
+def _clean_title(title: str) -> str:
+    title = html.unescape(re.sub(r"\s+", " ", title)).strip()
+    title = re.split(r"\s+\|\s+", title)[0]
+    title = re.sub(r"^Buy\s+", "", title, flags=re.IGNORECASE)
+    # "Allen Solly Men Trousers - Trousers for Men 42057155" and "... Online at Best Prices in India".
+    title = re.sub(r"\s+-\s+[^-]*\b\d{6,}\b.*$", "", title)
+    title = re.sub(r"\s*[-:]?\s*(?:Buy\s+)?Online at (?:Best|Low) Prices?.*$", "", title, flags=re.IGNORECASE)
+    title = re.sub(r"^Amazon\.in\s*:\s*", "", title, flags=re.IGNORECASE)
+    return title.strip(" -:|") or "Product"
+
+
+def _json_blocks(page: str) -> list[object]:
+    blocks: list[object] = []
+    for block in re.findall(r"<script[^>]+application/ld\+json[^>]*>(.*?)</script>", page, re.IGNORECASE | re.DOTALL):
+        try:
+            blocks.append(json.loads(html.unescape(block.strip())))
+        except ValueError:
+            continue
+    return blocks
+
+
+def _walk(value: object):
+    if isinstance(value, dict):
+        yield value
+        for nested in value.values():
+            yield from _walk(nested)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _walk(item)
+
+
+def _is_type(node: dict, name: str) -> bool:
+    kind = node.get("@type")
+    return name in kind if isinstance(kind, list) else kind == name
+
+
+def _text(value: object) -> str | None:
+    if isinstance(value, dict):
+        value = value.get("name") or value.get("value")
+    if isinstance(value, list):
+        value = ", ".join(str(item) for item in value if isinstance(item, (str, int, float)))
+    if isinstance(value, (int, float)):
+        value = str(value)
+    return html.unescape(value).strip() or None if isinstance(value, str) else None
+
+
+def _number(value: object) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if isinstance(value, str):
+        match = re.search(r"[0-9][0-9,]*(?:\.\d+)?", value)
+        return _amount(match.group(0)) if match else None
+    return None
+
+
+def _json_after(page: str, marker: str) -> object | None:
+    """Decode the JSON object assigned after a marker such as ``window.__myx =``."""
+    index = page.find(marker)
+    if index < 0:
+        return None
+    start = page.find("{", index + len(marker))
+    if start < 0:
+        return None
+    try:
+        value, _ = json.JSONDecoder().raw_decode(page[start:])
+    except ValueError:
+        return None
+    return value
+
+
+def _put(found: dict, key: str, value: object) -> None:
+    if value not in (None, [], "") and key not in found:
+        found[key] = value
+
+
+def _structured_from_json_ld(page: str) -> dict:
+    found: dict = {}
+    for node in (node for block in _json_blocks(page) for node in _walk(block)):
+        if not _is_type(node, "Product") and not _is_type(node, "ProductGroup"):
+            continue
+        _put(found, "title", _text(node.get("name")))
+        _put(found, "brand", _text(node.get("brand")))
+        _put(found, "description", _text(node.get("description")))
+        _put(found, "color", _text(node.get("color")))
+        _put(found, "material", _text(node.get("material")))
+        _put(found, "external_id", _text(node.get("sku") or node.get("productID") or node.get("mpn")))
+        _put(found, "category", _text(node.get("category")))
+        if size := _text(node.get("size")):
+            _put(found, "sizes", [size])
+        offers = node.get("offers")
+        offer_list = offers if isinstance(offers, list) else [offers] if isinstance(offers, dict) else []
+        for offer in offer_list:
+            if not isinstance(offer, dict):
+                continue
+            price = _number(offer.get("price") or offer.get("lowPrice"))
+            if price and "price" not in found:
+                found["price"] = price
+                found["currency"] = _text(offer.get("priceCurrency"))
+            availability = str(offer.get("availability") or "").lower()
+            if availability and "availability" not in found:
+                found["availability"] = "out_of_stock" if ("outofstock" in availability or "soldout" in availability) else "in_stock"
+            spec = offer.get("priceSpecification")
+            for item in spec if isinstance(spec, list) else [spec] if isinstance(spec, dict) else []:
+                if "list" in str(item.get("priceType", "")).lower() and (mrp := _number(item.get("price"))):
+                    _put(found, "mrp", mrp)
+        rating = node.get("aggregateRating")
+        if isinstance(rating, dict):
+            _put(found, "rating", _number(rating.get("ratingValue")))
+            count = _number(rating.get("reviewCount") or rating.get("ratingCount"))
+            _put(found, "review_count", int(count) if count is not None else None)
+        _put(found, "images", _json_ld_images(node))
+    return {key: value for key, value in found.items() if value not in (None, [], "")}
+
+
+def _structured_from_myntra(page: str) -> dict:
+    data = _json_after(page, "window.__myx")
+    pdp = data.get("pdpData") if isinstance(data, dict) else None
+    if not isinstance(pdp, dict):
+        return {}
+    price = pdp.get("price") if isinstance(pdp.get("price"), dict) else {}
+    found: dict = {
+        "title": _text(pdp.get("name")),
+        "brand": _text(pdp.get("brand")),
+        "price": _number(price.get("discounted") or pdp.get("discountedPrice") or price.get("mrp") or pdp.get("mrp")),
+        "mrp": _number(price.get("mrp") or pdp.get("mrp")),
+        "currency": "INR",
+        "color": _text(pdp.get("baseColour")),
+        "external_id": _text(pdp.get("id")),
+    }
+    analytics = pdp.get("analytics") if isinstance(pdp.get("analytics"), dict) else {}
+    found["category"] = _text(analytics.get("articleType")) or _text(pdp.get("articleType"))
+    found["gender"] = _text(analytics.get("gender")) or _text(pdp.get("gender"))
+    attributes = pdp.get("articleAttributes") if isinstance(pdp.get("articleAttributes"), dict) else {}
+    found["material"] = _text(attributes.get("Fabric") or attributes.get("Material") or attributes.get("Fabric Type"))
+    sizes, unavailable = [], []
+    for size in pdp.get("sizes") or []:
+        if not isinstance(size, dict) or not (label := _text(size.get("label"))):
+            continue
+        in_stock = size.get("available")
+        if in_stock is None and isinstance(size.get("sizeSellerData"), list):
+            in_stock = any((seller or {}).get("availableCount", 0) > 0 for seller in size["sizeSellerData"])
+        (sizes if in_stock is not False else unavailable).append(label)
+    found["sizes"], found["unavailable_sizes"] = sizes, unavailable
+    if sizes or unavailable:
+        found["availability"] = "in_stock" if sizes else "out_of_stock"
+    ratings = pdp.get("ratings") if isinstance(pdp.get("ratings"), dict) else {}
+    found["rating"] = _number(ratings.get("averageRating"))
+    count = _number(ratings.get("totalCount"))
+    found["review_count"] = int(count) if count is not None else None
+    details = pdp.get("productDetails")
+    if isinstance(details, list):
+        text = " ".join(re.sub(r"<[^>]+>", " ", str((item or {}).get("description") or "")) for item in details if isinstance(item, dict))
+        found["description"] = re.sub(r"\s+", " ", html.unescape(text)).strip() or None
+    images = []
+    media = pdp.get("media") if isinstance(pdp.get("media"), dict) else {}
+    for album in media.get("albums") or []:
+        for image in (album or {}).get("images") or []:
+            if isinstance(image, dict) and (src := image.get("imageURL") or image.get("secureSrc") or image.get("src")):
+                images.append(src)
+    found["images"] = images
+    return {key: value for key, value in found.items() if value not in (None, [], "")}
+
+
+def _structured_from_amazon(page: str) -> dict:
+    found: dict = {}
+    if match := re.search(r'id="productTitle"[^>]*>(.*?)</span>', page, re.DOTALL):
+        found["title"] = html.unescape(re.sub(r"\s+", " ", match.group(1))).strip()
+    if match := re.search(r'id="bylineInfo"[^>]*>(.*?)</a>', page, re.DOTALL):
+        byline = html.unescape(re.sub(r"<[^>]+>|\s+", " ", match.group(1))).strip()
+        found["brand"] = re.sub(r"^(?:Visit the\s+|Brand:\s*)|\s+Store$", "", byline).strip() or None
+    core = re.search(r'id="(?:corePriceDisplay_desktop_feature_div|corePrice_feature_div|apex_desktop)"(.*?)(?:id="(?:tp_price_block|deliveryBlock|availability))', page, re.DOTALL)
+    block = core.group(1) if core else page
+    if match := re.search(r'class="a-price[^"]*priceToPay[^"]*"[^>]*>\s*<span class="a-offscreen">\s*([^<]+)<', block) or re.search(r'class="a-offscreen">\s*₹\s*([0-9][^<]*)<', block):
+        found["price"] = _number(match.group(1))
+    if match := re.search(r'a-text-price[^>]*>\s*<span class="a-offscreen">\s*₹?\s*([0-9][^<]*)<', block):
+        found["mrp"] = _number(match.group(1))
+    if found.get("price"):
+        found["currency"] = "INR"
+    variations = _json_after(page, '"variationValues"')
+    if isinstance(variations, dict):
+        found["sizes"] = [str(size) for size in variations.get("size_name") or [] if size]
+        colors = [str(color) for color in variations.get("color_name") or [] if color]
+        if colors:
+            found["colors"] = colors
+    for label, key in (("Material composition", "material"), ("Material type", "material"), ("Material", "material"), ("Colour", "color"), ("Color", "color")):
+        if key in found:
+            continue
+        if match := re.search(rf">\s*{label}\s*</span>\s*</td>\s*<td[^>]*>\s*<span[^>]*>\s*([^<]+)<", page) or re.search(rf"{label}\s*</span>\s*<span[^>]*>\s*:?\s*([^<]+)<", page):
+            found[key] = html.unescape(match.group(1)).strip()
+    if re.search(r'id="availability".{0,400}?(?:Currently unavailable|out of stock)', page, re.DOTALL | re.IGNORECASE):
+        found["availability"] = "out_of_stock"
+    return {key: value for key, value in found.items() if value not in (None, [], "")}
+
+
+def _structured_from_meta(page: str) -> dict:
+    def meta(prop: str) -> str | None:
+        pattern = re.escape(prop)
+        match = re.search(rf"<meta[^>]+(?:property|name)=[\"']{pattern}[\"'][^>]*content=[\"']([^\"']*)", page, re.IGNORECASE) or re.search(
+            rf"<meta[^>]+content=[\"']([^\"']*)[\"'][^>]*(?:property|name)=[\"']{pattern}[\"']", page, re.IGNORECASE
+        )
+        return html.unescape(match.group(1)).strip() if match and match.group(1).strip() else None
+
+    found: dict = {"title": meta("og:title")}
+    if not found["title"] and (match := re.search(r"<title[^>]*>(.*?)</title>", page, re.IGNORECASE | re.DOTALL)):
+        found["title"] = match.group(1)
+    found["price"] = _number(meta("product:price:amount") or meta("og:price:amount"))
+    found["currency"] = meta("product:price:currency") or meta("og:price:currency")
+    found["brand"] = meta("product:brand") or meta("og:brand")
+    return {key: value for key, value in found.items() if value not in (None, [], "")}
+
+
+def _structured_product(page: str, url: str) -> dict:
+    """Combine structured product data found in page HTML, most reliable source first."""
+    host = (urlsplit(url).hostname or "").lower()
+    sources = []
+    if "myntra" in host:
+        sources.append(_structured_from_myntra(page))
+    if "amazon" in host or "amzn" in host:
+        sources.append(_structured_from_amazon(page))
+    sources += [_structured_from_json_ld(page), _structured_from_meta(page)]
+    merged: dict = {}
+    for source in sources:
+        for key, value in source.items():
+            merged.setdefault(key, value)
+    if merged.get("title"):
+        merged["title"] = _clean_title(merged["title"])
+    if merged.get("mrp") and merged.get("price") and merged["mrp"] <= merged["price"]:
+        merged.pop("mrp")
+    return merged
+
+
+def _price_from_markdown(markdown: str, title: str) -> tuple[float | None, float | None]:
+    """Find the selling price and MRP, preferring the price block near the product title."""
+    currency = r"(?:₹|INR|Rs\.?)\s*"
+    number = r"([0-9][0-9,]*(?:\.\d{1,2})?)"
+    start = markdown.find(title) if title else -1
+    region = markdown[start:] if start >= 0 else markdown
+    # "₹1471 MRP ₹2299 (36% OFF)" (Myntra) and "₹799 M.R.P.: ₹1,999" (Amazon).
+    paired = re.search(rf"{currency}{number}[^0-9₹]{{0,40}}?(?:MRP|M\.R\.P\.?)\s*:?\s*(?:~~)?\s*{currency}{number}", region, re.IGNORECASE)
+    if paired:
+        price, mrp = _amount(paired.group(1)), _amount(paired.group(2))
+        return price, mrp if mrp and price and mrp > price else None
+    # "MRP ₹2,299 ₹1,471".
+    paired = re.search(rf"(?:MRP|M\.R\.P\.?)\s*:?\s*(?:~~)?\s*{currency}{number}(?:~~)?\s*{currency}{number}", region, re.IGNORECASE)
+    if paired:
+        mrp, price = _amount(paired.group(1)), _amount(paired.group(2))
+        return price, mrp if mrp and price and mrp > price else None
+    prices = [amount for raw in re.findall(rf"{currency}{number}", region, re.IGNORECASE) if (amount := _amount(raw)) is not None]
+    price = prices[0] if prices else None
+    original = next((candidate for candidate in prices[1:3] if price is not None and candidate > price), None)
+    return price, original
+
+
 def _parse_product(markdown: str, url: str) -> ProductData:
     lines = [line.strip() for line in markdown.splitlines() if line.strip()]
     headings = [re.sub(r"^#+\s*", "", line).strip() for line in lines if re.match(r"^#{1,3}\s+", line)]
     title = headings[0] if headings else (lines[0][:300] if lines else urlsplit(url).hostname or "Product")
 
-    price_matches = re.findall(r"(?:₹|INR\s*)\s*([0-9][0-9,]*(?:\.\d{1,2})?)", markdown, flags=re.IGNORECASE)
-    prices = [amount for raw in price_matches if (amount := _amount(raw)) is not None]
-    price = prices[0] if prices else None
-    original = next((candidate for candidate in prices[1:] if price is not None and candidate > price), None)
+    price, original = _price_from_markdown(markdown, title)
+    title = _clean_title(title)
     discount = round((original - price) / original * 100, 2) if price is not None and original else None
 
     images = _extract_image_urls(markdown, url)
@@ -223,7 +496,32 @@ def _parse_product(markdown: str, url: str) -> ProductData:
         rating=rating,
         review_count=review_count,
         image_urls=images,
+        outfit_slot=outfit_slot(title),
     )
+
+
+def _apply_structured(product: ProductData, data: dict, url: str) -> ProductData:
+    """Overlay structured page data, which is more reliable than text parsed from markdown."""
+    if data.get("title"):
+        product.title = data["title"][:500]
+    if data.get("price"):
+        product.price = Money(amount=data["price"], currency=(data.get("currency") or "INR").upper()[:3])
+        mrp = data.get("mrp")
+        product.original_price = Money(amount=mrp, currency=product.price.currency) if mrp else None
+        product.discount_percent = round((mrp - data["price"]) / mrp * 100, 2) if mrp else None
+    for key in ("brand", "description", "category", "material", "external_id", "rating", "review_count", "availability"):
+        if data.get(key) is not None:
+            setattr(product, key, data[key][:2000] if isinstance(data[key], str) else data[key])
+    if data.get("colors") or data.get("color"):
+        product.colors = data.get("colors") or [data["color"]]
+    if data.get("sizes") or data.get("unavailable_sizes"):
+        product.sizes = list(dict.fromkeys(data.get("sizes") or []))
+        product.unavailable_sizes = list(dict.fromkeys(data.get("unavailable_sizes") or []))
+    images = [image for item in data.get("images") or [] if (image := _normalize_image_url(str(item), url))]
+    if images:
+        product.image_urls = _rank_images(images + product.image_urls)
+    product.outfit_slot = outfit_slot(product.category, product.title) or product.outfit_slot
+    return product
 
 
 class BrightDataScraper:
@@ -294,36 +592,61 @@ class BrightDataScraper:
                 return response.text if response.status_code < 400 else None
         return None
 
-    async def _fallback_images(self, url: str) -> list[str]:
-        """Find product images in the page HTML when the markdown has none."""
+    async def _fetch_product_html(self, url: str) -> str | None:
+        """Page HTML carries structured product data (JSON-LD, store state) that markdown loses."""
         for source, fetch in (
             ("brightdata_unlocker", lambda: self._fetch_html_via_unlocker(url)),
             ("direct", lambda: self._fetch_html_directly(url)),
-            ("brightdata_html", lambda: self._call_brightdata("scrape_as_html", url, optional=True)),
         ):
             try:
                 page = await asyncio.wait_for(fetch(), timeout=self.settings.scrape_timeout_seconds)
             except Exception as exc:
-                logger.info("Image fallback %s failed host=%s type=%s", source, urlsplit(url).hostname, type(exc).__name__)
+                logger.info("HTML fetch %s failed host=%s type=%s", source, urlsplit(url).hostname, type(exc).__name__)
                 continue
-            images = _images_from_html(_strip_security_wrapper(page), url) if page else []
-            logger.info("Image fallback %s host=%s html_bytes=%d images=%d", source, urlsplit(url).hostname, len(page or ""), len(images))
-            if images:
-                return images
-        return []
+            if page and page.strip():
+                logger.info("HTML fetch %s host=%s html_bytes=%d", source, urlsplit(url).hostname, len(page))
+                return _strip_security_wrapper(page)
+        return None
+
+    async def _fallback_images(self, url: str) -> list[str]:
+        """Last resort when neither the HTML nor the markdown had product images."""
+        try:
+            page = await asyncio.wait_for(self._call_brightdata("scrape_as_html", url, optional=True), timeout=self.settings.scrape_timeout_seconds)
+        except Exception as exc:
+            logger.info("Image fallback brightdata_html failed host=%s type=%s", urlsplit(url).hostname, type(exc).__name__)
+            return []
+        return _images_from_html(_strip_security_wrapper(page), url) if page else []
 
     async def scrape(self, url: str, country: str) -> ScrapeResponse:
         del country
         try:
             async with self._semaphore:
                 resolved_url = await asyncio.to_thread(_resolve_share_url, url)
-                content = await asyncio.wait_for(self._fetch_page(resolved_url), timeout=self.settings.scrape_timeout_seconds)
-                content = _strip_security_wrapper(content)
-                if "page not found" in content.lower() and len(content) < 500:
-                    raise ScrapeProviderError("The product page was not found")
+                page = await self._fetch_product_html(resolved_url)
+                structured = _structured_product(page, resolved_url) if page else {}
+                html_images = _images_from_html(page, resolved_url) if page else []
+                complete = bool(structured.get("title") and structured.get("price") and (structured.get("images") or html_images))
+                content = ""
+                if not complete:
+                    try:
+                        content = _strip_security_wrapper(
+                            await asyncio.wait_for(self._fetch_page(resolved_url), timeout=self.settings.scrape_timeout_seconds)
+                        )
+                    except (ScrapeProviderError, TimeoutError):
+                        if not structured.get("title"):
+                            raise
+                    if "page not found" in content.lower() and len(content) < 500 and not structured.get("title"):
+                        raise ScrapeProviderError("The product page was not found")
                 product = _parse_product(content, url)
+                product = _apply_structured(product, structured, resolved_url)
+                if not product.image_urls:
+                    product.image_urls = html_images
                 if not product.image_urls:
                     product.image_urls = await self._fallback_images(resolved_url)
+                logger.info(
+                    "Scraped host=%s structured_fields=%s price=%s sizes=%d images=%d",
+                    urlsplit(resolved_url).hostname, sorted(structured), product.price.amount, len(product.sizes), len(product.image_urls),
+                )
                 if not product.image_urls:
                     logger.warning(
                         "No product images found host=%s title=%r markdown_start=%r",

@@ -30,7 +30,9 @@ class ProductData(BaseModel):
     review_count: int | None = Field(default=None, ge=0)
     image_urls: list[str] = Field(default_factory=list)
     colors: list[str] = Field(default_factory=list)
-    sizes: list[str] = Field(default_factory=list)
+    sizes: list[str] = Field(default_factory=list, description="Sizes the store lists as in stock, or all listed sizes when stock is unknown")
+    unavailable_sizes: list[str] = Field(default_factory=list, description="Sizes the store lists as sold out")
+    outfit_slot: Literal["top", "bottom", "dress", "outerwear", "footwear", "jewelry", "accessory", "other"] | None = None
     material: str | None = None
     seller: str | None = None
 
@@ -62,6 +64,7 @@ class GalleryItem(BaseModel):
     product_image_url: str
     result_image_url: str
     model: str
+    items: list[dict] = Field(default_factory=list, description="Wardrobe items worn in an outfit try-on")
     created_at: datetime
 
 
@@ -92,3 +95,45 @@ class GeminiUsageResponse(BaseModel):
     quota_dashboard_url: str = "https://aistudio.google.com/usage"
     total_saved_tryons: int | None = Field(default=None, description="Successful try-ons saved in the Supabase gallery, all time")
     since_server_start: GeminiUsageSinceStart
+
+
+OutfitSlot = Literal["top", "bottom", "dress", "outerwear", "footwear", "jewelry", "accessory", "other"]
+WardrobeCollection = Literal["store", "home"]
+
+
+class WardrobeItem(BaseModel):
+    id: str
+    collection: WardrobeCollection = Field(description="store: products saved from shops; home: clothes you already own")
+    slot: OutfitSlot
+    name: str
+    brand: str | None = None
+    color: str | None = None
+    price: float | None = None
+    currency: str | None = None
+    sizes: list[str] = Field(default_factory=list)
+    selected_size: str | None = None
+    store: str | None = None
+    product_url: str | None = None
+    notes: str | None = None
+    image_url: str
+    created_at: datetime
+
+
+class WardrobeResponse(BaseModel):
+    items: list[WardrobeItem]
+
+
+class OutfitSuggestionRequest(BaseModel):
+    collection: Literal["store", "home", "all"] = "all"
+    occasion: str | None = Field(default=None, max_length=120, description="e.g. office, wedding, casual weekend")
+    count: int = Field(default=3, ge=1, le=5)
+
+
+class OutfitSuggestion(BaseModel):
+    title: str
+    reason: str
+    item_ids: list[str]
+
+
+class OutfitSuggestionResponse(BaseModel):
+    outfits: list[OutfitSuggestion]

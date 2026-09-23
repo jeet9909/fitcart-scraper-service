@@ -95,6 +95,50 @@ class OutfitPiece:
     label: str | None = None
 
 
+POSES = ("standard", "keep")
+
+
+def _describe_pieces(pieces: list["OutfitPiece"]) -> str:
+    return "; ".join(
+        f"image {index} is the {piece.category}" + (f" ({piece.label})" if piece.label else "")
+        for index, piece in enumerate(pieces, start=2)
+    )
+
+
+def tryon_prompt(pieces: list["OutfitPiece"], pose: str = "standard") -> str:
+    """Instruction for the image model. Image 1 is always the person; images 2.. are the products in order."""
+    areas = ", ".join(dict.fromkeys(piece.category for piece in pieces))
+    products = (
+        f"Image 1 shows the person. The other images are the exact product references: {_describe_pieces(pieces)}. "
+        "Product photos may show a model wearing other clothes or accessories; take only the listed product from each photo and ignore everything else. "
+        f"Dress the person in {'this product' if len(pieces) == 1 else 'all of these products at the same time'}, replacing what they wear in the {areas} area. "
+        "Reproduce each product exactly: same color, fabric texture, print, pattern, logo, collar, sleeves, length, fit and design details. "
+        "Do not add clothing, jewelry or accessories that were not provided. "
+    )
+    identity = (
+        "The result must clearly be the same person as image 1: keep the face, facial features, expression style, hairstyle, facial hair, "
+        "glasses if worn, skin tone, age, height and body shape exactly. Do not beautify, slim, reshape or change the face or body. "
+    )
+    quality = "Photorealistic, natural fabric folds and fit, anatomically correct hands with five fingers each. One single person, no text, no watermark, no collage, no borders."
+    if pose == "keep":
+        return (
+            "Create a photorealistic virtual try-on. " + products + identity
+            + "Keep the person's own pose, background, camera angle and lighting from image 1, and keep their own clothing in body areas the products do not cover. "
+            + "Show the full body from head to feet if image 1 does. " + quality
+        )
+    return (
+        "Create a photorealistic full-body fashion catalogue photo of the person from image 1 wearing the products. " + products + identity
+        + "Pose: ignore the pose in image 1. Show the person standing upright, facing the camera straight on, weight evenly on both feet, feet slightly apart, "
+        + "arms relaxed and straight down at the sides and held slightly away from the torso so the arms and hands cover no part of the outfit, "
+        + "hands open and relaxed, shoulders level, head straight, calm neutral expression, looking at the camera. "
+        + "Framing: vertical portrait with the entire body in frame from the top of the head to the soles of the shoes, a small margin above the head and below the feet, "
+        + "camera at chest height with no tilt, nothing cropped. "
+        + "Background and light: a plain, light neutral studio backdrop with soft, even front lighting so every garment is clearly visible. "
+        + "For body areas the products do not cover, keep the person's own clothing from image 1; if those areas are not visible in image 1, "
+        + "use simple plain neutral items that suit the outfit (for example plain trousers or plain shoes). " + quality
+    )
+
+
 @dataclass
 class GeminiUsage:
     """Usage counted by this process. Resets when the server restarts."""
@@ -143,38 +187,16 @@ class TryOnService:
         validate_public_url(str(response.url))
         return validate_image(response.content, response.headers.get("content-type", "").split(";")[0], self.settings.max_image_bytes)
 
-    async def generate(self, person: tuple[bytes, str, str], product: tuple[bytes, str, str], category: str, product_name: str | None = None) -> tuple[bytes, str, str]:
-        return await self.generate_outfit(person, [OutfitPiece(image=product, category=category, label=product_name)])
+    async def generate(self, person: tuple[bytes, str, str], product: tuple[bytes, str, str], category: str, product_name: str | None = None, pose: str = "standard") -> tuple[bytes, str, str]:
+        return await self.generate_outfit(person, [OutfitPiece(image=product, category=category, label=product_name)], pose=pose)
 
-    async def generate_outfit(self, person: tuple[bytes, str, str], pieces: list["OutfitPiece"]) -> tuple[bytes, str, str]:
+    async def generate_outfit(self, person: tuple[bytes, str, str], pieces: list["OutfitPiece"], pose: str = "standard") -> tuple[bytes, str, str]:
         """Dress the person in one or more products (top, bottom, footwear, jewelry...) in a single image."""
         if not 1 <= len(pieces) <= MAX_OUTFIT_PIECES:
             raise TryOnError(f"Choose between 1 and {MAX_OUTFIT_PIECES} items to try on", 400)
-        if len(pieces) == 1:
-            prompt = (
-                "Create a photorealistic virtual try-on using the first image as the person identity and body reference "
-                "and the second image as the exact product reference. Put the product naturally on the person. "
-                "Preserve the person's face, identity, skin tone, body proportions, pose, background, camera angle, and lighting. "
-                f"The product is a {pieces[0].category}" + (f": {pieces[0].label}" if pieces[0].label else "") + ". "
-                "The product photo may show a model wearing other clothes; transfer only this product and ignore everything else the model wears. "
-                f"Replace only what the person wears in the {pieces[0].category} area and keep the rest of their own clothing unchanged. "
-                "Preserve the product's color, texture, print, logo, shape, and design. "
-                "Do not add accessories. Return one full-body front-view image with no text or collage."
-            )
-        else:
-            listing = "; ".join(
-                f"image {index} is the {piece.category}" + (f" ({piece.label})" if piece.label else "")
-                for index, piece in enumerate(pieces, start=2)
-            )
-            prompt = (
-                "Create a photorealistic virtual try-on of a complete outfit. Image 1 is the person identity and body reference. "
-                f"The other images are the exact product references: {listing}. "
-                "Product photos may show models wearing other clothes; take only the listed product from each photo. "
-                "Dress the person in every one of these products at the same time, replacing the clothing they currently wear in the same body areas. "
-                "Preserve the person's face, identity, skin tone, body proportions, pose, background, camera angle, and lighting. "
-                "Preserve each product's color, texture, print, logo, shape, and design exactly. Do not add items that were not provided. "
-                "Return one full-body front-view image, head to feet, with no text or collage."
-            )
+        if pose not in POSES:
+            raise TryOnError(f"pose must be one of: {', '.join(POSES)}", 400)
+        prompt = tryon_prompt(pieces, pose)
         payload = {
             "contents": [{
                 "role": "user",

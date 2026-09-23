@@ -229,9 +229,28 @@ upload = function liveUpload() {
   if (button && !state.samplePerson) button.textContent = 'Generate my virtual try-on';
   const chartNote = document.querySelector('.uploadgrid .infobox');
   if (chartNote && state.mode === 'scraped') chartNote.textContent = `Check ${state.sourceStore}'s size chart for this product before buying.`;
+  const consentLabel = document.querySelector('.uploadgrid .consent');
+  if (consentLabel && !state.samplePerson) consentLabel.insertAdjacentHTML('beforebegin', poseChoiceHtml(state.pose));
+  const dropHint = document.querySelector('#dropzone strong');
+  if (dropHint && !state.samplePerson) dropHint.textContent = 'Add a clear photo of yourself';
   const consent = document.querySelector('.consent span');
   if (consent) consent.textContent = 'I have permission to use these photos. I understand they are sent to the FitCart API to create the try-on, and a visual preview cannot guarantee fit.';
 };
+
+function poseChoiceHtml(current) {
+  const pose = current === 'keep' ? 'keep' : 'standard';
+  const option = (value, title, text) => `<label class="card" style="display:flex;gap:10px;align-items:flex-start;padding:12px;margin:0 0 8px;cursor:pointer;${pose === value ? 'border-color:var(--accent)' : ''}"><input type="radio" name="tryonPose" value="${value}" ${pose === value ? 'checked' : ''} style="margin-top:4px"><span><strong class="small">${title}</strong><br><span class="micro muted">${text}</span></span></label>`;
+  return `<fieldset style="border:0;padding:0;margin:18px 0 6px"><legend class="small" style="margin-bottom:8px"><strong>Pose in your try-on</strong></legend>${option('standard', 'Standard pose (recommended)', 'Any photo works. You are shown standing straight, arms at your sides, head to toe on a clean background, so the whole outfit is visible.')}${option('keep', 'Keep my pose', 'Uses your photo’s pose and background. Parts of the outfit may be hidden.')}</fieldset>`;
+}
+
+document.addEventListener('change', event => {
+  if (event.target.name !== 'tryonPose') return;
+  state.pose = event.target.value;
+  state.result = false;
+  document.querySelectorAll('input[name="tryonPose"]').forEach(input => {
+    input.closest('label').style.borderColor = input.checked ? 'var(--accent)' : '';
+  });
+});
 
 function categoryForApi(product) {
   if (product.slot && product.slot !== 'other') return SLOT_NAMES[product.slot].toLowerCase();
@@ -313,6 +332,7 @@ generate = async function liveGenerate() {
     form.append('category', categoryForApi(state.product));
     if (state.product.name) form.append('product_name', [state.product.color && !/not (listed|provided)/i.test(state.product.color) ? state.product.color : '', state.product.name].filter(Boolean).join(' ').slice(0, 200));
     form.append('country', 'IN');
+    form.append('pose', state.pose === 'keep' ? 'keep' : 'standard');
     if (state.mode === 'manual') {
       form.append('product_image', dataUrlBlob(state.product.image), 'product.jpg');
     } else {

@@ -103,6 +103,10 @@ curl -H "X-Admin-Token: $ADMIN_API_TOKEN" https://<your-service>.onrender.com/v1
 
 Returns whether the Gemini key and model work, the all-time number of saved try-ons, and requests and tokens counted since the server last started. Gemini API keys cannot read their remaining quota or credit balance, so `remaining_credits` is always `null`; check [Google AI Studio usage](https://aistudio.google.com/usage) and your Cloud billing for that.
 
+### "429: You exceeded your current quota"
+
+Gemini image models such as `gemini-2.5-flash-image` have **no free-tier quota**; a key on a project without billing gets `429` with a limit of `0` on every request. Open [Google AI Studio → API keys](https://aistudio.google.com/apikey), choose **Set up billing** for the key's project (or create a key in a project that already has billing), then update `GEMINI_API_KEY` on Render. The API now reports which limit was hit (no quota, daily, or per-minute) and retries a short per-minute limit once automatically.
+
 ## Tests
 
 ```bash

@@ -421,3 +421,68 @@ def test_gemini_usage_reports_key_check_and_counters() -> None:
     assert body["remaining_credits"] is None
     assert body["since_server_start"]["requests"] == 3
     assert body["since_server_start"]["total_tokens"] == 4500
+
+
+def _gemini_quota_service(monkeypatch, responses: list[dict]) -> tuple:
+    import asyncio as _asyncio
+    import httpx as _httpx
+
+    calls: list[int] = []
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        calls.append(1)
+        return _httpx.Response(429, json=responses[min(len(calls), len(responses)) - 1])
+
+    real_client = _httpx.AsyncClient
+    monkeypatch.setattr("app.tryon.httpx.AsyncClient", lambda **kwargs: real_client(transport=_httpx.MockTransport(handler), **kwargs))
+    async def no_sleep(_seconds: float) -> None: return None
+    monkeypatch.setattr("app.tryon.asyncio.sleep", no_sleep)
+    service = TryOnService(Settings(gemini_api_key="test"))
+    image = (_tiny_png(), "image/png", "png")
+    service_call = lambda: _asyncio.run(service.generate(image, image, "shirt"))
+    return service, calls, service_call
+
+
+def _quota_error(quota_id: str, value: str, retry: str | None = None) -> dict:
+    details = [{
+        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+        "violations": [{"quotaMetric": "generativelanguage.googleapis.com/generate_content_free_tier_requests", "quotaId": quota_id, "quotaDimensions": {"model": "gemini-2.5-flash-image"}, "quotaValue": value}],
+    }]
+    if retry:
+        details.append({"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": retry})
+    return {"error": {"code": 429, "message": "You exceeded your current quota", "status": "RESOURCE_EXHAUSTED", "details": details}}
+
+
+def test_gemini_zero_quota_explains_billing_without_retrying(monkeypatch) -> None:
+    from app.tryon import TryOnError
+    service, calls, generate = _gemini_quota_service(monkeypatch, [_quota_error("GenerateRequestsPerMinutePerProjectPerModel-FreeTier", "0", "30s")])
+    try:
+        generate()
+        raise AssertionError("expected TryOnError")
+    except TryOnError as exc:
+        assert exc.status_code == 429
+        assert "enable billing" in str(exc)
+    assert len(calls) == 1
+
+
+def test_gemini_short_rate_limit_is_retried_once(monkeypatch) -> None:
+    from app.tryon import TryOnError
+    service, calls, generate = _gemini_quota_service(monkeypatch, [_quota_error("GenerateRequestsPerMinutePerProjectPerModel", "10", "5s")])
+    try:
+        generate()
+        raise AssertionError("expected TryOnError")
+    except TryOnError as exc:
+        assert exc.status_code == 429
+        assert "try again in about 5 seconds" in str(exc)
+    assert len(calls) == 2
+
+
+def test_gemini_daily_quota_message(monkeypatch) -> None:
+    from app.tryon import TryOnError
+    service, calls, generate = _gemini_quota_service(monkeypatch, [_quota_error("GenerateRequestsPerDayPerProjectPerModel", "100")])
+    try:
+        generate()
+        raise AssertionError("expected TryOnError")
+    except TryOnError as exc:
+        assert "daily Gemini quota" in str(exc)
+    assert len(calls) == 1

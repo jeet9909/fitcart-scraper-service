@@ -3,6 +3,7 @@ import html
 import json
 import logging
 import re
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from urllib.parse import urljoin, urlsplit
@@ -430,6 +431,61 @@ def _amazon_unavailable_sizes(page: str, sizes: list[str]) -> tuple[str | None, 
     return current_color, unavailable
 
 
+def _json_array_after(page: str, marker: str) -> list | None:
+    index = page.find(marker)
+    if index < 0:
+        return None
+    start = page.find("[", index + len(marker))
+    if start < 0 or start - index > 200:
+        return None
+    try:
+        value, _ = json.JSONDecoder().raw_decode(page[start:])
+    except ValueError:
+        return None
+    return value if isinstance(value, list) else None
+
+
+def _amazon_main_images(page: str) -> list[str]:
+    """Images of the product being viewed only: the landing image and its gallery.
+
+    Amazon pages also carry dozens of images of other products ("customers also viewed",
+    sponsored carousels), so page-wide image scraping can return a different item.
+    """
+    images: list[str] = []
+    landing = re.search(r"<img[^>]+id=[\"'](?:landingImage|imgBlkFront|main-image)[\"'][^>]*>", page)
+    if landing:
+        tag = landing.group(0)
+        if hires := re.search(r"data-old-hires=[\"']([^\"']+)", tag):
+            images.append(hires.group(1))
+        if dynamic := re.search(r"data-a-dynamic-image=[\"']([^\"']+)", tag):
+            try:
+                sizes = json.loads(html.unescape(dynamic.group(1)))
+                images += sorted(sizes, key=lambda url: -max(sizes[url]) if isinstance(sizes[url], list) and sizes[url] else 0)
+            except (ValueError, TypeError):
+                pass
+        if src := re.search(r"\ssrc=[\"'](https://[^\"']+)", tag):
+            images.append(src.group(1))
+    block = page.find("colorImages")
+    gallery = _json_array_after(page[block:], "'initial'") or _json_array_after(page[block:], '"initial"') if block >= 0 else None
+    for entry in gallery or []:
+        if isinstance(entry, dict) and (url := entry.get("hiRes") or entry.get("large")):
+            images.append(url)
+    return list(dict.fromkeys(image for image in images if "/images/I/" in image))
+
+
+BLOCKED_PAGE_MARKERS = (
+    "enter the characters you see below", "/errors/validatecaptcha", "api-services-support@amazon.com",
+    "robot check", "are you a human", "access denied", "request blocked", "captcha-delivery",
+    "please verify you are a human", "pardon our interruption",
+)
+
+
+def _looks_blocked(page: str) -> bool:
+    """Bot walls and captcha pages must not be parsed as the product."""
+    head = page[:20000].lower()
+    return any(marker in head for marker in BLOCKED_PAGE_MARKERS) and "producttitle" not in head and "pdpdata" not in head
+
+
 def _structured_from_amazon(page: str) -> dict:
     found: dict = {}
     if match := re.search(r'id="productTitle"[^>]*>(.*?)</span>', page, re.DOTALL):
@@ -462,6 +518,7 @@ def _structured_from_amazon(page: str) -> dict:
             continue
         if match := re.search(rf">\s*{label}\s*</span>\s*</td>\s*<td[^>]*>\s*<span[^>]*>\s*([^<]+)<", page) or re.search(rf"{label}\s*</span>\s*<span[^>]*>\s*:?\s*([^<]+)<", page):
             found[key] = html.unescape(match.group(1)).strip()
+    found["images"] = _amazon_main_images(page)
     if re.search(r'id="availability".{0,400}?(?:Currently unavailable|out of stock)', page, re.DOTALL | re.IGNORECASE):
         found["availability"] = "out_of_stock"
     return {key: value for key, value in found.items() if value not in (None, [], "")}
@@ -592,6 +649,9 @@ class BrightDataScraper:
         self.settings = settings
         self.clock = clock or (lambda: datetime.now(UTC))
         self._semaphore = asyncio.Semaphore(settings.max_concurrent_scrapes)
+        self._cache: dict[str, tuple[float, ScrapeResponse]] = {}
+        self._inflight: dict[str, asyncio.Future[ScrapeResponse]] = {}
+        self._working_zone: str | None = None
 
     async def _call_brightdata(self, tool: str, url: str, optional: bool = False) -> str | None:
         token = self.settings.brightdata_api_token.get_secret_value()
@@ -621,7 +681,8 @@ class BrightDataScraper:
         ``mcp_unlocker``. Store bot walls block the direct fetch from Render.
         """
         token = self.settings.brightdata_api_token.get_secret_value()
-        zones = list(dict.fromkeys(zone for zone in (self.settings.brightdata_zone, "mcp_unlocker") if zone))
+        # Try the zone that worked last time first, so a missing zone does not cost a round trip on every scrape.
+        zones = list(dict.fromkeys(zone for zone in (self._working_zone, self.settings.brightdata_zone, "mcp_unlocker") if zone))
         async with httpx.AsyncClient(timeout=self.settings.scrape_timeout_seconds) as client:
             for zone in zones:
                 response = await client.post(
@@ -630,6 +691,7 @@ class BrightDataScraper:
                     json={"zone": zone, "url": url, "format": "raw", "country": "in"},
                 )
                 if response.status_code < 400 and response.text.strip():
+                    self._working_zone = zone
                     return response.text
                 logger.info(
                     "Bright Data unlocker zone=%s status=%s error=%s",
@@ -667,8 +729,12 @@ class BrightDataScraper:
                 logger.info("HTML fetch %s failed host=%s type=%s", source, urlsplit(url).hostname, type(exc).__name__)
                 continue
             if page and page.strip():
+                page = _strip_security_wrapper(page)
+                if _looks_blocked(page):
+                    logger.info("HTML fetch %s host=%s returned a bot wall", source, urlsplit(url).hostname)
+                    continue
                 logger.info("HTML fetch %s host=%s html_bytes=%d", source, urlsplit(url).hostname, len(page))
-                return _strip_security_wrapper(page)
+                return page
         return None
 
     async def _fallback_images(self, url: str) -> list[str]:
@@ -681,13 +747,39 @@ class BrightDataScraper:
         return _images_from_html(_strip_security_wrapper(page), url) if page else []
 
     async def scrape(self, url: str, country: str) -> ScrapeResponse:
+        """Scrape a product, reusing a recent result and sharing one fetch between identical requests."""
         del country
+        now = time.monotonic()
+        cached = self._cache.get(url)
+        if cached and now - cached[0] < self.settings.scrape_cache_seconds:
+            return cached[1].model_copy(deep=True)
+        if url in self._inflight:
+            return (await asyncio.shield(self._inflight[url])).model_copy(deep=True)
+        future: asyncio.Future[ScrapeResponse] = asyncio.get_running_loop().create_future()
+        self._inflight[url] = future
+        try:
+            result = await self._scrape(url)
+        except BaseException as exc:
+            future.set_exception(exc)
+            future.exception()  # mark retrieved when nobody else is waiting
+            raise
+        finally:
+            self._inflight.pop(url, None)
+        future.set_result(result)
+        if self.settings.scrape_cache_seconds:
+            self._cache[url] = (time.monotonic(), result)
+            if len(self._cache) > 500:
+                for key, _ in sorted(self._cache.items(), key=lambda entry: entry[1][0])[:100]:
+                    self._cache.pop(key, None)
+        return result.model_copy(deep=True)
+
+    async def _scrape(self, url: str) -> ScrapeResponse:
         try:
             async with self._semaphore:
                 resolved_url = await asyncio.to_thread(_resolve_share_url, url)
                 page = await self._fetch_product_html(resolved_url)
                 structured = _structured_product(page, resolved_url) if page else {}
-                html_images = _images_from_html(page, resolved_url) if page else []
+                html_images = [] if structured.get("images") or not page else _images_from_html(page, resolved_url)
                 complete = bool(structured.get("title") and structured.get("price") and (structured.get("images") or html_images))
                 content = ""
                 if not complete:

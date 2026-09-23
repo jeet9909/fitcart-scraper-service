@@ -767,3 +767,77 @@ def test_tryon_with_extra_pieces_from_other_stores() -> None:
         assert invalid.status_code == 400 and "not uploaded" in invalid.json()["detail"]
     finally:
         app.dependency_overrides.clear()
+
+
+AMAZON_SHIRT_PAGE = """<html><body>
+<div id="sponsored"><img data-a-dynamic-image="{&quot;https://m.media-amazon.com/images/I/TSHIRT_SPONSORED._AC_.jpg&quot;:[300,300]}"></div>
+<span id="productTitle">Calvin Klein Jeans Men Shirt</span>
+<div id="corePriceDisplay_desktop_feature_div"><span class="a-price priceToPay"><span class="a-offscreen">₹2,399.00</span></span></div><div id="deliveryBlock"></div>
+<div id="imgTagWrapperId"><img alt="Shirt" src="https://m.media-amazon.com/images/I/SHIRT_MAIN._SX342_.jpg" data-old-hires="https://m.media-amazon.com/images/I/SHIRT_MAIN._SL1500_.jpg" id="landingImage"
+ data-a-dynamic-image="{&quot;https://m.media-amazon.com/images/I/SHIRT_MAIN._SX679_.jpg&quot;:[679,679]}"></div>
+<script>'colorImages': { 'initial': [{"hiRes":"https://m.media-amazon.com/images/I/SHIRT_MAIN._SL1500_.jpg","large":"https://m.media-amazon.com/images/I/SHIRT_MAIN.jpg"},{"hiRes":"https://m.media-amazon.com/images/I/SHIRT_BACK._SL1500_.jpg"}]}</script>
+<div id="similar"><img data-a-dynamic-image="{&quot;https://m.media-amazon.com/images/I/TSHIRT_SIMILAR._AC_.jpg&quot;:[200,200]}"></div>
+</body></html>"""
+
+
+def test_amazon_uses_only_the_viewed_products_images() -> None:
+    import asyncio
+
+    from app.scraper import BrightDataScraper
+
+    class StubScraper(BrightDataScraper):
+        async def _fetch_page(self, url: str) -> str:
+            raise AssertionError("complete HTML data should skip the markdown fetch")
+
+        async def _fetch_html_via_unlocker(self, url: str) -> str | None:
+            return AMAZON_SHIRT_PAGE
+
+    product = asyncio.run(StubScraper(SETTINGS).scrape("https://www.amazon.in/dp/B0SHIRT", "IN")).data
+    assert product.image_urls[0] == "https://m.media-amazon.com/images/I/SHIRT_MAIN._SL1500_.jpg"
+    assert all("TSHIRT" not in url for url in product.image_urls)
+    assert "https://m.media-amazon.com/images/I/SHIRT_BACK._SL1500_.jpg" in product.image_urls
+    assert product.outfit_slot == "top"
+
+
+def test_bot_wall_page_is_not_parsed_as_the_product() -> None:
+    import asyncio
+
+    from app.scraper import BrightDataScraper
+
+    class StubScraper(BrightDataScraper):
+        async def _fetch_page(self, url: str) -> str:
+            raise AssertionError("the direct HTML fetch has the product")
+
+        async def _fetch_html_via_unlocker(self, url: str) -> str | None:
+            return "<html><title>Amazon.in</title><p>Enter the characters you see below</p><img src='https://images-na.ssl-images-amazon.com/captcha/x.jpg'></html>"
+
+        async def _fetch_html_directly(self, url: str) -> str | None:
+            return AMAZON_SHIRT_PAGE
+
+    product = asyncio.run(StubScraper(SETTINGS).scrape("https://www.amazon.in/dp/B0SHIRT", "IN")).data
+    assert product.title == "Calvin Klein Jeans Men Shirt" and product.price.amount == 2399
+
+
+def test_scrape_results_are_cached_and_shared() -> None:
+    import asyncio
+
+    from app.scraper import BrightDataScraper
+
+    calls: list[str] = []
+
+    class StubScraper(BrightDataScraper):
+        async def _fetch_html_via_unlocker(self, url: str) -> str | None:
+            calls.append(url)
+            await asyncio.sleep(0.05)
+            return AMAZON_SHIRT_PAGE
+
+    async def run() -> list:
+        scraper = StubScraper(SETTINGS)
+        first = await asyncio.gather(*(scraper.scrape("https://www.amazon.in/dp/B0SHIRT", "IN") for _ in range(3)))
+        again = await scraper.scrape("https://www.amazon.in/dp/B0SHIRT", "IN")
+        again.data.title = "changed by a caller"
+        return [*first, again, await scraper.scrape("https://www.amazon.in/dp/B0SHIRT", "IN")]
+
+    results = asyncio.run(run())
+    assert calls == ["https://www.amazon.in/dp/B0SHIRT"]
+    assert results[-1].data.title == "Calvin Klein Jeans Men Shirt"

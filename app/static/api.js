@@ -93,7 +93,7 @@ function productFromApi(item, sourceUrl) {
     soldOut,
     sizesKnown: Boolean(sizes.length || soldOut.length),
     image: item.image_urls?.[0] || '',
-    images: item.image_urls || [],
+    images: (item.image_urls || []).slice(0, 8),
     material: item.material || 'Not listed by store',
     style: item.external_id || 'Not listed',
     description: item.description || '',
@@ -109,7 +109,7 @@ product = function liveProduct() {
     ? `<span class="muted" style="text-decoration:line-through">${money(p.originalPrice)}</span>${p.discount ? `<span class="badge sand">${Math.round(p.discount)}% off</span>` : ''}`
     : '';
   const rating = p.rating ? `<span class="small muted">★ ${esc(p.rating)}${p.reviews ? ` · ${esc(p.reviews.toLocaleString('en-IN'))} ratings` : ''}</span>` : '';
-  screen.innerHTML = `<div class="sectionhead"><p class="eyebrow" style="margin:0">Your find / ${esc(p.category)}</p><span class="badge">Live from ${esc(state.sourceStore)}</span></div><div class="productgrid"><div><div class="productphoto"><img src="${esc(p.image)}" alt="${esc(p.name)}"><span class="badge outline" style="background:var(--card)">Store image</span></div><p class="micro muted" style="margin:10px 0">Fetched from the original listing. Prices and stock can change; confirm on the store.</p></div><section class="productinfo"><div class="eyebrow">${esc(p.brand)}</div><h1>${esc(p.name)}</h1><p class="muted">${esc(p.color)} · ${esc(p.category)}</p><div class="row"><span class="price">${money(p.price)}</span>${mrp}${rating}</div><dl class="detailgrid"><div><dt>Fabric / material</dt><dd>${esc(p.material)}</dd></div><div><dt>Store product ID</dt><dd>${esc(p.style)}</dd></div><div><dt>Sizes in stock</dt><dd>${p.sizesKnown ? esc(p.sizes.filter(size => !p.soldOut.includes(size)).join(', ') || 'None') : 'Not listed'}</dd></div><div><dt>Data status</dt><dd>Fetched live · ${esc(state.sourceStore)}</dd></div></dl><label class="field" style="margin-top:14px">This product is a<select class="input" id="productSlot">${Object.entries(SLOT_NAMES).map(([value, label]) => `<option value="${value}" ${p.slot === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label><p class="micro muted" style="margin-top:-6px">Detected automatically. Change it if it's wrong: the try-on only swaps this part of your outfit.</p><div class="rule"></div><div class="row between"><strong class="small">Choose your size</strong><a class="linkbtn" href="${esc(state.sourceUrl)}" target="_blank" rel="noopener noreferrer">Store size chart</a></div><div class="sizes">${sizeButtons()}</div><p id="sizeAvailability" class="small muted">${sizeAvailability()}</p><div style="margin-top:22px" class="row"><button class="btn wide" data-action="toCompare" ${!state.size ? 'disabled' : ''}>${state.size ? 'Continue with size ' + esc(state.size) : 'Select a size to continue'} ${icon('arrow')}</button><button class="btn secondary wide" data-action="saveToWardrobe">Save to my shopping wardrobe</button></div></section></div>`;
+  screen.innerHTML = `<div class="sectionhead"><p class="eyebrow" style="margin:0">Your find / ${esc(p.category)}</p><span class="badge">Live from ${esc(state.sourceStore)}</span></div><div class="productgrid"><div><div class="productphoto"><img src="${esc(p.image)}" alt="${esc(p.name)}"><span class="badge outline" style="background:var(--card)">Store image</span></div>${p.images.length > 1 ? `<div class="row" style="gap:8px;margin-top:10px" aria-label="Choose the product photo used for your try-on">${p.images.slice(0, 8).map(url => `<button class="imgpick" data-product-image="${esc(url)}" aria-pressed="${url === p.image}" style="padding:0;border:2px solid ${url === p.image ? 'var(--accent)' : 'var(--line)'};border-radius:10px;overflow:hidden;background:none"><img src="${esc(url)}" alt="" style="width:52px;height:64px;object-fit:cover;display:block"></button>`).join('')}</div><p class="micro muted" style="margin:6px 0 0">Tap the photo that shows the product most clearly. It is used for your try-on.</p>` : ''}<p class="micro muted" style="margin:10px 0">Fetched from the original listing. Prices and stock can change; confirm on the store.</p></div><section class="productinfo"><div class="eyebrow">${esc(p.brand)}</div><h1>${esc(p.name)}</h1><p class="muted">${esc(p.color)} · ${esc(p.category)}</p><div class="row"><span class="price">${money(p.price)}</span>${mrp}${rating}</div><dl class="detailgrid"><div><dt>Fabric / material</dt><dd>${esc(p.material)}</dd></div><div><dt>Store product ID</dt><dd>${esc(p.style)}</dd></div><div><dt>Sizes in stock</dt><dd>${p.sizesKnown ? esc(p.sizes.filter(size => !p.soldOut.includes(size)).join(', ') || 'None') : 'Not listed'}</dd></div><div><dt>Data status</dt><dd>Fetched live · ${esc(state.sourceStore)}</dd></div></dl><label class="field" style="margin-top:14px">This product is a<select class="input" id="productSlot">${Object.entries(SLOT_NAMES).map(([value, label]) => `<option value="${value}" ${p.slot === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label><p class="micro muted" style="margin-top:-6px">Detected automatically. Change it if it's wrong: the try-on only swaps this part of your outfit.</p><div class="rule"></div><div class="row between"><strong class="small">Choose your size</strong><a class="linkbtn" href="${esc(state.sourceUrl)}" target="_blank" rel="noopener noreferrer">Store size chart</a></div><div class="sizes">${sizeButtons()}</div><p id="sizeAvailability" class="small muted">${sizeAvailability()}</p><div style="margin-top:22px" class="row"><button class="btn wide" data-action="toCompare" ${!state.size ? 'disabled' : ''}>${state.size ? 'Continue with size ' + esc(state.size) : 'Select a size to continue'} ${icon('arrow')}</button><button class="btn secondary wide" data-action="saveToWardrobe">Save to my shopping wardrobe</button></div></section></div>`;
   $('#productSlot').onchange = event => {
     p.slot = event.target.value;
     if (!p.storeCategory) p.category = SLOT_NAMES[p.slot];
@@ -265,6 +265,14 @@ async function saveProductToWardrobe() {
   return payload;
 }
 
+document.addEventListener('click', event => {
+  const target = event.target.closest('[data-product-image]');
+  if (!target || state.mode !== 'scraped' || !state.product) return;
+  state.product.image = target.dataset.productImage;
+  state.result = false;
+  product();
+});
+
 document.addEventListener('click', async event => {
   const target = event.target.closest('[data-action="saveToWardrobe"]');
   if (!target) return;
@@ -358,6 +366,8 @@ document.addEventListener('click', async event => {
   }
 });
 
+// Wake the API as soon as the page opens: a sleeping Render instance can take close to a minute to start.
+fetch(apiUrl('/health'), { cache: 'no-store' }).catch(() => {});
 try {
   session().catch(() => {});
 } catch {}

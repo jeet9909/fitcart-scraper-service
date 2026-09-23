@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr = SecretStr("")
     brightdata_api_token: SecretStr
     gemini_api_key: SecretStr = SecretStr("")
-    gemini_image_model: str = "gemini-3.1-flash-image-preview"
+    gemini_image_model: str = "gemini-2.5-flash-image"
     supabase_url: str = ""
     supabase_service_role_key: SecretStr = SecretStr("")
     supabase_storage_bucket: str = "fitcart-tryons"

@@ -486,3 +486,194 @@ def test_gemini_daily_quota_message(monkeypatch) -> None:
     except TryOnError as exc:
         assert "daily Gemini quota" in str(exc)
     assert len(calls) == 1
+
+
+MYNTRA_PAGE = """<html><head><title>Buy Allen Solly Men Slim Fit Formal Trousers - Trousers for Men 42057155 | Myntra</title>
+<script type="application/ld+json">{"@context":"http://schema.org/","@type":"Product","name":"Allen Solly Men Slim Fit Formal Trousers",
+"offers":{"@type":"Offer","priceCurrency":"INR","price":"1471","availability":"http://schema.org/InStock"}}</script></head>
+<body><script>window.__myx = {"pdpData":{"id":42057155,"name":"Allen Solly Men Slim Fit Formal Trousers","mrp":2299,
+"price":{"mrp":2299,"discounted":1471},"brand":{"name":"Allen Solly"},"baseColour":"Beige",
+"analytics":{"articleType":"Trousers","gender":"Men"},"articleAttributes":{"Fabric":"Cotton Blend","Fit":"Slim Fit"},
+"sizes":[{"label":"28","available":false},{"label":"30","available":true},{"label":"32","available":true},{"label":"34","available":true}],
+"ratings":{"averageRating":4.4,"totalCount":30},
+"media":{"albums":[{"name":"default","images":[{"imageURL":"http://assets.myntassets.com/h_($height),q_($qualityPercentage),w_($width)/v1/assets/images/42057155/trousers.jpg"}]}]},
+"productDetails":[{"title":"Product Details","description":"Beige solid <b>slim fit</b> formal trousers"}]}};</script>
+<div>Similar products ₹599</div></body></html>"""
+
+
+def test_myntra_page_data_gives_real_price_sizes_and_colour() -> None:
+    from app.scraper import _structured_product
+
+    data = _structured_product(MYNTRA_PAGE, "https://www.myntra.com/trousers/allen-solly/42057155/buy")
+    assert data["title"] == "Allen Solly Men Slim Fit Formal Trousers"
+    assert data["price"] == 1471 and data["mrp"] == 2299
+    assert data["sizes"] == ["30", "32", "34"] and data["unavailable_sizes"] == ["28"]
+    assert data["color"] == "Beige" and data["material"] == "Cotton Blend" and data["brand"] == "Allen Solly"
+    assert data["rating"] == 4.4 and data["review_count"] == 30
+
+
+def test_scraper_prefers_structured_html_and_skips_markdown() -> None:
+    import asyncio
+
+    from app.scraper import BrightDataScraper
+
+    class StubScraper(BrightDataScraper):
+        async def _fetch_page(self, url: str) -> str:
+            raise AssertionError("markdown is not needed when the HTML has complete product data")
+
+        async def _fetch_html_via_unlocker(self, url: str) -> str | None:
+            return MYNTRA_PAGE
+
+    product = asyncio.run(StubScraper(SETTINGS).scrape("https://www.myntra.com/trousers/allen-solly/42057155/buy", "IN")).data
+    assert product.price.amount == 1471 and product.original_price.amount == 2299
+    assert product.discount_percent == 36.02
+    assert product.sizes == ["30", "32", "34"] and product.unavailable_sizes == ["28"]
+    assert product.colors == ["Beige"] and product.outfit_slot == "bottom"
+    assert product.image_urls[0] == "https://assets.myntassets.com/h_1440,q_90,w_1080/v1/assets/images/42057155/trousers.jpg"
+
+
+def test_amazon_html_price_sizes_and_brand() -> None:
+    from app.scraper import _structured_product
+
+    page = """<span id="productTitle" class="a-size-large">  Levi's Men's Slim Fit T-Shirt  </span>
+<a id="bylineInfo" href="/stores/Levis">Visit the Levi's Store</a>
+<div id="corePriceDisplay_desktop_feature_div"><span class="a-price aok-align-center reinventPricePriceToPayMargin priceToPay"><span class="a-offscreen">₹649.00</span></span>
+<span class="a-price a-text-price" data-a-strike="true"><span class="a-offscreen">₹1,299.00</span></span></div><div id="deliveryBlock"></div>
+<script>var data = {"variationValues" : {"size_name":["S","M","L","XL"],"color_name":["Black","White"]}};</script>"""
+    data = _structured_product(page, "https://www.amazon.in/dp/B0TEST")
+    assert data["title"] == "Levi's Men's Slim Fit T-Shirt"
+    assert data["brand"] == "Levi's"
+    assert data["price"] == 649 and data["mrp"] == 1299
+    assert data["sizes"] == ["S", "M", "L", "XL"] and data["colors"] == ["Black", "White"]
+
+
+def test_markdown_price_uses_mrp_pair_not_first_rupee_amount() -> None:
+    from app.scraper import _parse_product
+
+    markdown = "Free delivery above ₹599\n# Allen Solly Men Slim Fit Formal Trousers\n₹1471 MRP ₹2299 (36% OFF)\n"
+    product = _parse_product(markdown, "https://www.myntra.com/42057155")
+    assert product.price.amount == 1471
+    assert product.original_price.amount == 2299
+
+
+def test_titles_are_cleaned_and_slots_detected() -> None:
+    from app.scraper import _clean_title, outfit_slot
+
+    assert _clean_title("Buy Allen Solly Men Slim Fit Formal Trousers - Trousers for Men 42057155 | Myntra") == "Allen Solly Men Slim Fit Formal Trousers"
+    assert _clean_title("Amazon.in: Puma Unisex Sneakers") == "Puma Unisex Sneakers"
+    assert outfit_slot("Casual Shoes") == "footwear"
+    assert outfit_slot("Kurtas") == "top"
+    assert outfit_slot("Gold-Plated Earrings") == "jewelry"
+    assert outfit_slot(None, "Men Slim Fit Jeans") == "bottom"
+
+
+def test_outfit_prompt_sends_every_piece(monkeypatch) -> None:
+    import asyncio
+    import base64
+    import json as _json
+
+    import httpx as _httpx
+
+    from app.tryon import OutfitPiece
+
+    sent: dict = {}
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        sent.update(_json.loads(request.content))
+        image = base64.b64encode(_tiny_png()).decode()
+        return _httpx.Response(200, json={"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": image}}]}}]})
+
+    real_client = _httpx.AsyncClient
+    monkeypatch.setattr("app.tryon.httpx.AsyncClient", lambda **kwargs: real_client(transport=_httpx.MockTransport(handler), **kwargs))
+    service = TryOnService(Settings(gemini_api_key="test"))
+    image = (_tiny_png(), "image/png", "png")
+    pieces = [OutfitPiece(image, "top", "white shirt"), OutfitPiece(image, "bottom wear", "beige trousers"), OutfitPiece(image, "footwear")]
+    result = asyncio.run(service.generate_outfit(image, pieces))
+    parts = sent["contents"][0]["parts"]
+    assert len(parts) == 5
+    assert "image 3 is the bottom wear (beige trousers)" in parts[0]["text"]
+    assert result[1] == "image/png"
+
+
+def test_outfit_suggestions_drop_unknown_items() -> None:
+    import asyncio
+
+    from app.wardrobe import WardrobeService
+
+    rows = [
+        {"id": "11111111-1111-1111-1111-111111111111", "slot": "top", "name": "White shirt", "collection": "home", "image_path": "a"},
+        {"id": "22222222-2222-2222-2222-222222222222", "slot": "bottom", "name": "Beige trousers", "collection": "store", "price": 1471, "image_path": "b"},
+    ]
+
+    class StubStorage:
+        async def download(self, path):
+            return _tiny_png(), "image/png", "png"
+
+        async def generate_json(self, parts, schema):
+            assert sum("inline_data" in part for part in parts) == 2
+            return {"outfits": [
+                {"title": "Smart casual", "reason": "Neutral tones", "item_ids": [rows[0]["id"], rows[1]["id"], "made-up"]},
+                {"title": "Only one real item", "reason": "", "item_ids": [rows[0]["id"]]},
+            ]}
+
+    service = WardrobeService(StubStorage())
+
+    async def fake_rows(user_id, collection=None, ids=None):
+        return rows
+
+    service._rows = fake_rows
+    outfits = asyncio.run(service.suggest("user", "all", "office", 3))
+    assert [outfit.title for outfit in outfits] == ["Smart casual"]
+    assert outfits[0].item_ids == [rows[0]["id"], rows[1]["id"]]
+
+
+def test_outfit_tryon_endpoint_uses_wardrobe_items() -> None:
+    from app.main import get_wardrobe_service
+    from app.models import GalleryItem
+    from app.tryon import OutfitPiece
+
+    session_settings = Settings(brightdata_api_token="test", anonymous_token_secret="a-secure-test-secret-that-is-long-enough")
+    calls: dict = {}
+
+    class StubWardrobe:
+        async def outfit_pieces(self, user_id, item_ids):
+            calls["item_ids"] = item_ids
+            image = (_tiny_png(), "image/png", "png")
+            return [OutfitPiece(image, "top"), OutfitPiece(image, "footwear")], [
+                {"id": item_ids[0], "slot": "top", "name": "Shirt", "collection": "home", "product_url": None},
+                {"id": item_ids[1], "slot": "footwear", "name": "Sneakers", "collection": "store", "product_url": "https://www.example.com/shoe"},
+            ]
+
+    class StubTryOn:
+        def ensure_configured(self) -> None:
+            pass
+
+        async def generate_outfit(self, person, pieces):
+            calls["pieces"] = len(pieces)
+            return _tiny_png(), "image/png", "png"
+
+        async def save(self, user_id, person, product, result, category, product_source, product_url, items=None) -> GalleryItem:
+            calls.update(category=category, product_source=product_source, product_url=product_url)
+            return GalleryItem(
+                id="1", anonymous_user_id=user_id, category=category, product_source=product_source, product_url=product_url,
+                person_image_url="https://example.com/p.png", product_image_url="https://example.com/i.png",
+                result_image_url="https://example.com/r.png", model="test", items=items or [], created_at=datetime(2026, 9, 23, tzinfo=UTC),
+            )
+
+    app.dependency_overrides[get_runtime_settings] = lambda: session_settings
+    app.dependency_overrides[get_tryon_service] = lambda: StubTryOn()
+    app.dependency_overrides[get_wardrobe_service] = lambda: StubWardrobe()
+    try:
+        with TestClient(app) as client:
+            session = client.post("/v1/sessions/anonymous").json()
+            response = client.post(
+                "/v1/try-ons/outfit",
+                headers={"Authorization": f"Bearer {session['access_token']}"},
+                files={"person_image": ("person.png", _tiny_png(), "image/png")},
+                data={"item_ids": "a, b"},
+            )
+        assert response.status_code == 200, response.text
+        assert calls == {"item_ids": ["a", "b"], "pieces": 2, "category": "top + footwear", "product_source": "wardrobe", "product_url": "https://www.example.com/shoe"}
+        assert len(response.json()["items"]) == 2
+    finally:
+        app.dependency_overrides.clear()

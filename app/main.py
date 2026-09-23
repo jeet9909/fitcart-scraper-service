@@ -11,10 +11,23 @@ from fastapi.staticfiles import StaticFiles
 
 from app.anonymous_auth import create_anonymous_session, verify_anonymous_token
 from app.config import Settings, get_settings
-from app.models import AnonymousSessionResponse, GalleryItem, GalleryResponse, GeminiUsageResponse, HealthResponse, ScrapeRequest, ScrapeResponse
+from app.models import (
+    AnonymousSessionResponse,
+    GalleryItem,
+    GalleryResponse,
+    GeminiUsageResponse,
+    HealthResponse,
+    OutfitSuggestionRequest,
+    OutfitSuggestionResponse,
+    ScrapeRequest,
+    ScrapeResponse,
+    WardrobeItem,
+    WardrobeResponse,
+)
 from app.scraper import BrightDataScraper, ScrapeProviderError
 from app.security import UnsafeUrlError, validate_public_url
 from app.tryon import TryOnError, TryOnService, validate_image
+from app.wardrobe import WardrobeService
 
 
 @asynccontextmanager
@@ -23,12 +36,13 @@ async def lifespan(app: FastAPI):
     app.state.settings = settings
     app.state.scraper = BrightDataScraper(settings)
     app.state.tryon = TryOnService(settings)
+    app.state.wardrobe = WardrobeService(app.state.tryon)
     yield
 
 
 app = FastAPI(
     title="FitCart Product and Virtual Try-On API",
-    version="0.3.0",
+    version="0.4.0",
     description="Scrape product details and create private Gemini virtual try-on images.",
     lifespan=lifespan,
 )
@@ -41,7 +55,7 @@ app.add_middleware(
         "http://127.0.0.1:5173",
     ],
     allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Admin-Token"],
 )
 
@@ -58,6 +72,10 @@ def get_runtime_settings(request: Request) -> Settings:
 
 def get_tryon_service(request: Request) -> TryOnService:
     return request.app.state.tryon
+
+
+def get_wardrobe_service(request: Request) -> WardrobeService:
+    return request.app.state.wardrobe
 
 
 bearer = HTTPBearer(
@@ -173,6 +191,125 @@ async def create_tryon(
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail="Could not download the product image") from exc
+
+
+@app.post("/v1/try-ons/outfit", response_model=GalleryItem, tags=["virtual try-on"])
+async def create_outfit_tryon(
+    person_image: UploadFile = File(..., description="Front-facing, full-body user photo"),
+    item_ids: str = Form(..., description="Comma-separated wardrobe item ids (1 to 5), e.g. a top, a bottom and shoes"),
+    user_id: str = Depends(get_anonymous_user),
+    settings: Settings = Depends(get_runtime_settings),
+    service: TryOnService = Depends(get_tryon_service),
+    wardrobe: WardrobeService = Depends(get_wardrobe_service),
+) -> GalleryItem:
+    """Try on a whole outfit built from wardrobe items, which can come from different stores and from your own clothes."""
+    try:
+        service.ensure_configured()
+        person = validate_image(await person_image.read(), person_image.content_type, settings.max_image_bytes)
+        pieces, summary = await wardrobe.outfit_pieces(user_id, [item.strip() for item in item_ids.split(",") if item.strip()])
+        result = await service.generate_outfit(person, pieces)
+        category = " + ".join(item["slot"] for item in summary)[:80]
+        product_url = next((item["product_url"] for item in summary if item.get("product_url")), None)
+        return await service.save(user_id, person, pieces[0].image, result, category, "wardrobe", product_url, items=summary)
+    except TryOnError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Could not reach the image or storage service") from exc
+
+
+@app.get("/v1/wardrobe", response_model=WardrobeResponse, tags=["wardrobe"])
+async def list_wardrobe(
+    collection: str | None = None,
+    user_id: str = Depends(get_anonymous_user),
+    service: TryOnService = Depends(get_tryon_service),
+    wardrobe: WardrobeService = Depends(get_wardrobe_service),
+) -> WardrobeResponse:
+    """List saved items. collection=store for products saved from shops, collection=home for clothes you own."""
+    if collection not in (None, "store", "home"):
+        raise HTTPException(status_code=400, detail="collection must be store or home")
+    try:
+        service.ensure_configured()
+        return WardrobeResponse(items=await wardrobe.list_items(user_id, collection))
+    except TryOnError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@app.post("/v1/wardrobe", response_model=WardrobeItem, tags=["wardrobe"])
+async def add_wardrobe_item(
+    collection: str = Form(..., description="store or home"),
+    slot: str = Form(..., description="top, bottom, dress, outerwear, footwear, jewelry, accessory or other"),
+    name: str = Form("", max_length=200),
+    image: UploadFile | None = File(None, description="Photo of the item"),
+    image_url: str | None = Form(None, description="Public product image URL, e.g. image_urls[0] from /v1/products/scrape"),
+    brand: str | None = Form(None, max_length=120),
+    color: str | None = Form(None, max_length=80),
+    price: float | None = Form(None, ge=0, le=10_000_000),
+    currency: str | None = Form(None, max_length=3),
+    sizes: str | None = Form(None, max_length=400, description="Comma-separated sizes listed by the store"),
+    selected_size: str | None = Form(None, max_length=40),
+    store: str | None = Form(None, max_length=120),
+    product_url: str | None = Form(None, max_length=2000),
+    notes: str | None = Form(None, max_length=500),
+    user_id: str = Depends(get_anonymous_user),
+    settings: Settings = Depends(get_runtime_settings),
+    service: TryOnService = Depends(get_tryon_service),
+    wardrobe: WardrobeService = Depends(get_wardrobe_service),
+) -> WardrobeItem:
+    if collection not in ("store", "home"):
+        raise HTTPException(status_code=400, detail="collection must be store or home")
+    if (image is None) == (image_url is None):
+        raise HTTPException(status_code=400, detail="Provide exactly one of image or image_url")
+    try:
+        service.ensure_configured()
+        if image is not None:
+            picture = validate_image(await image.read(), image.content_type, settings.max_image_bytes)
+        else:
+            picture = await service.fetch_image(validate_public_url(image_url or ""))
+        return await wardrobe.add(
+            user_id, collection, slot, name, picture,
+            brand=brand, color=color, price=price, currency=currency.upper() if currency else None,
+            sizes=[size.strip()[:40] for size in (sizes or "").split(",") if size.strip()], selected_size=selected_size,
+            store=store, product_url=validate_public_url(product_url) if product_url else None,
+            source_image_url=image_url, notes=notes,
+        )
+    except UnsafeUrlError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TryOnError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Could not download the product image") from exc
+
+
+@app.delete("/v1/wardrobe/{item_id}", status_code=204, tags=["wardrobe"])
+async def delete_wardrobe_item(
+    item_id: str,
+    user_id: str = Depends(get_anonymous_user),
+    service: TryOnService = Depends(get_tryon_service),
+    wardrobe: WardrobeService = Depends(get_wardrobe_service),
+) -> None:
+    try:
+        service.ensure_configured()
+        await wardrobe.delete(user_id, item_id)
+    except TryOnError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@app.post("/v1/wardrobe/suggestions", response_model=OutfitSuggestionResponse, tags=["wardrobe"])
+async def suggest_outfits(
+    payload: OutfitSuggestionRequest,
+    user_id: str = Depends(get_anonymous_user),
+    service: TryOnService = Depends(get_tryon_service),
+    wardrobe: WardrobeService = Depends(get_wardrobe_service),
+) -> OutfitSuggestionResponse:
+    """Ask the AI stylist for complete outfits made only from the user's wardrobe items."""
+    try:
+        service.ensure_configured()
+        occasion = payload.occasion.strip() if payload.occasion else None
+        return OutfitSuggestionResponse(outfits=await wardrobe.suggest(user_id, payload.collection, occasion, payload.count))
+    except TryOnError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Could not reach the stylist service") from exc
 
 
 @app.get("/v1/gallery", response_model=GalleryResponse, tags=["virtual try-on"])

@@ -63,21 +63,82 @@ function dataUrlBlob(dataUrl) {
   return new Blob([output], { type: mime });
 }
 
+const SLOT_NAMES = { top: 'Top', bottom: 'Bottom wear', dress: 'Dress', outerwear: 'Layer', footwear: 'Footwear', jewelry: 'Jewellery', accessory: 'Accessory', other: 'Other wearable' };
+
+const LETTER_SIZES = ['XXXS', 'XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', '2XL', 'XXXL', '3XL', '4XL', '5XL'];
+
+function sizeOrder(label) {
+  const letter = LETTER_SIZES.indexOf(String(label).toUpperCase());
+  if (letter >= 0) return letter;
+  const number = parseFloat(String(label).replace(/^[A-Z ]+/i, ''));
+  return Number.isFinite(number) ? 100 + number : 10_000;
+}
+
 function productFromApi(item, sourceUrl) {
   const sizes = item.sizes?.filter(Boolean) || [];
+  const soldOut = item.unavailable_sizes?.filter(Boolean) || [];
   return {
     name: item.title || 'Imported product',
     brand: item.brand || item.store || 'Imported listing',
-    color: item.colors?.join(', ') || 'Colour not provided',
-    category: item.category || 'Other wearable',
+    color: item.colors?.join(', ') || 'Colour not listed',
+    category: item.category || SLOT_NAMES[item.outfit_slot] || 'Wearable',
+    slot: item.outfit_slot || 'other',
     price: item.price?.amount ?? null,
-    sizes: sizes.length ? sizes : ['One size / check store'],
+    originalPrice: item.original_price?.amount ?? null,
+    discount: item.discount_percent ?? null,
+    rating: item.rating ?? null,
+    reviews: item.review_count ?? null,
+    sizes: sizes.length || soldOut.length ? [...sizes, ...soldOut].sort((a, b) => sizeOrder(a) - sizeOrder(b)) : ['One size'],
+    soldOut,
+    sizesKnown: Boolean(sizes.length || soldOut.length),
     image: item.image_urls?.[0] || '',
-    material: item.material || 'Not provided by store',
-    style: item.external_id || 'Not provided',
+    images: item.image_urls || [],
+    material: item.material || 'Not listed by store',
+    style: item.external_id || 'Not listed',
+    description: item.description || '',
     sourceUrl,
   };
 }
+
+const standaloneProduct = product;
+product = function liveProduct() {
+  if (state.mode !== 'scraped') return standaloneProduct();
+  const p = state.product;
+  const mrp = p.originalPrice && p.price && p.originalPrice > p.price
+    ? `<span class="muted" style="text-decoration:line-through">${money(p.originalPrice)}</span>${p.discount ? `<span class="badge sand">${Math.round(p.discount)}% off</span>` : ''}`
+    : '';
+  const rating = p.rating ? `<span class="small muted">★ ${esc(p.rating)}${p.reviews ? ` · ${esc(p.reviews.toLocaleString('en-IN'))} ratings` : ''}</span>` : '';
+  screen.innerHTML = `<div class="sectionhead"><p class="eyebrow" style="margin:0">Your find / ${esc(p.category)}</p><span class="badge">Live from ${esc(state.sourceStore)}</span></div><div class="productgrid"><div><div class="productphoto"><img src="${esc(p.image)}" alt="${esc(p.name)}"><span class="badge outline" style="background:var(--card)">Store image</span></div><p class="micro muted" style="margin:10px 0">Fetched from the original listing. Prices and stock can change; confirm on the store.</p></div><section class="productinfo"><div class="eyebrow">${esc(p.brand)}</div><h1>${esc(p.name)}</h1><p class="muted">${esc(p.color)} · ${esc(p.category)}</p><div class="row"><span class="price">${money(p.price)}</span>${mrp}${rating}</div><dl class="detailgrid"><div><dt>Fabric / material</dt><dd>${esc(p.material)}</dd></div><div><dt>Store product ID</dt><dd>${esc(p.style)}</dd></div><div><dt>Sizes in stock</dt><dd>${p.sizesKnown ? esc(p.sizes.filter(size => !p.soldOut.includes(size)).join(', ') || 'None') : 'Not listed'}</dd></div><div><dt>Data status</dt><dd>Fetched live · ${esc(state.sourceStore)}</dd></div></dl><div class="rule"></div><div class="row between"><strong class="small">Choose your size</strong><a class="linkbtn" href="${esc(state.sourceUrl)}" target="_blank" rel="noopener noreferrer">Store size chart</a></div><div class="sizes">${sizeButtons()}</div><p id="sizeAvailability" class="small muted">${sizeAvailability()}</p><div style="margin-top:22px" class="row"><button class="btn wide" data-action="toCompare" ${!state.size ? 'disabled' : ''}>${state.size ? 'Continue with size ' + esc(state.size) : 'Select a size to continue'} ${icon('arrow')}</button><button class="btn secondary wide" data-action="saveToWardrobe">Save to my shopping wardrobe</button></div></section></div>`;
+};
+
+const standaloneSizeButtons = sizeButtons;
+sizeButtons = function liveSizeButtons() {
+  if (state.mode !== 'scraped') return standaloneSizeButtons();
+  const soldOut = state.product.soldOut || [];
+  return state.product.sizes.map(size => {
+    const out = soldOut.includes(size);
+    return `<button class="size ${state.size === size ? 'selected' : ''}" data-size="${esc(size)}" aria-pressed="${state.size === size}" ${out ? 'disabled title="Sold out at the store"' : ''} ${out ? 'style="text-decoration:line-through"' : ''}>${esc(size)}</button>`;
+  }).join('');
+};
+
+const standaloneSizeAvailability = sizeAvailability;
+sizeAvailability = function liveSizeAvailability() {
+  if (state.mode !== 'scraped') return standaloneSizeAvailability();
+  const p = state.product;
+  if (!p.sizesKnown) return 'The store did not list sizes for this product. Check the original listing.';
+  if (!state.size) return p.soldOut.length ? `Crossed-out sizes are sold out at ${esc(state.sourceStore)}.` : 'Select your size.';
+  return `Size ${esc(state.size)} is in stock at ${esc(state.sourceStore)} right now.`;
+};
+
+const standaloneCompare = compare;
+compare = function liveCompare() {
+  standaloneCompare();
+  if (state.mode !== 'scraped') return;
+  const note = screen.querySelector('.sectionhead p.muted.small');
+  if (note) note.textContent = `Live price from ${state.sourceStore}. Price comparison with other stores is not connected yet.`;
+  const badge = screen.querySelector('.compare-product .badge');
+  if (badge) badge.textContent = 'Live listing';
+};
 
 function installLiveLinkForm() {
   const form = $('#linkForm');
@@ -159,11 +220,57 @@ upload = function liveUpload() {
   if (privacyText) privacyText.innerHTML = `${icon('lock')} Images and the generated result are saved in your private Supabase gallery.`;
   const button = $('#generateButton');
   if (button && !state.samplePerson) button.textContent = 'Generate my virtual try-on';
+  const chartNote = document.querySelector('.uploadgrid .infobox');
+  if (chartNote && state.mode === 'scraped') chartNote.textContent = `Check ${state.sourceStore}'s size chart for this product before buying.`;
+  const consent = document.querySelector('.consent span');
+  if (consent) consent.textContent = 'I have permission to use these photos. I understand they are sent to the FitCart API to create the try-on, and a visual preview cannot guarantee fit.';
 };
 
-function categoryForApi(category) {
-  return ({ Tops: 'top', Bottoms: 'bottom', Shoes: 'shoes', Watch: 'watch' })[category] || String(category || 'wearable').toLowerCase();
+function categoryForApi(product) {
+  if (product.slot && product.slot !== 'other') return String(product.category || product.slot).toLowerCase();
+  return ({ Tops: 'top', Bottoms: 'bottom', Shoes: 'shoes', Watch: 'watch' })[product.category] || String(product.category || 'wearable').toLowerCase();
 }
+
+function slotForProduct(product) {
+  if (product.slot) return product.slot;
+  return ({ Tops: 'top', Bottoms: 'bottom', Shoes: 'footwear', Watch: 'accessory' })[product.category] || 'other';
+}
+
+async function saveProductToWardrobe() {
+  const p = state.product;
+  if (!p) return;
+  const form = new FormData();
+  form.append('collection', 'store');
+  form.append('slot', slotForProduct(p));
+  form.append('name', p.name);
+  if (state.mode === 'manual') form.append('image', dataUrlBlob(p.image), 'product.jpg');
+  else form.append('image_url', p.image);
+  if (p.brand) form.append('brand', p.brand);
+  if (p.color && !/not (listed|provided)/i.test(p.color)) form.append('color', p.color);
+  if (p.price != null) { form.append('price', p.price); form.append('currency', 'INR'); }
+  if (p.sizes?.length) form.append('sizes', p.sizes.filter(size => !(p.soldOut || []).includes(size)).join(','));
+  if (state.size) form.append('selected_size', state.size);
+  if (state.sourceStore) form.append('store', state.sourceStore);
+  if (state.sourceUrl) form.append('product_url', state.sourceUrl);
+  const response = await authorizedFetch(apiUrl('/v1/wardrobe'), { method: 'POST', body: form });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw Error(apiErrorMessage(payload, 'Could not save to your wardrobe.'));
+  return payload;
+}
+
+document.addEventListener('click', async event => {
+  const target = event.target.closest('[data-action="saveToWardrobe"]');
+  if (!target) return;
+  target.disabled = true;
+  try {
+    await saveProductToWardrobe();
+    toast('Saved to your shopping wardrobe. Open Wardrobe to build an outfit.');
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    target.disabled = false;
+  }
+});
 
 generate = async function liveGenerate() {
   if (generationController || uploadBusy || !canGenerate()) return;
@@ -188,7 +295,7 @@ generate = async function liveGenerate() {
   try {
     const form = new FormData();
     form.append('person_image', dataUrlBlob(state.photos[0].data), 'person.jpg');
-    form.append('category', categoryForApi(state.product.category));
+    form.append('category', categoryForApi(state.product));
     form.append('country', 'IN');
     if (state.mode === 'manual') {
       form.append('product_image', dataUrlBlob(state.product.image), 'product.jpg');
@@ -224,7 +331,7 @@ result = function liveResult() {
     return;
   }
   const isSample = state.samplePerson;
-  screen.innerHTML = `<div class="sectionhead"><div><div class="finishmark">${isSample ? 'Sample look' : 'Your virtual try-on is ready'}</div><h2>A new way to picture it.</h2><p class="small muted">${isSample ? 'Pre-made illustration.' : 'AI-generated appearance preview. Always verify size and product details with the retailer.'}</p></div><button class="btn secondary" data-action="editPhotos">Try another photo</button></div><div class="resultgrid"><section><img class="resultcanvas" src="${esc(state.resultImageUrl)}" alt="Your generated FitCart virtual try-on"><div class="row" style="margin-top:14px"><a class="btn secondary" href="${esc(state.resultImageUrl)}" target="_blank" rel="noopener">Open full image</a><button class="btn" data-action="shareLive">Share result</button></div></section><section><div class="card pad"><span class="badge">Saved to private gallery</span><h3 style="margin-top:16px">${esc(state.product.name)}</h3><p class="small muted">${esc(state.product.color)} · Size ${esc(state.size)}</p><div class="row between"><span class="price">${money(state.product.price)}</span><span class="small">${esc(state.sourceStore || 'FitCart')}</span></div><p class="micro muted" style="margin:14px 0 18px">A visual preview cannot guarantee physical fit, exact scale, colour, texture, or product availability.</p>${state.sourceUrl ? `<a class="btn wide" href="${esc(state.sourceUrl)}" target="_blank" rel="noopener noreferrer">Open original product ${icon('arrow')}</a>` : ''}<button class="linkbtn" data-action="backCompare" style="display:block;margin-top:12px">Review product</button></div></section></div>`;
+  screen.innerHTML = `<div class="sectionhead"><div><div class="finishmark">${isSample ? 'Sample look' : 'Your virtual try-on is ready'}</div><h2>A new way to picture it.</h2><p class="small muted">${isSample ? 'Pre-made illustration.' : 'AI-generated appearance preview. Always verify size and product details with the retailer.'}</p></div><button class="btn secondary" data-action="editPhotos">Try another photo</button></div><div class="resultgrid"><section><img class="resultcanvas" src="${esc(state.resultImageUrl)}" alt="Your generated FitCart virtual try-on"><div class="row" style="margin-top:14px"><a class="btn secondary" href="${esc(state.resultImageUrl)}" target="_blank" rel="noopener">Open full image</a><button class="btn" data-action="shareLive">Share result</button></div></section><section><div class="card pad"><span class="badge">Saved to private gallery</span><h3 style="margin-top:16px">${esc(state.product.name)}</h3><p class="small muted">${esc(state.product.color)} · Size ${esc(state.size)}</p><div class="row between"><span class="price">${money(state.product.price)}</span><span class="small">${esc(state.sourceStore || 'FitCart')}</span></div><p class="micro muted" style="margin:14px 0 18px">A visual preview cannot guarantee physical fit, exact scale, colour, texture, or product availability.</p>${state.sourceUrl ? `<a class="btn wide" href="${esc(state.sourceUrl)}" target="_blank" rel="noopener noreferrer">Open original product ${icon('arrow')}</a>` : ''}<button class="btn secondary wide" data-action="saveToWardrobe" style="margin-top:12px">Save to my shopping wardrobe</button><button class="linkbtn" data-action="backCompare" style="display:block;margin-top:12px">Review product</button></div></section></div>`;
 };
 
 document.addEventListener('click', async event => {

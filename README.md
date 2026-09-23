@@ -1,6 +1,6 @@
 # FitCart Product and Virtual Try-On API
 
-Standalone product scraping and Gemini virtual try-on API for FitCart. Product pages are fetched through Bright Data MCP. Try-on images are generated with Gemini and saved in a private Supabase gallery.
+Standalone product scraping and Gemini virtual try-on API for FitCart. Product pages are fetched through Bright Data; the scraper reads the page's structured data (JSON-LD, Myntra page state, Amazon price and variation markup) for price, MRP, in-stock and sold-out sizes, colour and fabric, and falls back to Bright Data MCP markdown. Try-on images are generated with Gemini and saved in a private Supabase gallery.
 
 ## What this repository contains
 
@@ -71,7 +71,7 @@ Configure every variable from `.env.example` in the Render service's **Environme
 
 ### Supabase (storage)
 
-Run `supabase/schema.sql` once in the Supabase SQL Editor. Keep the bucket private, and never expose the service-role key to a browser.
+Run `supabase/schema.sql` in the Supabase SQL Editor. Run it again after upgrading: it is safe to re-run, and it adds the `wardrobe_items` table and the gallery's outfit columns. Keep the bucket private, and never expose the service-role key to a browser.
 
 ### GitHub Pages (UI)
 
@@ -87,6 +87,23 @@ The workflow publishes `app/static` and writes `static/config.js` so the UI call
 docker build -t fitcart-scraper-service .
 docker run --rm -p 8000:8000 --env-file .env fitcart-scraper-service
 ```
+
+## Wardrobe and outfit try-on
+
+- **Shopping wardrobe** (`collection=store`): products saved from store links. Paste up to five links from different stores (top, bottom, shoes, jewellery) and import them together, or tap *Save to my shopping wardrobe* on a product.
+- **Home wardrobe** (`collection=home`): photos of clothes, footwear and jewellery the user already owns, uploaded by category.
+- **Outfit try-on**: pick up to five pieces from either wardrobe and generate one image of the user wearing all of them.
+- **AI stylist**: `gemini-2.5-flash` (`GEMINI_TEXT_MODEL`) suggests complete outfits using only the user's own items.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/v1/wardrobe?collection=store\|home` | List saved items |
+| `POST` | `/v1/wardrobe` | Add an item (multipart: `collection`, `slot`, `name`, and `image` or `image_url`) |
+| `DELETE` | `/v1/wardrobe/{id}` | Remove an item and its photo |
+| `POST` | `/v1/wardrobe/suggestions` | `{"collection": "all", "occasion": "office", "count": 3}` → outfit ideas |
+| `POST` | `/v1/try-ons/outfit` | Multipart `person_image` + `item_ids=id1,id2,id3` → saved gallery item |
+
+Wardrobes belong to the anonymous session stored in the browser, like the gallery.
 
 ## Production notes
 

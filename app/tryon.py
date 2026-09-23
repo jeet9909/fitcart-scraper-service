@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 from dataclasses import dataclass, field
@@ -38,6 +39,33 @@ def validate_image(data: bytes, content_type: str | None, max_bytes: int) -> tup
 
 
 MODEL_IMAGE_MAX_SIDE = 1536
+GEMINI_RETRY_MAX_SECONDS = 20
+
+
+def _quota_details(response: httpx.Response) -> dict[str, Any]:
+    """Read the QuotaFailure and RetryInfo details Google attaches to 429 responses."""
+    quota: dict[str, Any] = {"limit_zero": False, "per_day": False, "retry_seconds": None, "model": None}
+    try:
+        details = response.json().get("error", {}).get("details") or []
+    except (ValueError, AttributeError):
+        return quota
+    for detail in details if isinstance(details, list) else []:
+        if not isinstance(detail, dict):
+            continue
+        kind = str(detail.get("@type", ""))
+        if kind.endswith("QuotaFailure"):
+            for violation in detail.get("violations") or []:
+                if str(violation.get("quotaValue", "")).strip() == "0":
+                    quota["limit_zero"] = True
+                if "PerDay" in str(violation.get("quotaId", "")):
+                    quota["per_day"] = True
+                quota["model"] = (violation.get("quotaDimensions") or {}).get("model") or quota["model"]
+        elif kind.endswith("RetryInfo"):
+            try:
+                quota["retry_seconds"] = float(str(detail.get("retryDelay", "")).removesuffix("s"))
+            except ValueError:
+                pass
+    return quota
 
 
 def _prepare_for_model(data: bytes, mime: str) -> tuple[bytes, str]:
@@ -115,13 +143,27 @@ class TryOnService:
                 "imageConfig": {"aspectRatio": "3:4"},
             },
         }
-        self.usage.requests += 1
         async with httpx.AsyncClient(timeout=180) as client:
-            response = await client.post(
-                f"{self._model_url()}:generateContent",
-                headers={"x-goog-api-key": self.settings.gemini_api_key.get_secret_value()},
-                json=payload,
-            )
+            for attempt in range(2):
+                self.usage.requests += 1
+                response = await client.post(
+                    f"{self._model_url()}:generateContent",
+                    headers={"x-goog-api-key": self.settings.gemini_api_key.get_secret_value()},
+                    json=payload,
+                )
+                if response.status_code != 429:
+                    break
+                quota = _quota_details(response)
+                retry_in = quota["retry_seconds"]
+                # A short per-minute limit clears by itself; wait it out once instead of failing the try-on.
+                if attempt or quota["limit_zero"] or retry_in is None or retry_in > GEMINI_RETRY_MAX_SECONDS:
+                    break
+                self.usage.failed += 1
+                await asyncio.sleep(retry_in)
+        if response.status_code == 429:
+            self.usage.failed += 1
+            self.usage.last_error = f"429: {self._error_message(response)}"
+            raise TryOnError(self._quota_message(_quota_details(response)), 429)
         if response.status_code >= 400:
             self.usage.failed += 1
             self.usage.last_error = f"{response.status_code}: {self._error_message(response)}"
@@ -139,6 +181,19 @@ class TryOnService:
         except (KeyError, ValueError) as exc:
             raise TryOnError("Gemini returned an invalid image") from exc
         return validate_image(data, image.get("mime_type") or image.get("mimeType") or "image/png", 20_000_000)
+
+    def _quota_message(self, quota: dict[str, Any]) -> str:
+        model = quota["model"] or self.settings.gemini_image_model
+        if quota["limit_zero"]:
+            return (
+                f"The Gemini API key has no quota for {model}. Image generation is not included in the Gemini free tier; "
+                "enable billing for the key's Google Cloud project in Google AI Studio, then try again."
+            )
+        if quota["per_day"]:
+            return f"The daily Gemini quota for {model} is used up. It resets at midnight Pacific time, or raise the limit by enabling billing in Google AI Studio."
+        if quota["retry_seconds"] is not None:
+            return f"Gemini is rate limiting {model}. Please try again in about {max(1, round(quota['retry_seconds']))} seconds."
+        return f"The Gemini quota for {model} is exhausted. Check usage and billing in Google AI Studio."
 
     def _model_url(self) -> str:
         model = quote(self.settings.gemini_image_model.removeprefix("models/"), safe="-._")

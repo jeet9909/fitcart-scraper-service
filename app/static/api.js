@@ -2,6 +2,10 @@
 'use strict';
 
 const SESSION_KEY = 'fitcart-anonymous-session-v1';
+// Empty when the UI is served by the API itself; set by static/config.js to the
+// Supabase Edge Function URL when the UI is hosted on GitHub Pages.
+const API_BASE = String(window.FITCART_API_BASE || '').replace(/\/+$/, '');
+const apiUrl = path => `${API_BASE}${path}`;
 
 function apiErrorMessage(payload, fallback) {
   const detail = payload?.detail;
@@ -22,7 +26,7 @@ function loadSession() {
 }
 
 async function newSession() {
-  const response = await fetch('/v1/sessions/anonymous', { method: 'POST' });
+  const response = await fetch(apiUrl('/v1/sessions/anonymous'), { method: 'POST' });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw Error(apiErrorMessage(payload, 'Could not start a private session.'));
   localStorage.setItem(SESSION_KEY, JSON.stringify(payload));
@@ -94,7 +98,7 @@ function installLiveLinkForm() {
     button.disabled = true;
     button.textContent = 'Finding product…';
     try {
-      const response = await fetch('/v1/products/scrape', {
+      const response = await fetch(apiUrl('/v1/products/scrape'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: url.href, country: 'IN' }),
@@ -192,7 +196,7 @@ generate = async function liveGenerate() {
       form.append('product_page_url', state.sourceUrl);
     }
     $('#generationStatus').textContent = 'Generating your virtual try-on…';
-    const response = await authorizedFetch('/v1/try-ons', { method: 'POST', body: form, signal: controller.signal });
+    const response = await authorizedFetch(apiUrl('/v1/try-ons'), { method: 'POST', body: form, signal: controller.signal });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw Error(apiErrorMessage(payload, 'Virtual try-on generation failed.'));
     state.galleryItem = payload;

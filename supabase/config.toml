@@ -1,0 +1,7 @@
+# Supabase CLI project configuration (used by `supabase functions deploy` and `supabase db push`).
+project_id = "fitcart-scraper-service"
+
+[functions.fitcart-api]
+# The function issues and verifies its own anonymous FitCart tokens, so the
+# Supabase gateway must not require a Supabase Auth JWT.
+verify_jwt = false

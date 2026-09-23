@@ -1,0 +1,78 @@
+name: Deploy backend to Supabase
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "supabase/**"
+      - ".github/workflows/deploy-supabase.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-supabase
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check configuration
+        run: |
+          missing=""
+          [ -n "$SUPABASE_ACCESS_TOKEN" ] || missing="$missing secret:SUPABASE_ACCESS_TOKEN"
+          [ -n "$SUPABASE_PROJECT_REF" ] || missing="$missing variable:SUPABASE_PROJECT_REF"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository settings:$missing (Settings → Secrets and variables → Actions)"
+            exit 1
+          fi
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Apply database migrations
+        if: env.SUPABASE_DB_PASSWORD != ''
+        run: |
+          supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+          supabase db push --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Set Edge Function secrets
+        env:
+          BRIGHTDATA_API_TOKEN: ${{ secrets.BRIGHTDATA_API_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ANONYMOUS_TOKEN_SECRET: ${{ secrets.ANONYMOUS_TOKEN_SECRET }}
+          GEMINI_IMAGE_MODEL: ${{ vars.GEMINI_IMAGE_MODEL }}
+          ALLOWED_PRODUCT_HOSTS: ${{ vars.ALLOWED_PRODUCT_HOSTS }}
+          ALLOWED_ORIGINS: ${{ vars.ALLOWED_ORIGINS }}
+        run: |
+          : > .env.functions
+          for name in BRIGHTDATA_API_TOKEN GEMINI_API_KEY ANONYMOUS_TOKEN_SECRET GEMINI_IMAGE_MODEL ALLOWED_PRODUCT_HOSTS ALLOWED_ORIGINS; do
+            value="${!name}"
+            [ -n "$value" ] && printf '%s=%s\n' "$name" "$value" >> .env.functions
+          done
+          if [ -s .env.functions ]; then
+            supabase secrets set --project-ref "$SUPABASE_PROJECT_REF" --env-file .env.functions
+          fi
+          rm -f .env.functions
+
+      - name: Deploy Edge Function
+        run: supabase functions deploy fitcart-api --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt --use-api
+
+      - name: Smoke test
+        run: |
+          url="https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/fitcart-api/health"
+          for attempt in 1 2 3 4 5; do
+            if curl -fsS "$url"; then echo; echo "Deployed: ${url%/health}"; exit 0; fi
+            sleep $((attempt * 5))
+          done
+          echo "::error::Health check failed at $url"
+          exit 1

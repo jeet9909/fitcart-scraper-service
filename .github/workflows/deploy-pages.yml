@@ -1,0 +1,59 @@
+name: Deploy UI to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/static/**"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      FITCART_API_BASE: ${{ vars.FITCART_API_BASE }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build site
+        run: |
+          api_base="${FITCART_API_BASE:-}"
+          if [ -z "$api_base" ] && [ -n "$SUPABASE_PROJECT_REF" ]; then
+            api_base="https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/fitcart-api"
+          fi
+          if [ -z "$api_base" ]; then
+            echo "::error::Set the SUPABASE_PROJECT_REF (or FITCART_API_BASE) repository variable so the UI knows where the API lives."
+            exit 1
+          fi
+          mkdir -p _site/static
+          cp app/static/index.html _site/index.html
+          cp app/static/api.js _site/static/api.js
+          printf "window.FITCART_API_BASE = %s;\n" "$(jq -Rn --arg v "$api_base" '$v')" > _site/static/config.js
+          touch _site/.nojekyll
+          echo "UI will call: $api_base"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

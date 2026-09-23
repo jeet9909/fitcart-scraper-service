@@ -60,7 +60,8 @@ def test_storefront_serves_approved_ui() -> None:
         response = client.get("/")
     assert response.status_code == 200
     assert "Your next find" in response.text
-    assert "/static/api.js" in response.text
+    assert "static/config.js" in response.text
+    assert "static/api.js" in response.text
 
 
 def test_live_ui_adapter_is_served() -> None:

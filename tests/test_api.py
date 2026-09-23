@@ -357,7 +357,7 @@ def test_tryon_reuses_scraped_image_without_scraping_again() -> None:
             fetched.append(url)
             return _tiny_png(), "image/png", "png"
 
-        async def generate(self, person, product, category, product_name=None):
+        async def generate(self, person, product, category, product_name=None, pose="standard"):
             return _tiny_png(), "image/png", "png"
 
         async def save(self, user_id, person, product, result, category, product_source, product_url, items=None) -> GalleryItem:
@@ -649,7 +649,7 @@ def test_outfit_tryon_endpoint_uses_wardrobe_items() -> None:
         def ensure_configured(self) -> None:
             pass
 
-        async def generate_outfit(self, person, pieces):
+        async def generate_outfit(self, person, pieces, pose="standard"):
             calls["pieces"] = len(pieces)
             return _tiny_png(), "image/png", "png"
 
@@ -724,7 +724,8 @@ def test_tryon_with_extra_pieces_from_other_stores() -> None:
             calls["fetched"].append(url)
             return _tiny_png(), "image/png", "png"
 
-        async def generate_outfit(self, person, pieces):
+        async def generate_outfit(self, person, pieces, pose="standard"):
+            calls["pose"] = pose
             calls["pieces"] = [(piece.category, piece.label) for piece in pieces]
             return _tiny_png(), "image/png", "png"
 
@@ -841,3 +842,59 @@ def test_scrape_results_are_cached_and_shared() -> None:
     results = asyncio.run(run())
     assert calls == ["https://www.amazon.in/dp/B0SHIRT"]
     assert results[-1].data.title == "Calvin Klein Jeans Men Shirt"
+
+
+def test_standard_pose_prompt_reposes_and_keeps_identity() -> None:
+    from app.tryon import OutfitPiece, tryon_prompt
+
+    image = (b"", "image/png", "png")
+    pieces = [OutfitPiece(image, "top", "CK BLACK Calvin Klein Jeans Men Shirt"), OutfitPiece(image, "footwear", "White sneakers")]
+    standard = tryon_prompt(pieces)
+    assert "ignore the pose in image 1" in standard
+    assert "arms relaxed and straight down at the sides" in standard
+    assert "from the top of the head to the soles of the shoes" in standard
+    assert "same person as image 1" in standard and "glasses" in standard
+    assert "image 2 is the top (CK BLACK Calvin Klein Jeans Men Shirt); image 3 is the footwear (White sneakers)" in standard
+    keep = tryon_prompt(pieces, "keep")
+    assert "Keep the person's own pose" in keep and "ignore the pose" not in keep
+
+
+def test_tryon_passes_pose_and_rejects_unknown_pose() -> None:
+    from app.models import GalleryItem
+
+    session_settings = Settings(brightdata_api_token="test", anonymous_token_secret="a-secure-test-secret-that-is-long-enough")
+    seen: list[str] = []
+
+    class StubTryOn:
+        def ensure_configured(self) -> None:
+            pass
+
+        async def fetch_image(self, url: str):
+            return _tiny_png(), "image/png", "png"
+
+        async def generate(self, person, product, category, product_name=None, pose="standard"):
+            seen.append(pose)
+            return _tiny_png(), "image/png", "png"
+
+        async def save(self, user_id, person, product, result, category, product_source, product_url, items=None) -> GalleryItem:
+            return GalleryItem(
+                id="1", anonymous_user_id=user_id, category=category, product_source=product_source, product_url=product_url,
+                person_image_url="https://example.com/p.png", product_image_url="https://example.com/i.png",
+                result_image_url="https://example.com/r.png", model="test", created_at=datetime(2026, 9, 23, tzinfo=UTC),
+            )
+
+    app.dependency_overrides[get_runtime_settings] = lambda: session_settings
+    app.dependency_overrides[get_tryon_service] = lambda: StubTryOn()
+    try:
+        with TestClient(app) as client:
+            headers = {"Authorization": f"Bearer {client.post('/v1/sessions/anonymous').json()['access_token']}"}
+            files = {"person_image": ("p.png", _tiny_png(), "image/png")}
+            base = {"product_image_url": "https://assets.myntassets.com/shirt.jpg"}
+            default = client.post("/v1/try-ons", headers=headers, files=files, data=base)
+            keep = client.post("/v1/try-ons", headers=headers, files=files, data={**base, "pose": "keep"})
+            bad = client.post("/v1/try-ons", headers=headers, files=files, data={**base, "pose": "dance"})
+        assert default.status_code == 200 and keep.status_code == 200
+        assert seen == ["standard", "keep"]
+        assert bad.status_code == 422
+    finally:
+        app.dependency_overrides.clear()

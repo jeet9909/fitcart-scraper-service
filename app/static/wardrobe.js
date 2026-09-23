@@ -145,7 +145,7 @@ function builderPanel() {
     ? pieces.map(item => `<div class="piece"><img src="${esc(item.image_url)}" alt=""><div><strong>${esc(SLOT_LABEL[item.slot])}</strong><br><span class="muted">${esc(item.name)}</span><br><span class="micro muted">${item.collection === 'home' ? 'Home wardrobe' : esc(item.store || 'Shopping wardrobe')}</span></div></div>`).join('')
     : '<p class="small muted">Tap “Add to outfit” on up to 5 pieces, from either wardrobe.</p>';
   const ready = pieces.length && person && wardrobe.consent && !wardrobe.busy;
-  return `<div class="card pad"><div class="row between"><h3 style="margin:0">Your outfit</h3>${pieces.length ? '<button class="linkbtn" data-waction="clearOutfit">Clear</button>' : ''}</div><div class="pieces">${piecesHtml}</div><div class="rule"></div><div class="row">${person ? `<img class="personthumb" src="${person}" alt="Your photo">` : ''}<label class="btn secondary" style="cursor:pointer">${person ? 'Change photo' : 'Add your full-body photo'}<input type="file" id="wardrobePerson" accept="image/jpeg,image/png,image/webp" hidden></label></div><label class="consent" style="margin-top:12px"><input type="checkbox" id="wardrobeConsent" ${wardrobe.consent ? 'checked' : ''}><span class="small">I have permission to use this photo. It is sent to the FitCart API to create the try-on; a preview cannot guarantee fit.</span></label><button class="btn wide" data-waction="tryOutfit" ${ready ? '' : 'disabled'}>${wardrobe.busy === 'tryon' ? 'Creating your look…' : 'Try on this outfit'} ${icon('arrow')}</button><p class="error" id="outfitError" role="alert"></p></div>`;
+  return `<div class="card pad"><div class="row between"><h3 style="margin:0">Your outfit</h3>${pieces.length ? '<button class="linkbtn" data-waction="clearOutfit">Clear</button>' : ''}</div><div class="pieces">${piecesHtml}</div><div class="rule"></div><div class="row">${person ? `<img class="personthumb" src="${person}" alt="Your photo">` : ''}<label class="btn secondary" style="cursor:pointer">${person ? 'Change photo' : 'Add your full-body photo'}<input type="file" id="wardrobePerson" accept="image/jpeg,image/png,image/webp" hidden></label></div>${poseChoiceHtml(state.pose)}<label class="consent" style="margin-top:12px"><input type="checkbox" id="wardrobeConsent" ${wardrobe.consent ? 'checked' : ''}><span class="small">I have permission to use this photo. It is sent to the FitCart API to create the try-on; a preview cannot guarantee fit.</span></label><button class="btn wide" data-waction="tryOutfit" ${ready ? '' : 'disabled'}>${wardrobe.busy === 'tryon' ? 'Creating your look…' : 'Try on this outfit'} ${icon('arrow')}</button><p class="error" id="outfitError" role="alert"></p></div>`;
 }
 
 function stylistPanel() {
@@ -342,6 +342,7 @@ async function tryOutfit() {
     const form = new FormData();
     form.append('person_image', dataUrlBlob(person), 'person.jpg');
     form.append('item_ids', wardrobe.selected.join(','));
+    form.append('pose', state.pose === 'keep' ? 'keep' : 'standard');
     const response = await authorizedFetch(apiUrl('/v1/try-ons/outfit'), { method: 'POST', body: form });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw Error(apiErrorMessage(payload, 'Outfit try-on failed.'));

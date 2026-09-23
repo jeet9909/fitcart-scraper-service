@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from typing import Literal
 
 import hmac
 
@@ -156,6 +157,7 @@ async def create_tryon(
     category: str = Form("clothing"),
     product_name: str | None = Form(None, max_length=200, description="Product title, helps the model pick the right garment from the product photo"),
     country: str = Form("IN"),
+    pose: Literal["standard", "keep"] = Form("standard", description="standard: upright front-facing catalogue pose with the whole outfit visible; keep: the pose from the photo"),
     outfit_items: str | None = Form(
         None,
         description='JSON list of up to 4 extra pieces worn with this product, e.g. [{"slot": "footwear", "name": "White sneakers", "image_url": "https://..."}]. Use "upload": 0 to point at outfit_images[0].',
@@ -194,7 +196,7 @@ async def create_tryon(
         name = product_name.strip()[:200] if product_name and product_name.strip() else None
         category = category.strip()[:80] or "clothing"
         if not extras:
-            result = await service.generate(person, product, category, product_name=name)
+            result = await service.generate(person, product, category, product_name=name, pose=pose)
             return await service.save(user_id, person, product, result, category, product_source, source_url)
 
         async def extra_image(item: OutfitExtraItem) -> tuple[bytes, str, str]:
@@ -206,7 +208,7 @@ async def create_tryon(
         images = await asyncio.gather(*(extra_image(item) for item in extras))
         pieces = [OutfitPiece(image=product, category=category, label=name)]
         pieces += [OutfitPiece(image=image, category=SLOT_LABELS[item.slot], label=item.name.strip() or None) for item, image in zip(extras, images)]
-        result = await service.generate_outfit(person, pieces)
+        result = await service.generate_outfit(person, pieces, pose=pose)
         summary = [{"slot": None, "category": category, "name": name, "product_url": source_url}]
         summary += [
             {"slot": item.slot, "name": item.name, "store": item.store, "price": item.price, "size": item.size,
@@ -246,6 +248,7 @@ def _parse_outfit_items(raw: str | None, upload_count: int) -> list[OutfitExtraI
 async def create_outfit_tryon(
     person_image: UploadFile = File(..., description="Front-facing, full-body user photo"),
     item_ids: str = Form(..., description="Comma-separated wardrobe item ids (1 to 5), e.g. a top, a bottom and shoes"),
+    pose: Literal["standard", "keep"] = Form("standard", description="standard: upright front-facing catalogue pose with the whole outfit visible; keep: the pose from the photo"),
     user_id: str = Depends(get_anonymous_user),
     settings: Settings = Depends(get_runtime_settings),
     service: TryOnService = Depends(get_tryon_service),
@@ -256,7 +259,7 @@ async def create_outfit_tryon(
         service.ensure_configured()
         person = validate_image(await person_image.read(), person_image.content_type, settings.max_image_bytes)
         pieces, summary = await wardrobe.outfit_pieces(user_id, [item.strip() for item in item_ids.split(",") if item.strip()])
-        result = await service.generate_outfit(person, pieces)
+        result = await service.generate_outfit(person, pieces, pose=pose)
         category = " + ".join(item["slot"] for item in summary)[:80]
         product_url = next((item["product_url"] for item in summary if item.get("product_url")), None)
         return await service.save(user_id, person, pieces[0].image, result, category, "wardrobe", product_url, items=summary)

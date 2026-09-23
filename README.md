@@ -106,6 +106,10 @@ docker run --rm -p 8000:8000 --env-file .env fitcart-scraper-service
 
 Wardrobes belong to the anonymous session stored in the browser, like the gallery.
 
+### Pose
+
+Both try-on endpoints take `pose`: `standard` (default) re-poses the person upright and front-facing, arms at the sides, head to toe on a plain studio background so the whole outfit is visible, while keeping their face, hair, glasses, skin tone and body shape. `keep` keeps the pose and background from the uploaded photo. The prompt lives in `tryon_prompt` in `app/tryon.py`.
+
 ## Production notes
 
 - Set `ALLOWED_PRODUCT_HOSTS=amazon.in,flipkart.com,myntra.com,ajio.com,meesho.com` to restrict accepted URLs.

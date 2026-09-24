@@ -59,17 +59,19 @@ def test_storefront_serves_approved_ui() -> None:
     with TestClient(app) as client:
         response = client.get("/")
     assert response.status_code == 200
-    assert "Your next find" in response.text
+    assert "FitCart" in response.text
     assert "static/config.js" in response.text
-    assert "static/api.js" in response.text
+    assert "static/app.js" in response.text
 
 
 def test_live_ui_adapter_is_served() -> None:
     with TestClient(app) as client:
-        response = client.get("/static/api.js")
+        response = client.get("/static/app.js")
+        image = client.get("/static/img/after.jpg")
     assert response.status_code == 200
-    assert "/v1/products/scrape" in response.text
-    assert "/v1/try-ons" in response.text
+    for endpoint in ("/v1/products/scrape", "/v1/try-ons", "/v1/wardrobe", "/v1/wardrobe/suggestions", "/v1/gallery"):
+        assert endpoint in response.text
+    assert image.status_code == 200 and image.headers["content-type"] == "image/jpeg"
 
 
 def test_scrape_returns_normalized_product(monkeypatch) -> None:

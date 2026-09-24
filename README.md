@@ -110,6 +110,17 @@ Wardrobes belong to the anonymous session stored in the browser, like the galler
 
 Both try-on endpoints take `pose`: `standard` (default) re-poses the person upright and front-facing, arms at the sides, head to toe on a plain studio background so the whole outfit is visible, while keeping their face, hair, glasses, skin tone and body shape. `keep` keeps the pose and background from the uploaded photo. The prompt lives in `tryon_prompt` in `app/tryon.py`.
 
+## Email sign-in and unlimited looks
+
+People can sign in with a one-time email code (the account button in the top bar). Supabase Auth sends the email and checks the code, and the API turns it into a FitCart session tied to that account, so their wardrobe and looks follow them across devices. Endpoints: `POST /v1/auth/email/code`, `POST /v1/auth/email/verify`, `POST /v1/auth/email/link` (for the link in the email), and `GET /v1/me`.
+
+Emails listed in `UNLIMITED_EMAILS` (comma-separated, any case) get unlimited looks. The list is checked on every `GET /v1/me`, so removing an email revokes it on that person's next visit.
+
+Supabase setup:
+- **Authentication → Emails → Magic Link** template: add the code, e.g. `<p>Your FitCart code: <strong>{{ .Token }}</strong></p>`, so people can type it in the app.
+- **Authentication → URL Configuration**: set Site URL to the GitHub Pages address so the link in the email opens FitCart.
+- The built-in Supabase mailer sends only a few emails per hour; add custom SMTP before a wider launch.
+
 ## Production notes
 
 - Set `ALLOWED_PRODUCT_HOSTS=amazon.in,flipkart.com,myntra.com,ajio.com,meesho.com` to restrict accepted URLs.

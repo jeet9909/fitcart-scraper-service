@@ -54,6 +54,30 @@ class AnonymousSessionResponse(BaseModel):
     expires_at: datetime
 
 
+class EmailSessionResponse(AnonymousSessionResponse):
+    email: str
+    unlimited: bool = False
+
+
+class EmailCodeRequest(BaseModel):
+    email: str = Field(max_length=254)
+
+
+class EmailVerifyRequest(BaseModel):
+    email: str = Field(max_length=254)
+    code: str = Field(max_length=20)
+
+
+class EmailLinkRequest(BaseModel):
+    access_token: str = Field(min_length=20, max_length=8000)
+
+
+class AccountResponse(BaseModel):
+    user_id: str
+    email: str | None = None
+    unlimited: bool = False
+
+
 class GalleryItem(BaseModel):
     id: str
     anonymous_user_id: str

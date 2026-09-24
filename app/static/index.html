@@ -619,6 +619,13 @@ dialog.sheet.closing::backdrop{animation:fade .22s var(--ease-in) reverse forwar
 .ph-slot{width:56px;aspect-ratio:3/4;border-radius:10px;background:var(--surface-2);display:grid;place-items:center;color:var(--muted)}
 .result-visual .link{justify-self:center}
 .action:disabled{opacity:.45}
+.account-btn{position:relative}
+.lookpill{white-space:nowrap;flex-shrink:0}
+@media (max-width:420px){.topbar-in{gap:4px}.topbar-in .spacer{min-width:4px}.lookpill{padding-left:12px;gap:6px}}
+.account-btn.signed{color:var(--accent-text);background:var(--accent-soft)}
+.account-btn.signed::after{content:"";position:absolute;right:8px;top:8px;width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 2px var(--surface)}
+.code-input{letter-spacing:.4em;text-align:center;font-variant-numeric:tabular-nums;font-size:22px}
+.account-card{display:grid;gap:6px;padding:14px 16px;border-radius:var(--r-m);background:var(--surface-2)}
 </style>
 </head>
 <body>
@@ -632,6 +639,7 @@ dialog.sheet.closing::backdrop{animation:fade .22s var(--ease-in) reverse forwar
       <button data-act="go" data-view="pricing">Pricing</button>
     </nav>
     <div class="spacer"></div>
+    <button class="iconbtn account-btn" data-act="account" id="accountBtn" aria-label="Sign in"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></button>
     <button class="iconbtn" data-act="theme" aria-label="Switch light or dark theme"><svg class="icon" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/></svg></button>
     <button class="lookpill" data-act="go" data-view="builder" aria-label="Open your look"><svg class="icon s" viewBox="0 0 24 24"><path d="M6 7h12l-1 13H7z"/><path d="M9 7a3 3 0 0 1 6 0"/></svg>My look <span class="count num" id="lookCount">0</span></button>
   </div>
@@ -646,6 +654,7 @@ dialog.sheet.closing::backdrop{animation:fade .22s var(--ease-in) reverse forwar
 <dialog class="sheet" id="addSheet" aria-labelledby="addTitle"></dialog>
 <dialog class="sheet" id="photoSheet" aria-labelledby="photoTitle"></dialog>
 <dialog class="sheet" id="itemSheet" aria-labelledby="itemTitle"></dialog>
+<dialog class="sheet" id="signinSheet" aria-labelledby="signinTitle"></dialog>
 <div id="toastHost" role="status" aria-live="polite"></div>
 <p class="sr" id="announcer" aria-live="polite"></p>
 <input type="file" id="photoFile" accept="image/jpeg,image/png,image/webp" hidden>

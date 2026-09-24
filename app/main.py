@@ -12,10 +12,16 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import TypeAdapter, ValidationError
 
-from app.anonymous_auth import create_anonymous_session, verify_anonymous_token
+from app.anonymous_auth import create_anonymous_session, create_email_session, verify_session_token
+from app import email_auth
 from app.config import Settings, get_settings
 from app.models import (
+    AccountResponse,
     AnonymousSessionResponse,
+    EmailCodeRequest,
+    EmailLinkRequest,
+    EmailSessionResponse,
+    EmailVerifyRequest,
     GalleryItem,
     GalleryResponse,
     GeminiUsageResponse,
@@ -93,16 +99,20 @@ async def storefront() -> FileResponse:
     return FileResponse("app/static/index.html")
 
 
-def get_anonymous_user(
+def get_session_claims(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
     settings: Settings = Depends(get_runtime_settings),
-) -> str:
+) -> dict:
     if not credentials or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required")
     token = credentials.credentials.strip()
     if token.lower().startswith("bearer "):
         token = token[7:].strip()
-    return verify_anonymous_token(token, settings)
+    return verify_session_token(token, settings)
+
+
+def get_anonymous_user(claims: dict = Depends(get_session_claims)) -> str:
+    return claims["sub"]
 
 
 @app.get("/health", response_model=HealthResponse, tags=["system"])
@@ -143,6 +153,32 @@ async def scrape_product(
 @app.post("/v1/sessions/anonymous", response_model=AnonymousSessionResponse, tags=["sessions"])
 async def create_session(settings: Settings = Depends(get_runtime_settings)) -> AnonymousSessionResponse:
     return create_anonymous_session(settings)
+
+
+@app.post("/v1/auth/email/code", status_code=204, tags=["sessions"])
+async def send_email_code(body: EmailCodeRequest, settings: Settings = Depends(get_runtime_settings)) -> None:
+    """Email a one-time sign-in code (and link) through Supabase Auth."""
+    await email_auth.send_code(email_auth.normalize_email(body.email), settings)
+
+
+@app.post("/v1/auth/email/verify", response_model=EmailSessionResponse, tags=["sessions"])
+async def verify_email_code(body: EmailVerifyRequest, settings: Settings = Depends(get_runtime_settings)) -> EmailSessionResponse:
+    user_id, email = await email_auth.verify_code(email_auth.normalize_email(body.email), body.code, settings)
+    return create_email_session(user_id, email, settings)
+
+
+@app.post("/v1/auth/email/link", response_model=EmailSessionResponse, tags=["sessions"])
+async def exchange_email_link(body: EmailLinkRequest, settings: Settings = Depends(get_runtime_settings)) -> EmailSessionResponse:
+    """Turn the access token from a clicked sign-in link into a FitCart session."""
+    user_id, email = await email_auth.user_from_link_token(body.access_token, settings)
+    return create_email_session(user_id, email, settings)
+
+
+@app.get("/v1/me", response_model=AccountResponse, tags=["sessions"])
+async def current_account(claims: dict = Depends(get_session_claims), settings: Settings = Depends(get_runtime_settings)) -> AccountResponse:
+    """Who this session belongs to and whether it has unlimited looks (checked against UNLIMITED_EMAILS on every call)."""
+    email = claims.get("email")
+    return AccountResponse(user_id=claims["sub"], email=email, unlimited=settings.is_unlimited(email))
 
 
 @app.post("/v1/try-ons", response_model=GalleryItem, tags=["virtual try-on"])

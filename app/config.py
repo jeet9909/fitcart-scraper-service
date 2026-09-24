@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     scrape_cache_seconds: int = Field(default=900, ge=0, le=86400, description="Reuse a scraped product for this long; 0 disables the cache")
     max_concurrent_scrapes: int = Field(default=5, ge=1, le=100)
     allowed_product_hosts_csv: str = Field(default="", validation_alias="ALLOWED_PRODUCT_HOSTS")
+    unlimited_emails_csv: str = Field(default="", validation_alias="UNLIMITED_EMAILS")
+
+    def is_unlimited(self, email: str | None) -> bool:
+        """Signed-in emails listed in UNLIMITED_EMAILS get unlimited looks."""
+        allowed = {item.strip().lower() for item in self.unlimited_emails_csv.split(",") if item.strip()}
+        return bool(email) and email.strip().lower() in allowed
 
     @property
     def allowed_product_hosts(self) -> tuple[str, ...]:

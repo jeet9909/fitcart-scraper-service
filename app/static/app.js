@@ -48,6 +48,7 @@ const state = {
   addSlot:null, addTab:'link', importing:false, importError:'', imported:null, draftSize:null,
   itemDraft:null,
   gen:null,
+  account:readStore('fitcart-account', null), signin:null,
 };
 
 /* ---------- API ---------- */
@@ -74,6 +75,7 @@ async function session(force = false){
       const payload = await r.json().catch(() => ({}));
       if (!r.ok) throw Error(apiError(payload, 'Could not start a private session.'));
       persist(SESSION_KEY, payload);
+      setAccount(null);
       return payload;
     }).finally(() => { sessionPromise = null; });
   }
@@ -159,6 +161,7 @@ const ic = {
   camera:'<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>', sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19"/>',
   face:'<circle cx="12" cy="12" r="9"/><path d="M9 10h.01M15 10h.01M8.5 15a4.5 4.5 0 0 0 7 0"/>', body:'<circle cx="12" cy="4.5" r="2"/><path d="M12 7v8M8 10h8M12 15l-3 6M12 15l3 6"/>',
   info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>', alert:'<path d="M12 4 2.5 20h19z"/><path d="M12 10v4M12 17h.01"/>',
+  user:'<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>', mail:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 7 8.5-7"/>',
   swap:'<path d="m9 6-6 6 6 6M15 6l6 6-6 6"/>', hanger:'<path d="M12 6a2 2 0 1 1 2 2c-1 0-2 .8-2 2v1"/><path d="M12 11 3 17.5a1 1 0 0 0 .6 1.8h16.8a1 1 0 0 0 .6-1.8z"/>',
 };
 const icon = (n, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ic[n]}</svg>`;
@@ -215,6 +218,9 @@ function render(enter = false){
   const n = state.look.length;
   $('#lookCount').textContent = n;
   $('#tabCount').textContent = n; $('#tabCount').hidden = !n;
+  const acct = $('#accountBtn');
+  acct.classList.toggle('signed', Boolean(state.account));
+  acct.setAttribute('aria-label', state.account ? `Account: ${state.account.email}` : 'Sign in');
   const views = {landing, pricing:pricingPage, home, builder, generating, result, wardrobe, looks};
   const view = $('#view');
   view.innerHTML = views[state.view]();
@@ -374,7 +380,9 @@ function setupReveal(){
   revealObserver = new IntersectionObserver(entries => entries.forEach(e => { if (e.isIntersecting){ e.target.classList.add('in'); revealObserver.unobserve(e.target); } }), {rootMargin:'0px 0px -8% 0px', threshold:.08});
   document.querySelectorAll('.reveal:not(.in)').forEach(el => revealObserver.observe(el));
 }
+const unlimited = () => Boolean(state.account?.unlimited);
 function planChip(){
+  if (unlimited()) return `<button class="plan-chip" data-act="account">${icon('spark','s')} Unlimited looks · ${esc(state.account.email)}</button>`;
   const p = PLANS.find(x => x.key === state.plan.key);
   return `<button class="plan-chip" data-act="go" data-view="pricing">${icon('spark','s')} ${esc(p.name)} · ${state.plan.left} ${state.plan.left === 1 ? 'look' : 'looks'} left</button>`;
 }
@@ -564,7 +572,7 @@ async function requestTryOn(signal){
 }
 function startGeneration(){
   if (!canGenerate()) return;
-  if (state.plan.left <= 0){ closeSheet($('#photoSheet')); go('pricing'); toast('You have used all your looks. Pick a pass or plan to keep going.', {kind:'info'}); return; }
+  if (!unlimited() && state.plan.left <= 0){ closeSheet($('#photoSheet')); go('pricing'); toast('You have used all your looks. Pick a pass or plan to keep going.', {kind:'info'}); return; }
   closeSheet($('#photoSheet'));
   stopGeneration();
   const steps = buildSteps();
@@ -641,11 +649,11 @@ function finishGeneration(){
     const look = {id:item.id, img:item.result_image_url, before:state.photo || IMG.before, title:orderedLook().map(p => short(p.item)).join(', '),
       items:orderedLook().map(p => ({item:{...p.item}, size:p.size})), pose:state.pose, editable:true};
     state.current = look; state.justGenerated = true;
-    state.plan.left = Math.max(0, state.plan.left - 1); persist('fitcart-plan', state.plan);
+    if (!unlimited()){ state.plan.left = Math.max(0, state.plan.left - 1); persist('fitcart-plan', state.plan); }
     state.gallery = null;
     state.gen = null;
     go('result');
-    toast(`Look saved privately · ${state.plan.left} ${state.plan.left === 1 ? 'look' : 'looks'} left`, {action:{label:'View Looks', run:() => go('looks')}});
+    toast(unlimited() ? 'Look saved privately · unlimited looks' : `Look saved privately · ${state.plan.left} ${state.plan.left === 1 ? 'look' : 'looks'} left`, {action:{label:'View Looks', run:() => go('looks')}});
   }, REDUCED.matches ? 300 : 2000);
 }
 function stopGeneration(){
@@ -768,6 +776,111 @@ function lookFromGallery(g){
     size:it.size || null,
   }));
   return {id:g.id, img:g.result_image_url, before:g.person_image_url, title:galleryTitle(g), items, pose:'standard', editable:false};
+}
+
+/* ---------- Account ---------- */
+function setAccount(account){
+  state.account = account ? {email:account.email, unlimited:Boolean(account.unlimited)} : null;
+  if (state.account) persist('fitcart-account', state.account); else { try { localStorage.removeItem('fitcart-account'); } catch {} }
+}
+function startAccountSession(payload){
+  persist(SESSION_KEY, {anonymous_user_id:payload.anonymous_user_id, access_token:payload.access_token, token_type:payload.token_type, expires_at:payload.expires_at});
+  setAccount(payload);
+  state.wardrobe = null; state.gallery = null; state.ideas = [];
+}
+function openSignin(){
+  state.signin = state.account ? {step:'account'} : {step:'email', email:'', busy:false, error:''};
+  renderSignin(); openSheet($('#signinSheet'));
+  setTimeout(() => $('#signinEmail')?.focus(), 80);
+}
+function renderSignin(){
+  const s = state.signin, a = state.account;
+  let body;
+  if (s.step === 'account'){
+    body = `<div class="account-card"><span class="small muted">Signed in as</span><strong>${esc(a.email)}</strong>${a.unlimited ? `<span class="tag" style="justify-self:start">${icon('spark','s')} Unlimited looks</span>` : `<span class="small muted">${state.plan.left} ${state.plan.left === 1 ? 'look' : 'looks'} left this month</span>`}</div>
+      <p class="small muted">Your wardrobe and looks are saved to this account, so they follow you to any device you sign in on.</p>
+      <button class="btn ghost wide" data-act="sign-out">Sign out</button>`;
+  } else if (s.step === 'email'){
+    body = `<form id="signinForm" novalidate style="display:grid;gap:14px">
+      <p class="small muted">We'll email you a sign-in code. No password needed.</p>
+      <label class="field" for="signinEmail">Email<input class="input" id="signinEmail" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com" value="${esc(s.email)}" required></label>
+      <p class="error" role="alert">${esc(s.error)}</p>
+      <button class="btn brand wide" type="submit" ${s.busy ? 'disabled' : ''}>${s.busy ? '<span class="spin" aria-hidden="true"></span> Sending…' : `${icon('mail','s')} Email me a code`}</button>
+    </form>`;
+  } else {
+    body = `<form id="signinForm" novalidate style="display:grid;gap:14px">
+      <p class="small muted">We sent a code to <strong>${esc(s.email)}</strong>. It can take a minute, so check spam too. You can also tap the link in the email on this device.</p>
+      <label class="field" for="signinCode">Code<input class="input code-input" id="signinCode" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="••••••" required></label>
+      <p class="error" role="alert">${esc(s.error)}</p>
+      <button class="btn brand wide" type="submit" ${s.busy ? 'disabled' : ''}>${s.busy ? '<span class="spin" aria-hidden="true"></span> Checking…' : 'Sign in'}</button>
+      <div style="display:flex;justify-content:space-between;gap:10px"><button class="link small" type="button" data-act="signin-back">Use another email</button><button class="link small" type="button" data-act="signin-resend">Send a new code</button></div>
+    </form>`;
+  }
+  $('#signinSheet').innerHTML = `<div class="grabber" aria-hidden="true"></div><div class="sheet-head"><h2 id="signinTitle">${s.step === 'account' ? 'Your account' : 'Sign in'}</h2><button class="iconbtn" data-act="close-sheet" aria-label="Close">${icon('x')}</button></div><div class="sheet-body">${body}</div>`;
+  const form = $('#signinForm');
+  if (form) form.onsubmit = e => {
+    e.preventDefault();
+    if (s.step === 'email') sendSigninCode($('#signinEmail').value);
+    else verifySigninCode($('#signinCode').value);
+  };
+}
+async function sendSigninCode(raw, resend = false){
+  const email = String(raw || '').trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ state.signin = {step:'email', email, busy:false, error:'Enter a valid email address.'}; renderSignin(); $('#signinEmail')?.focus(); return; }
+  state.signin = {step: resend ? 'code' : 'email', email, busy:true, error:''}; renderSignin();
+  try {
+    await api('/v1/auth/email/code', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email})}, false);
+    state.signin = {step:'code', email, busy:false, error:''}; renderSignin();
+    setTimeout(() => $('#signinCode')?.focus(), 60);
+    if (resend) toast('New code sent.');
+  } catch (err){
+    state.signin = {step: resend ? 'code' : 'email', email, busy:false, error:err.message}; renderSignin();
+  }
+}
+async function verifySigninCode(raw){
+  const s = state.signin, code = String(raw || '').replace(/\s+/g, '');
+  if (!/^\d{6,10}$/.test(code)){ state.signin = {...s, error:'Enter the code from the email.'}; renderSignin(); $('#signinCode')?.focus(); return; }
+  state.signin = {...s, busy:true, error:''}; renderSignin();
+  try {
+    const payload = await api('/v1/auth/email/verify', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email:s.email, code})}, false);
+    signedIn(payload);
+  } catch (err){
+    state.signin = {...s, busy:false, error:err.message}; renderSignin(); $('#signinCode')?.focus();
+  }
+}
+function signedIn(payload){
+  startAccountSession(payload);
+  closeSheet($('#signinSheet'));
+  render();
+  toast(payload.unlimited ? `Signed in as ${payload.email} · unlimited looks` : `Signed in as ${payload.email}`);
+}
+async function signInFromLink(){
+  const params = new URLSearchParams(location.hash.slice(1));
+  const token = params.get('access_token');
+  const failed = params.get('error_description');
+  if (!token && !failed) return false;
+  history.replaceState(null, '', location.pathname + location.search);
+  if (failed){ toast(failed.replace(/\+/g, ' '), {kind:'error'}); return true; }
+  try { signedIn(await api('/v1/auth/email/link', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({access_token:token})}, false)); }
+  catch (err){ toast(err.message, {kind:'error'}); }
+  return true;
+}
+async function refreshAccount(){
+  if (!state.account) return;
+  try {
+    const me = await api('/v1/me');
+    setAccount(me.email ? me : null);
+    render();
+  } catch {}
+}
+function signOut(){
+  try { localStorage.removeItem(SESSION_KEY); } catch {}
+  setAccount(null);
+  state.wardrobe = null; state.gallery = null; state.ideas = [];
+  closeSheet($('#signinSheet'));
+  session(true).catch(() => {});
+  render();
+  toast('Signed out.', {kind:'info'});
 }
 
 /* ---------- Sheets ---------- */
@@ -1043,6 +1156,10 @@ document.addEventListener('click', e => {
       toast(`${p.name} active (demo checkout) · ${state.plan.left} looks ready. Razorpay with UPI goes live at launch.`, {action:{label:'Try it on', run:() => go(state.look.length ? 'builder' : 'home')}});
       break;
     }
+    case 'account': openSignin(); break;
+    case 'signin-back': state.signin = {step:'email', email:state.signin?.email || '', busy:false, error:''}; renderSignin(); break;
+    case 'signin-resend': sendSigninCode(state.signin.email, true); break;
+    case 'sign-out': signOut(); break;
     case 'toast-action': { const act = toastAction; dismissToast(); act?.run(); break; }
   }
 });
@@ -1083,6 +1200,6 @@ document.querySelectorAll('dialog.sheet').forEach(d => {
   const theme = readStore('fitcart-theme', null);
   if (theme === 'dark' || theme === 'light') document.documentElement.dataset.theme = theme;
   fetch(apiUrl('/health'), {cache:'no-store'}).catch(() => {});
-  session().catch(() => {});
   render();
+  signInFromLink().then(fromLink => { if (!fromLink){ session().catch(() => {}); refreshAccount(); } });
 })();

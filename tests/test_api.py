@@ -900,3 +900,82 @@ def test_tryon_passes_pose_and_rejects_unknown_pose() -> None:
         assert bad.status_code == 422
     finally:
         app.dependency_overrides.clear()
+
+
+AUTH_SETTINGS = Settings(
+    openai_api_key="test",
+    brightdata_api_token="test",
+    anonymous_token_secret="a-secure-test-secret-that-is-long-enough",
+    supabase_url="https://project.supabase.co",
+    supabase_service_role_key="service-key",
+    UNLIMITED_EMAILS=" Parthpatil2233@gmail.com , gajerajeet88@gmail.com",
+)
+AUTH_USER_ID = "8d0f6a52-4b8e-4f0e-9d7a-1f2b3c4d5e6f"
+
+
+def _mock_supabase_auth(monkeypatch, handler) -> None:
+    import httpx as _httpx
+
+    real_client = _httpx.AsyncClient
+    monkeypatch.setattr("app.email_auth.httpx.AsyncClient", lambda **kwargs: real_client(transport=_httpx.MockTransport(handler), **kwargs))
+
+
+def test_email_code_sign_in_gives_listed_emails_unlimited_looks(monkeypatch) -> None:
+    import json as _json
+    import httpx as _httpx
+
+    seen: list[tuple[str, dict]] = []
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        seen.append((request.url.path, _json.loads(request.content or b"{}")))
+        assert request.headers["apikey"] == "service-key"
+        if request.url.path == "/auth/v1/otp":
+            return _httpx.Response(200, json={})
+        if request.url.path == "/auth/v1/verify":
+            if request.content and _json.loads(request.content)["token"] != "123456":
+                return _httpx.Response(403, json={"msg": "Token has expired or is invalid"})
+            email = _json.loads(request.content)["email"]
+            return _httpx.Response(200, json={"access_token": "x", "user": {"id": AUTH_USER_ID, "email": email}})
+        return _httpx.Response(404)
+
+    _mock_supabase_auth(monkeypatch, handler)
+    app.dependency_overrides[get_runtime_settings] = lambda: AUTH_SETTINGS
+    try:
+        with TestClient(app) as client:
+            assert client.post("/v1/auth/email/code", json={"email": " ParthPatil2233@Gmail.com "}).status_code == 204
+            wrong = client.post("/v1/auth/email/verify", json={"email": "parthpatil2233@gmail.com", "code": "000000"})
+            signed_in = client.post("/v1/auth/email/verify", json={"email": "parthpatil2233@gmail.com", "code": "123 456"})
+            me = client.get("/v1/me", headers={"Authorization": f"Bearer {signed_in.json()['access_token']}"})
+            gallery = client.get("/v1/gallery", headers={"Authorization": f"Bearer {signed_in.json()['access_token']}"})
+            other = client.post("/v1/auth/email/verify", json={"email": "someone@example.com", "code": "123456"})
+            anonymous = client.post("/v1/sessions/anonymous").json()
+            anonymous_me = client.get("/v1/me", headers={"Authorization": f"Bearer {anonymous['access_token']}"})
+            bad_email = client.post("/v1/auth/email/code", json={"email": "not-an-email"})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert seen[0] == ("/auth/v1/otp", {"email": "parthpatil2233@gmail.com", "create_user": True})
+    assert wrong.status_code == 401
+    assert signed_in.status_code == 200
+    assert signed_in.json()["unlimited"] is True and signed_in.json()["anonymous_user_id"] == AUTH_USER_ID
+    assert me.json() == {"user_id": AUTH_USER_ID, "email": "parthpatil2233@gmail.com", "unlimited": True}
+    assert gallery.status_code == 503  # authenticated; storage is not configured in tests
+    assert other.json()["unlimited"] is False
+    assert anonymous_me.json()["unlimited"] is False and anonymous_me.json()["email"] is None
+    assert bad_email.status_code == 422
+
+
+def test_unlimited_is_rechecked_so_removing_an_email_revokes_it(monkeypatch) -> None:
+    import httpx as _httpx
+
+    _mock_supabase_auth(monkeypatch, lambda request: _httpx.Response(200, json={"id": AUTH_USER_ID, "email": "gajerajeet88@gmail.com"}))
+    app.dependency_overrides[get_runtime_settings] = lambda: AUTH_SETTINGS
+    try:
+        with TestClient(app) as client:
+            session = client.post("/v1/auth/email/link", json={"access_token": "a" * 40}).json()
+            app.dependency_overrides[get_runtime_settings] = lambda: AUTH_SETTINGS.model_copy(update={"unlimited_emails_csv": ""})
+            me = client.get("/v1/me", headers={"Authorization": f"Bearer {session['access_token']}"}).json()
+    finally:
+        app.dependency_overrides.clear()
+    assert session["unlimited"] is True
+    assert me["unlimited"] is False

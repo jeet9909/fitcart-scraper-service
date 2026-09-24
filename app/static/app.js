@@ -517,7 +517,8 @@ function generating(){
     <div class="gen-stage">
       <div class="gen-visual p1" id="genVisual" aria-hidden="true">
         <div class="layer l-photo"><img src="${state.photo || IMG.before}" alt=""></div>
-        <div class="layer l-skel">${FIGURE}</div>
+        <div class="layer l-aura"><i></i><i></i><i></i></div>
+        <div class="layer l-glass">${FIGURE}</div>
         <div class="layer l-soft"><img id="genSoft" alt=""></div>
         <div class="layer l-sharp"><img id="genSharp" alt=""></div>
         <div class="layer l-scan"></div>

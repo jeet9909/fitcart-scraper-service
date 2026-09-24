@@ -34,9 +34,8 @@ jobs:
           fi
           mkdir -p _site/static
           cp app/static/index.html _site/index.html
-          cp app/static/api.js _site/static/api.js
-          cp app/static/wardrobe.js _site/static/wardrobe.js
-          cp app/static/outfit.js _site/static/outfit.js
+          cp app/static/app.js _site/static/app.js
+          cp -r app/static/img _site/static/img
           printf "window.FITCART_API_BASE = %s;\n" "$(jq -Rn --arg v "${FITCART_API_BASE%/}" '$v')" > _site/static/config.js
           touch _site/.nojekyll
           echo "UI will call: $FITCART_API_BASE"

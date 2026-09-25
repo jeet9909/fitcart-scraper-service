@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     max_concurrent_scrapes: int = Field(default=5, ge=1, le=100)
     allowed_product_hosts_csv: str = Field(default="", validation_alias="ALLOWED_PRODUCT_HOSTS")
     unlimited_emails_csv: str = Field(default="", validation_alias="UNLIMITED_EMAILS")
+    look_limits_enabled: bool = True
+    free_looks_per_month: int = Field(default=3, ge=0, le=100)
+    stripe_secret_key: SecretStr = SecretStr("")
+    stripe_webhook_secret: SecretStr = SecretStr("")
+    stripe_allow_live: bool = Field(default=False, description="Refuse sk_live_ keys unless this is set, so test mode cannot turn into real charges by accident")
+    app_url: str = "https://jeet9909.github.io/fitcart-scraper-service/"
 
     def is_unlimited(self, email: str | None) -> bool:
         """Signed-in emails listed in UNLIMITED_EMAILS get unlimited looks."""

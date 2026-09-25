@@ -217,6 +217,7 @@ def test_tryon_rejects_non_image_upload() -> None:
         supabase_url="https://example.supabase.co",
         supabase_service_role_key="test",
         anonymous_token_secret="a-secure-test-secret-that-is-long-enough",
+        look_limits_enabled=False,
     )
     app.dependency_overrides[get_runtime_settings] = lambda: session_settings
     app.dependency_overrides[get_tryon_service] = lambda: TryOnService(session_settings)
@@ -979,3 +980,297 @@ def test_unlimited_is_rechecked_so_removing_an_email_revokes_it(monkeypatch) -> 
         app.dependency_overrides.clear()
     assert session["unlimited"] is True
     assert me["unlimited"] is False
+
+
+import httpx as _httpx_module
+from pydantic import SecretStr
+
+_REAL_ASYNC_CLIENT = _httpx_module.AsyncClient
+_FAKE_HANDLERS: dict[str, object] = {}
+
+
+def _install_fakes(monkeypatch, **handlers) -> None:
+    """Route api.stripe.com to the Stripe fake and everything else to the Supabase fake."""
+    _FAKE_HANDLERS.update(handlers)
+
+    def route(request):
+        key = "stripe" if request.url.host == "api.stripe.com" else "supabase"
+        return _FAKE_HANDLERS[key](request)
+
+    monkeypatch.setattr(
+        "app.tryon.httpx.AsyncClient",
+        lambda **kwargs: _REAL_ASYNC_CLIENT(transport=_httpx_module.MockTransport(route), **{k: v for k, v in kwargs.items() if k != "transport"}),
+    )
+
+
+LIMIT_SETTINGS = Settings(
+    openai_api_key="test",
+    brightdata_api_token="test",
+    gemini_api_key="test",
+    anonymous_token_secret="a-secure-test-secret-that-is-long-enough",
+    supabase_url="https://project.supabase.co",
+    supabase_service_role_key="service-key",
+    stripe_secret_key="sk_test_123",
+    stripe_webhook_secret="whsec_test",
+    UNLIMITED_EMAILS="vip@example.com",
+)
+
+
+class FakeSupabase:
+    """Records PostgREST calls; consume_look answers from `grant`, look_grants GET from `rows`."""
+
+    def __init__(self, grant=None, missing=False, rows=None):
+        import json as _json
+        import httpx as _httpx
+
+        self.calls: list[tuple[str, str, object]] = []
+        self.grant, self.missing, self.rows = grant, missing, rows or []
+
+        def handler(request: _httpx.Request) -> _httpx.Response:
+            body = _json.loads(request.content) if request.content else None
+            path = request.url.path.replace("/rest/v1/", "")
+            self.calls.append((request.method, path, body if body is not None else dict(request.url.params)))
+            if self.missing:
+                return _httpx.Response(404, json={"code": "PGRST202", "message": "Could not find the function"})
+            if path == "rpc/consume_look":
+                return _httpx.Response(200, content=_json.dumps(self.grant).encode(), headers={"content-type": "application/json"})
+            if path in ("rpc/refund_look", "rpc/ensure_free_looks"):
+                return _httpx.Response(204)
+            if path == "look_grants" and request.method == "GET":
+                return _httpx.Response(200, json=self.rows)
+            if path == "look_grants" and request.method == "POST":
+                return _httpx.Response(201)
+            return _httpx.Response(404)
+
+        self.handler = handler
+
+    def install(self, monkeypatch) -> None:
+        _install_fakes(monkeypatch, supabase=self.handler)
+
+    def paths(self) -> list[str]:
+        return [path for _, path, _ in self.calls]
+
+
+def _email_token(email: str, settings: Settings = LIMIT_SETTINGS) -> str:
+    from app.anonymous_auth import create_email_session
+
+    return create_email_session(AUTH_USER_ID, email, settings).access_token
+
+
+def _tryon_with_bad_photo(client: TestClient, token: str | None):
+    headers = {"Authorization": f"Bearer {token}"} if token else {"Authorization": f"Bearer {client.post('/v1/sessions/anonymous').json()['access_token']}"}
+    return client.post(
+        "/v1/try-ons",
+        headers=headers,
+        files={"person_image": ("person.txt", b"not an image", "text/plain"), "product_image": ("product.png", _tiny_png(), "image/png")},
+        data={"category": "shirt"},
+    )
+
+
+def _limit_client(fake: FakeSupabase, monkeypatch):
+    fake.install(monkeypatch)
+    app.dependency_overrides[get_runtime_settings] = lambda: LIMIT_SETTINGS
+    service = TryOnService(LIMIT_SETTINGS)
+    app.dependency_overrides[get_tryon_service] = lambda: service
+    return TestClient(app)
+
+
+def test_guests_must_sign_in_before_a_try_on(monkeypatch) -> None:
+    fake = FakeSupabase(grant="g-1")
+    try:
+        with _limit_client(fake, monkeypatch) as client:
+            response = _tryon_with_bad_photo(client, None)
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "sign_in_required"
+    assert "rpc/consume_look" not in fake.paths()
+
+
+def test_no_looks_left_stops_before_generating(monkeypatch) -> None:
+    fake = FakeSupabase(grant=None)
+    try:
+        with _limit_client(fake, monkeypatch) as client:
+            response = _tryon_with_bad_photo(client, _email_token("buyer@example.com"))
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 402
+    assert response.json()["detail"]["code"] == "no_looks_left"
+    assert fake.calls[0] == ("POST", "rpc/consume_look", {"p_user": AUTH_USER_ID, "p_free_looks": 3})
+
+
+def test_failed_try_on_gives_the_look_back(monkeypatch) -> None:
+    fake = FakeSupabase(grant="grant-7")
+    try:
+        with _limit_client(fake, monkeypatch) as client:
+            response = _tryon_with_bad_photo(client, _email_token("buyer@example.com"))
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 400  # the photo was rejected after the look was reserved
+    assert fake.paths() == ["rpc/consume_look", "rpc/refund_look"]
+    assert fake.calls[1][2] == {"p_grant": "grant-7"}
+
+
+def test_unlimited_accounts_and_missing_schema_skip_the_ledger(monkeypatch) -> None:
+    fake = FakeSupabase(grant=None)
+    missing = FakeSupabase(missing=True)
+    try:
+        with _limit_client(fake, monkeypatch) as client:
+            vip = _tryon_with_bad_photo(client, _email_token("VIP@example.com"))
+        with _limit_client(missing, monkeypatch) as client:
+            not_set_up = _tryon_with_bad_photo(client, _email_token("buyer@example.com"))
+    finally:
+        app.dependency_overrides.clear()
+    assert vip.status_code == 400 and fake.calls == []
+    assert not_set_up.status_code == 400 and missing.paths() == ["rpc/consume_look"]
+
+
+def test_balance_adds_up_active_grants(monkeypatch) -> None:
+    fake = FakeSupabase(rows=[
+        {"kind": "free", "looks": 3, "used": 3, "expires_at": "2026-10-01T00:00:00+00:00"},
+        {"kind": "pass", "looks": 10, "used": 2, "expires_at": "2026-10-02T00:00:00+00:00"},
+        {"kind": "plus", "looks": 25, "used": 0, "expires_at": "2026-10-24T00:00:00+00:00"},
+    ])
+    try:
+        with _limit_client(fake, monkeypatch) as client:
+            balance = client.get("/v1/looks/balance", headers={"Authorization": f"Bearer {_email_token('buyer@example.com')}"}).json()
+            guest_token = client.post("/v1/sessions/anonymous").json()["access_token"]
+            guest = client.get("/v1/looks/balance", headers={"Authorization": f"Bearer {guest_token}"}).json()
+    finally:
+        app.dependency_overrides.clear()
+    assert balance["remaining"] == 33 and balance["plan"] == "plus" and balance["signed_in"] is True
+    assert [g["remaining"] for g in balance["grants"]] == [0, 8, 25]
+    assert fake.paths()[0] == "rpc/ensure_free_looks"
+    assert guest == {"signed_in": False, "unlimited": False, "enforced": True, "remaining": None, "plan": "free", "free_looks_per_month": 3, "grants": []}
+
+
+class FakeStripe:
+    def __init__(self, objects: dict | None = None):
+        import httpx as _httpx
+        from urllib.parse import parse_qsl
+
+        self.requests: list[tuple[str, str, dict]] = []
+        self.objects = objects or {}
+
+        def handler(request: _httpx.Request) -> _httpx.Response:
+            form = dict(parse_qsl(request.content.decode())) if request.content else {}
+            path = request.url.path.replace("/v1", "", 1)
+            self.requests.append((request.method, path, form))
+            assert request.headers["authorization"] == "Bearer sk_test_123"
+            if request.method == "POST" and path == "/checkout/sessions":
+                return _httpx.Response(200, json={"id": "cs_test_new", "url": "https://checkout.stripe.com/c/pay/cs_test_new"})
+            if path in self.objects:
+                return _httpx.Response(200, json=self.objects[path])
+            return _httpx.Response(404, json={"error": {"message": "No such object"}})
+
+        self.handler = handler
+
+    def install(self, monkeypatch) -> None:
+        _install_fakes(monkeypatch, stripe=self.handler)
+
+
+def test_checkout_builds_the_right_stripe_session(monkeypatch) -> None:
+    stripe = FakeStripe()
+    stripe.install(monkeypatch)
+    try:
+        with _limit_client(FakeSupabase(), monkeypatch) as client:
+            headers = {"Authorization": f"Bearer {_email_token('buyer@example.com')}"}
+            plus = client.post("/v1/billing/checkout", json={"plan": "plus", "billing": "yearly"}, headers=headers)
+            pass_ = client.post("/v1/billing/checkout", json={"plan": "pass"}, headers=headers)
+            guest_token = client.post("/v1/sessions/anonymous").json()["access_token"]
+            guest = client.post("/v1/billing/checkout", json={"plan": "pro"}, headers={"Authorization": f"Bearer {guest_token}"})
+            config = client.get("/v1/billing/config").json()
+    finally:
+        app.dependency_overrides.clear()
+    assert plus.json()["url"].startswith("https://checkout.stripe.com/")
+    yearly, once = stripe.requests[0][2], stripe.requests[1][2]
+    assert yearly["mode"] == "subscription" and yearly["line_items[0][price_data][unit_amount]"] == "329900"
+    assert yearly["line_items[0][price_data][recurring][interval]"] == "year" and yearly["line_items[0][price_data][currency]"] == "inr"
+    assert yearly["client_reference_id"] == AUTH_USER_ID and yearly["subscription_data[metadata][plan]"] == "plus"
+    assert yearly["success_url"].endswith("?checkout=success&session_id={CHECKOUT_SESSION_ID}")
+    assert once["mode"] == "payment" and once["line_items[0][price_data][unit_amount]"] == "12900" and "line_items[0][price_data][recurring][interval]" not in once
+    assert guest.status_code == 403 and len(stripe.requests) == 2
+    assert config == {"enabled": True, "test_mode": True}
+
+
+def test_live_stripe_keys_are_refused_unless_allowed() -> None:
+    from app.billing import Billing
+
+    live = LIMIT_SETTINGS.model_copy(update={"stripe_secret_key": SecretStr("sk_live_abc")})
+    assert Billing(live, None).enabled is False
+    assert Billing(live.model_copy(update={"stripe_allow_live": True}), None).enabled is True
+
+
+def _signed(payload: dict, secret: str = "whsec_test", at: int | None = None) -> tuple[bytes, str]:
+    import hashlib, hmac, json as _json, time as _time
+
+    body = _json.dumps(payload).encode()
+    t = at or int(_time.time())
+    return body, f"t={t},v1={hmac.new(secret.encode(), f'{t}.'.encode() + body, hashlib.sha256).hexdigest()}"
+
+
+def test_webhook_verifies_signature_and_grants_looks(monkeypatch) -> None:
+    stripe = FakeStripe()
+    stripe.install(monkeypatch)
+    fake = FakeSupabase()
+    paid_pass = {"type": "checkout.session.completed", "data": {"object": {
+        "id": "cs_test_pass", "mode": "payment", "payment_status": "paid", "client_reference_id": AUTH_USER_ID,
+        "created": 1_790_000_000, "metadata": {"user_id": AUTH_USER_ID, "plan": "pass"}}}}
+    yearly_invoice = {"type": "invoice.paid", "data": {"object": {
+        "id": "in_test_year", "status": "paid",
+        "parent": {"subscription_details": {"subscription": "sub_1", "metadata": {"user_id": AUTH_USER_ID, "plan": "pro", "billing": "yearly"}}},
+        "lines": {"data": [{"period": {"start": 1_790_000_000, "end": 1_821_536_000}}]}}}}
+    try:
+        with _limit_client(fake, monkeypatch) as client:
+            body, sig = _signed(paid_pass)
+            forged = client.post("/v1/billing/webhook", content=body, headers={"Stripe-Signature": sig.replace("v1=", "v1=0")})
+            stale_body, stale_sig = _signed(paid_pass, at=1_000)
+            stale = client.post("/v1/billing/webhook", content=stale_body, headers={"Stripe-Signature": stale_sig})
+            ok = client.post("/v1/billing/webhook", content=body, headers={"Stripe-Signature": sig})
+            body, sig = _signed(yearly_invoice)
+            year = client.post("/v1/billing/webhook", content=body, headers={"Stripe-Signature": sig})
+    finally:
+        app.dependency_overrides.clear()
+    assert forged.status_code == 400 and stale.status_code == 400
+    assert ok.status_code == 200 and year.status_code == 200
+    inserts = [call for call in fake.calls if call[:2] == ("POST", "look_grants")]
+    pass_row = inserts[0][2][0]
+    assert pass_row["kind"] == "pass" and pass_row["looks"] == 10 and pass_row["stripe_ref"] == "cs_test_pass"
+    assert pass_row["expires_at"].startswith("2026-09-28")  # 7 days after purchase
+    months = inserts[1][2]
+    assert len(months) == 12 and {row["looks"] for row in months} == {60}
+    assert months[0]["stripe_ref"] == "in_test_year:0" and months[1]["starts_at"] == months[0]["expires_at"]
+
+
+def test_return_page_confirms_only_the_buyers_own_payment(monkeypatch) -> None:
+    stripe = FakeStripe({
+        "/checkout/sessions/cs_test_mine": {"id": "cs_test_mine", "mode": "subscription", "status": "complete", "payment_status": "paid",
+                                            "client_reference_id": AUTH_USER_ID, "invoice": "in_first", "metadata": {"user_id": AUTH_USER_ID, "plan": "plus", "billing": "monthly"}},
+        "/checkout/sessions/cs_test_other": {"id": "cs_test_other", "mode": "payment", "status": "complete", "payment_status": "paid",
+                                             "client_reference_id": "00000000-0000-4000-8000-000000000000"},
+        "/invoices/in_first": {"id": "in_first", "status": "paid", "subscription": "sub_1", "lines": {"data": [{"period": {"start": 1_790_000_000, "end": 1_792_592_000}}]}},
+    })
+    stripe.install(monkeypatch)
+    fake = FakeSupabase(rows=[{"kind": "plus", "looks": 25, "used": 0, "expires_at": "2026-10-24T00:00:00+00:00"}])
+    try:
+        with _limit_client(fake, monkeypatch) as client:
+            headers = {"Authorization": f"Bearer {_email_token('buyer@example.com')}"}
+            mine = client.post("/v1/billing/confirm", json={"session_id": "cs_test_mine"}, headers=headers)
+            other = client.post("/v1/billing/confirm", json={"session_id": "cs_test_other"}, headers=headers)
+    finally:
+        app.dependency_overrides.clear()
+    assert mine.status_code == 200 and mine.json()["plan"] == "plus" and mine.json()["remaining"] == 25
+    grant = next(call for call in fake.calls if call[:2] == ("POST", "look_grants"))[2][0]
+    assert grant["stripe_ref"] == "in_first" and grant["kind"] == "plus" and grant["looks"] == 25
+    assert other.status_code == 403
+
+
+def test_invalid_try_on_form_never_keeps_a_look(monkeypatch) -> None:
+    fake = FakeSupabase(grant="grant-9")
+    try:
+        with _limit_client(fake, monkeypatch) as client:
+            response = client.post("/v1/try-ons", headers={"Authorization": f"Bearer {_email_token('buyer@example.com')}"}, data={"category": "shirt"})
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 422
+    assert fake.paths() in ([], ["rpc/consume_look", "rpc/refund_look"])

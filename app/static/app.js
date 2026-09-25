@@ -30,15 +30,9 @@ const CATALOG = {
 
 function readStore(key, fallback){ try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } }
 function persist(key, value){ try { localStorage.setItem(key, JSON.stringify(value)); } catch {} }
-function freshPlan(){
-  const month = new Date().toISOString().slice(0, 7);
-  const saved = readStore('fitcart-plan', null);
-  if (!saved || saved.month !== month) return {key: saved?.key && saved.key !== 'pass' ? saved.key : 'free', left: saved?.key === 'plus' ? 25 : saved?.key === 'pro' ? 60 : 3, month};
-  return saved;
-}
 
 const state = {
-  view:'landing', billing:'monthly', plan:freshPlan(),
+  view:'landing', billing:'monthly', balance:null, billingCfg:null, pending:null, checkingOut:null,
   look:[],
   wardrobe:null, wardrobeLoading:false, wardrobeError:'', wardrobeTab:'home', wardrobeFilter:'all', confirmDelete:null,
   occasion:null, ideas:[], ideasLoading:false, ideasError:'',
@@ -97,7 +91,7 @@ async function api(path, opts = {}, auth = true){
     throw Error('Could not reach FitCart. Check your connection and try again.');
   }
   const payload = res.status === 204 ? {} : await res.json().catch(() => ({}));
-  if (!res.ok){ const e = Error(apiError(payload, `Something went wrong (${res.status}). Please try again.`)); e.status = res.status; throw e; }
+  if (!res.ok){ const e = Error(apiError(payload, `Something went wrong (${res.status}). Please try again.`)); e.status = res.status; e.code = payload?.detail?.code; throw e; }
   return payload;
 }
 function dataUrlBlob(dataUrl){
@@ -274,12 +268,12 @@ function planPrice(p){
 function pricingHtml(){
   const tiers = PLANS.map(p => {
     const pr = planPrice(p);
-    const current = state.plan.key === p.key;
+    const current = Boolean(state.account) && !unlimited() && (state.balance?.plan || 'free') === p.key;
     return `<article class="tier${p.popular ? ' pop' : ''} reveal">${p.popular ? '<span class="ribbon">Most popular</span>' : ''}
       <div><h3>${p.name}</h3><p class="for">${p.for}</p></div>
       <div><div class="amt"><b>₹${pr.amt.toLocaleString('en-IN')}</b><span>${pr.unit}</span></div>
         <p style="display:flex;gap:8px;flex-wrap:wrap;min-height:20px">${pr.was ? `<span class="was">₹${pr.was}/mo</span>` : ''}${pr.per ? `<span class="per num">₹${pr.per.toFixed(1)} per look</span>` : '<span class="per">No card needed</span>'}</p></div>
-      <button class="btn ${p.popular ? 'brand' : p.key === 'free' ? 'glassy' : ''} wide" data-act="choose-plan" data-plan="${p.key}" ${current && p.key !== 'pass' ? 'disabled' : ''}>${current && p.key !== 'pass' ? 'Your current plan' : p.cta}</button>
+      <button class="btn ${p.popular ? 'brand' : p.key === 'free' ? 'glassy' : ''} wide" data-act="choose-plan" data-plan="${p.key}" ${(current && p.key !== 'pass') || state.checkingOut ? 'disabled' : ''}>${state.checkingOut === p.key ? '<span class="spin" aria-hidden="true"></span> Opening checkout…' : current && p.key !== 'pass' ? 'Your current plan' : p.cta}</button>
       <ul>${p.perks.map(x => `<li>${icon('check','s')}${esc(x)}</li>`).join('')}${p.missing.map(x => `<li class="no">${icon('x','s')}${esc(x)}</li>`).join('')}</ul>
     </article>`;
   }).join('');
@@ -298,7 +292,8 @@ function pricingHtml(){
     <div class="billing glass" role="group" aria-label="Billing period"><button data-act="billing" data-billing="monthly" aria-pressed="${state.billing === 'monthly'}">Monthly</button><button data-act="billing" data-billing="yearly" aria-pressed="${state.billing === 'yearly'}">Yearly <span class="save">Save 21%</span></button></div>
     <div class="tiers">${tiers}</div>
     <div class="plan-table reveal"><table><caption class="sr">Compare plans</caption><thead><tr><th scope="col">Compare plans</th>${PLANS.map(p => `<th scope="col">${p.name}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr><th scope="row">${r[0]}</th>${r.slice(1).map((c, i) => `<td class="${PLANS[i].popular ? 'hi' : ''}">${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
-    <div class="plan-notes"><p>${icon('lock','s')} Prices include 18% GST. Plans renew with UPI AutoPay or card and can be cancelled anytime from your account.</p><p>A look that fails is never counted. Unused looks don't carry over to the next month.</p></div>
+    ${state.billingCfg?.test_mode ? `<div class="notice test-mode" role="note">${icon('info')}<span><strong>Test mode.</strong> No real money moves. Pay with card <b class="num">4242 4242 4242 4242</b>, any future expiry date and any CVC.</span></div>` : ''}
+    <div class="plan-notes"><p>${icon('lock','s')} Prices include 18% GST. Secure checkout by Stripe. Plans renew each month or year until cancelled.</p><p>A look that fails is never counted. Unused looks don't carry over to the next month.</p></div>
   </div>`;
 }
 function pricingPage(){
@@ -367,7 +362,7 @@ function landing(){
       <details class="glass reveal"><summary>Can I cancel anytime?</summary><p>Yes. Cancel from your account and you keep your plan until the end of the period. The Occasion Pass never renews.</p></details>
     </div>
   </section>
-  <section class="cta-band reveal"><h2>Your next outfit is three links away.</h2><p style="opacity:.92;max-width:44ch">Try FitCart free. No card, no signup needed for your first looks.</p><button class="btn big" data-act="go" data-view="home">${icon('spark')} Try it free</button></section>
+  <section class="cta-band reveal"><h2>Your next outfit is three links away.</h2><p style="opacity:.92;max-width:44ch">Try FitCart free. No card needed. Sign in with your email for 3 free looks every month.</p><button class="btn big" data-act="go" data-view="home">${icon('spark')} Try it free</button></section>
   <footer class="lp-foot"><span>© 2026 FitCart · See the look. Choose the fit.</span><span>Prices include GST · Made in India</span></footer>
 </div>`;
 }
@@ -383,8 +378,13 @@ function setupReveal(){
 const unlimited = () => Boolean(state.account?.unlimited);
 function planChip(){
   if (unlimited()) return `<button class="plan-chip" data-act="account">${icon('spark','s')} Unlimited looks · ${esc(state.account.email)}</button>`;
-  const p = PLANS.find(x => x.key === state.plan.key);
-  return `<button class="plan-chip" data-act="go" data-view="pricing">${icon('spark','s')} ${esc(p.name)} · ${state.plan.left} ${state.plan.left === 1 ? 'look' : 'looks'} left</button>`;
+  const free = state.balance?.free_looks_per_month ?? 3;
+  if (!state.account) return `<button class="plan-chip" data-act="account" data-reason="free">${icon('spark','s')} Sign in for ${free} free looks a month</button>`;
+  const left = looksLeft();
+  if (left === null) return `<button class="plan-chip" data-act="go" data-view="pricing">${icon('spark','s')} Checking your looks…</button>`;
+  if (left === Infinity) return `<button class="plan-chip" data-act="go" data-view="pricing">${icon('spark','s')} Looks available</button>`;
+  const p = PLANS.find(x => x.key === (state.balance.plan || 'free'));
+  return `<button class="plan-chip" data-act="go" data-view="pricing">${icon('spark','s')} ${esc(p.name)} · ${left} ${left === 1 ? 'look' : 'looks'} left</button>`;
 }
 
 /* ---------- Home ---------- */
@@ -408,7 +408,7 @@ function home(){
         <button class="chip" data-act="demo">${icon('spark','s')} Try a 3-store sample look</button>
         <button class="chip" data-act="go" data-view="wardrobe">${icon('hanger','s')} Start from my wardrobe</button>
       </div>
-      <div class="trust"><span>${icon('lock','s')} Your look is private</span><span>${icon('shield','s')} No signup needed</span><span>${icon('store','s')} Live prices from each store</span></div>
+      <div class="trust"><span>${icon('lock','s')} Your look is private</span><span>${icon('shield','s')} 3 free looks a month</span><span>${icon('store','s')} Live prices from each store</span></div>
     </div>
     <div class="hero-visual">${compareHtml('before','after','Before','After', true)}<p class="tiny muted" style="margin-top:8px">Drag the handle to compare. Sample result.</p></div>
   </section>
@@ -572,7 +572,8 @@ async function requestTryOn(signal){
 }
 function startGeneration(){
   if (!canGenerate()) return;
-  if (!unlimited() && state.plan.left <= 0){ closeSheet($('#photoSheet')); go('pricing'); toast('You have used all your looks. Pick a pass or plan to keep going.', {kind:'info'}); return; }
+  if (!state.account){ closeSheet($('#photoSheet')); state.pending = {generate:true}; openSignin('free'); return; }
+  if (looksLeft() === 0){ outOfLooks(); return; }
   closeSheet($('#photoSheet'));
   stopGeneration();
   const steps = buildSteps();
@@ -591,6 +592,12 @@ function startGeneration(){
     if (g.at >= g.steps.length - 1){ g.timers.forEach(clearTimeout); g.at = g.steps.length; finishGeneration(); }
   }).catch(err => {
     if (err.name === 'AbortError' || state.gen !== g) return;
+    if (err.code === 'sign_in_required' || err.code === 'no_looks_left'){
+      stopGeneration(); go('builder');
+      if (err.code === 'no_looks_left'){ loadBalance(); outOfLooks(); }
+      else { setAccount(null); state.pending = {generate:true}; openSignin('free'); }
+      return;
+    }
     g.timers.forEach(clearTimeout);
     g.error = err.message || 'Something went wrong. Please try again.';
     render();
@@ -649,11 +656,13 @@ function finishGeneration(){
     const look = {id:item.id, img:item.result_image_url, before:state.photo || IMG.before, title:orderedLook().map(p => short(p.item)).join(', '),
       items:orderedLook().map(p => ({item:{...p.item}, size:p.size})), pose:state.pose, editable:true};
     state.current = look; state.justGenerated = true;
-    if (!unlimited()){ state.plan.left = Math.max(0, state.plan.left - 1); persist('fitcart-plan', state.plan); }
+    if (Number.isFinite(state.balance?.remaining)) state.balance.remaining = Math.max(0, state.balance.remaining - 1);
+    loadBalance();
     state.gallery = null;
     state.gen = null;
     go('result');
-    toast(unlimited() ? 'Look saved privately · unlimited looks' : `Look saved privately · ${state.plan.left} ${state.plan.left === 1 ? 'look' : 'looks'} left`, {action:{label:'View Looks', run:() => go('looks')}});
+    const left = looksLeft();
+    toast(left === Infinity || left === null ? 'Look saved privately' : `Look saved privately · ${left} ${left === 1 ? 'look' : 'looks'} left`, {action:{label:'View Looks', run:() => go('looks')}});
   }, REDUCED.matches ? 300 : 2000);
 }
 function stopGeneration(){
@@ -788,8 +797,8 @@ function startAccountSession(payload){
   setAccount(payload);
   state.wardrobe = null; state.gallery = null; state.ideas = [];
 }
-function openSignin(){
-  state.signin = state.account ? {step:'account'} : {step:'email', email:'', busy:false, error:''};
+function openSignin(reason = null){
+  state.signin = state.account ? {step:'account'} : {step:'email', email:'', busy:false, error:'', reason};
   renderSignin(); openSheet($('#signinSheet'));
   setTimeout(() => $('#signinEmail')?.focus(), 80);
 }
@@ -797,11 +806,12 @@ function renderSignin(){
   const s = state.signin, a = state.account;
   let body;
   if (s.step === 'account'){
-    body = `<div class="account-card"><span class="small muted">Signed in as</span><strong>${esc(a.email)}</strong>${a.unlimited ? `<span class="tag" style="justify-self:start">${icon('spark','s')} Unlimited looks</span>` : `<span class="small muted">${state.plan.left} ${state.plan.left === 1 ? 'look' : 'looks'} left this month</span>`}</div>
+    body = `<div class="account-card"><span class="small muted">Signed in as</span><strong>${esc(a.email)}</strong>${a.unlimited ? `<span class="tag" style="justify-self:start">${icon('spark','s')} Unlimited looks</span>` : `<span class="small muted">${looksLeft() === null ? 'Checking your looks…' : looksLeft() === Infinity ? 'Looks available' : `${looksLeft()} ${looksLeft() === 1 ? 'look' : 'looks'} left`}</span>`}</div>
       <p class="small muted">Your wardrobe and looks are saved to this account, so they follow you to any device you sign in on.</p>
       <button class="btn ghost wide" data-act="sign-out">Sign out</button>`;
   } else if (s.step === 'email'){
     body = `<form id="signinForm" novalidate style="display:grid;gap:14px">
+      ${s.reason === 'free' ? `<div class="notice">${icon('spark')}<span>Sign in to get <strong>${state.balance?.free_looks_per_month ?? 3} free looks every month</strong>. Your looks and wardrobe are saved to your account.</span></div>` : s.reason === 'buy' ? `<div class="notice">${icon('lock')}<span>Sign in first so your pass or plan is added to your account.</span></div>` : ''}
       <p class="small muted">We'll email you a sign-in code. No password needed.</p>
       <label class="field" for="signinEmail">Email<input class="input" id="signinEmail" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com" value="${esc(s.email)}" required></label>
       <p class="error" role="alert">${esc(s.error)}</p>
@@ -826,15 +836,15 @@ function renderSignin(){
 }
 async function sendSigninCode(raw, resend = false){
   const email = String(raw || '').trim().toLowerCase();
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ state.signin = {step:'email', email, busy:false, error:'Enter a valid email address.'}; renderSignin(); $('#signinEmail')?.focus(); return; }
-  state.signin = {step: resend ? 'code' : 'email', email, busy:true, error:''}; renderSignin();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ state.signin = {reason:state.signin?.reason, step:'email', email, busy:false, error:'Enter a valid email address.'}; renderSignin(); $('#signinEmail')?.focus(); return; }
+  state.signin = {reason:state.signin?.reason, step: resend ? 'code' : 'email', email, busy:true, error:''}; renderSignin();
   try {
     await api('/v1/auth/email/code', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email})}, false);
-    state.signin = {step:'code', email, busy:false, error:''}; renderSignin();
+    state.signin = {reason:state.signin?.reason, step:'code', email, busy:false, error:''}; renderSignin();
     setTimeout(() => $('#signinCode')?.focus(), 60);
     if (resend) toast('New code sent.');
   } catch (err){
-    state.signin = {step: resend ? 'code' : 'email', email, busy:false, error:err.message}; renderSignin();
+    state.signin = {reason:state.signin?.reason, step: resend ? 'code' : 'email', email, busy:false, error:err.message}; renderSignin();
   }
 }
 async function verifySigninCode(raw){
@@ -851,8 +861,14 @@ async function verifySigninCode(raw){
 function signedIn(payload){
   startAccountSession(payload);
   closeSheet($('#signinSheet'));
+  state.balance = null;
   render();
   toast(payload.unlimited ? `Signed in as ${payload.email} · unlimited looks` : `Signed in as ${payload.email}`);
+  const pending = state.pending; state.pending = null;
+  loadBalance().then(() => {
+    if (pending?.plan) checkout(pending.plan);
+    else if (pending?.generate && canGenerate()) startGeneration();
+  });
 }
 async function signInFromLink(){
   const params = new URLSearchParams(location.hash.slice(1));
@@ -873,12 +889,60 @@ async function refreshAccount(){
     render();
   } catch {}
 }
+function looksLeft(){
+  if (unlimited()) return Infinity;
+  if (!state.balance) return null;
+  if (!state.balance.enforced) return Infinity;
+  return state.balance.remaining ?? null;
+}
+async function loadBalance(){
+  try {
+    state.balance = await api('/v1/looks/balance');
+    if (state.balance.unlimited !== unlimited() && state.account) setAccount({...state.account, unlimited:state.balance.unlimited});
+  } catch { return; }
+  if (state.view !== 'generating') render();
+  if ($('#signinSheet').open && state.signin?.step === 'account') renderSignin();
+}
+function outOfLooks(){
+  closeSheet($('#photoSheet'));
+  go('pricing');
+  toast('You have used all your looks. Pick a pass or plan to keep going.', {kind:'info'});
+}
+async function checkout(plan){
+  if (!state.account){ state.pending = {plan}; openSignin('buy'); return; }
+  state.checkingOut = plan; render();
+  try {
+    const {url} = await api('/v1/billing/checkout', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({plan, billing:state.billing})});
+    location.assign(url);
+  } catch (err){
+    state.checkingOut = null; render();
+    if (err.code === 'sign_in_required'){ setAccount(null); state.pending = {plan}; openSignin('buy'); }
+    else toast(err.message, {kind:'error'});
+  }
+}
+async function returnFromCheckout(){
+  const params = new URLSearchParams(location.search);
+  const result = params.get('checkout');
+  if (!result) return;
+  const sessionId = params.get('session_id');
+  history.replaceState(null, '', location.pathname + location.hash);
+  if (result !== 'success' || !sessionId){ go('pricing'); toast('Checkout cancelled. You were not charged.', {kind:'info'}); return; }
+  try {
+    state.balance = await api('/v1/billing/confirm', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({session_id:sessionId})});
+    const plan = PLANS.find(p => p.key === state.balance.plan);
+    go(state.look.length ? 'builder' : 'home');
+    toast(`Payment received · ${plan && plan.key !== 'free' ? plan.name + ' is active · ' : ''}${state.balance.remaining} looks ready`, {action:{label:'Try it on', run:() => go(state.look.length ? 'builder' : 'home')}});
+  } catch (err){
+    toast(err.status === 409 ? 'Your payment is still processing. Your looks will appear in a minute.' : err.message, {kind: err.status === 409 ? 'info' : 'error'});
+    setTimeout(loadBalance, 5000);
+  }
+}
 function signOut(){
   try { localStorage.removeItem(SESSION_KEY); } catch {}
   setAccount(null);
-  state.wardrobe = null; state.gallery = null; state.ideas = [];
+  state.wardrobe = null; state.gallery = null; state.ideas = []; state.balance = null;
   closeSheet($('#signinSheet'));
-  session(true).catch(() => {});
+  session(true).then(loadBalance).catch(() => {});
   render();
   toast('Signed out.', {kind:'info'});
 }
@@ -1149,15 +1213,12 @@ document.addEventListener('click', e => {
     case 'scroll': document.getElementById(t.dataset.target)?.scrollIntoView({behavior: REDUCED.matches ? 'auto' : 'smooth', block:'start'}); break;
     case 'choose-plan': {
       const p = PLANS.find(x => x.key === t.dataset.plan);
-      if (p.key === 'free'){ go('home'); break; }
-      state.plan = {key: p.key === 'pass' && state.plan.key !== 'free' ? state.plan.key : p.key, left: (p.key === 'pass' ? state.plan.left : 0) + p.looks, month:state.plan.month};
-      persist('fitcart-plan', state.plan);
-      render();
-      toast(`${p.name} active (demo checkout) · ${state.plan.left} looks ready. Razorpay with UPI goes live at launch.`, {action:{label:'Try it on', run:() => go(state.look.length ? 'builder' : 'home')}});
+      if (p.key === 'free'){ go('home'); if (!state.account) openSignin('free'); break; }
+      checkout(p.key);
       break;
     }
-    case 'account': openSignin(); break;
-    case 'signin-back': state.signin = {step:'email', email:state.signin?.email || '', busy:false, error:''}; renderSignin(); break;
+    case 'account': openSignin(t.dataset.reason || null); break;
+    case 'signin-back': state.signin = {step:'email', email:state.signin?.email || '', busy:false, error:'', reason:state.signin?.reason}; renderSignin(); break;
     case 'signin-resend': sendSigninCode(state.signin.email, true); break;
     case 'sign-out': signOut(); break;
     case 'toast-action': { const act = toastAction; dismissToast(); act?.run(); break; }
@@ -1201,5 +1262,10 @@ document.querySelectorAll('dialog.sheet').forEach(d => {
   if (theme === 'dark' || theme === 'light') document.documentElement.dataset.theme = theme;
   fetch(apiUrl('/health'), {cache:'no-store'}).catch(() => {});
   render();
-  signInFromLink().then(fromLink => { if (!fromLink){ session().catch(() => {}); refreshAccount(); } });
+  fetch(apiUrl('/v1/billing/config')).then(r => r.ok ? r.json() : null).then(cfg => { state.billingCfg = cfg; if (state.view === 'pricing') render(); }).catch(() => {});
+  signInFromLink().then(async fromLink => {
+    if (!fromLink){ await session().catch(() => {}); refreshAccount(); }
+    await returnFromCheckout();
+    if (!state.balance) loadBalance();
+  });
 })();

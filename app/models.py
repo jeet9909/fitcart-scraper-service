@@ -78,6 +78,41 @@ class AccountResponse(BaseModel):
     unlimited: bool = False
 
 
+class LookGrantSummary(BaseModel):
+    kind: Literal["free", "pass", "plus", "pro", "bonus"]
+    remaining: int
+    total: int
+    expires_at: datetime
+
+
+class LookBalanceResponse(BaseModel):
+    signed_in: bool
+    unlimited: bool = False
+    enforced: bool = True
+    remaining: int | None = Field(default=None, description="Looks left right now; null when unlimited or not signed in")
+    plan: Literal["free", "pass", "plus", "pro"] = "free"
+    free_looks_per_month: int
+    grants: list[LookGrantSummary] = Field(default_factory=list)
+
+
+class CheckoutRequest(BaseModel):
+    plan: Literal["pass", "plus", "pro"]
+    billing: Literal["monthly", "yearly"] = "monthly"
+
+
+class CheckoutResponse(BaseModel):
+    url: str
+
+
+class CheckoutConfirmRequest(BaseModel):
+    session_id: str = Field(min_length=8, max_length=255, pattern=r"^cs_[A-Za-z0-9_]+$")
+
+
+class BillingConfigResponse(BaseModel):
+    enabled: bool
+    test_mode: bool
+
+
 class GalleryItem(BaseModel):
     id: str
     anonymous_user_id: str

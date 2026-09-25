@@ -14,10 +14,16 @@ from pydantic import TypeAdapter, ValidationError
 
 from app.anonymous_auth import create_anonymous_session, create_email_session, verify_session_token
 from app import email_auth
+from app.billing import Billing
+from app.looks import LookLedger, Reservation
 from app.config import Settings, get_settings
 from app.models import (
     AccountResponse,
     AnonymousSessionResponse,
+    BillingConfigResponse,
+    CheckoutConfirmRequest,
+    CheckoutRequest,
+    CheckoutResponse,
     EmailCodeRequest,
     EmailLinkRequest,
     EmailSessionResponse,
@@ -26,6 +32,7 @@ from app.models import (
     GalleryResponse,
     GeminiUsageResponse,
     HealthResponse,
+    LookBalanceResponse,
     OutfitExtraItem,
     OutfitSuggestionRequest,
     OutfitSuggestionResponse,
@@ -115,6 +122,30 @@ def get_anonymous_user(claims: dict = Depends(get_session_claims)) -> str:
     return claims["sub"]
 
 
+def get_ledger(settings: Settings = Depends(get_runtime_settings), service: TryOnService = Depends(get_tryon_service)) -> LookLedger:
+    return LookLedger(service, settings)
+
+
+def get_billing(settings: Settings = Depends(get_runtime_settings), ledger: LookLedger = Depends(get_ledger)) -> Billing:
+    return Billing(settings, ledger)
+
+
+async def spend_look(claims: dict = Depends(get_session_claims), ledger: LookLedger = Depends(get_ledger)):
+    """Take one look before generating and give it back if the try-on fails for any reason."""
+    reservation = await ledger.reserve(claims)
+    try:
+        yield reservation
+    except BaseException:
+        await ledger.refund(reservation)
+        raise
+
+
+def require_email(claims: dict = Depends(get_session_claims)) -> dict:
+    if not claims.get("email"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "sign_in_required", "message": "Sign in with your email first."})
+    return claims
+
+
 @app.get("/health", response_model=HealthResponse, tags=["system"])
 async def health() -> HealthResponse:
     return HealthResponse()
@@ -181,6 +212,41 @@ async def current_account(claims: dict = Depends(get_session_claims), settings: 
     return AccountResponse(user_id=claims["sub"], email=email, unlimited=settings.is_unlimited(email))
 
 
+@app.get("/v1/looks/balance", response_model=LookBalanceResponse, tags=["looks and billing"])
+async def look_balance(claims: dict = Depends(get_session_claims), ledger: LookLedger = Depends(get_ledger)) -> LookBalanceResponse:
+    """Looks left for this account. Try-ons need an email sign-in; each one spends a look."""
+    return await ledger.balance(claims)
+
+
+@app.get("/v1/billing/config", response_model=BillingConfigResponse, tags=["looks and billing"])
+async def billing_config(billing: Billing = Depends(get_billing)) -> BillingConfigResponse:
+    return BillingConfigResponse(enabled=billing.enabled, test_mode=billing.test_mode)
+
+
+@app.post("/v1/billing/checkout", response_model=CheckoutResponse, tags=["looks and billing"])
+async def create_checkout(body: CheckoutRequest, claims: dict = Depends(require_email), billing: Billing = Depends(get_billing)) -> CheckoutResponse:
+    """Start Stripe Checkout for a pass or plan; the browser is sent to the returned URL."""
+    return CheckoutResponse(url=await billing.create_checkout(claims["sub"], claims["email"], body.plan, body.billing))
+
+
+@app.post("/v1/billing/confirm", response_model=LookBalanceResponse, tags=["looks and billing"])
+async def confirm_checkout(
+    body: CheckoutConfirmRequest,
+    claims: dict = Depends(require_email),
+    billing: Billing = Depends(get_billing),
+    ledger: LookLedger = Depends(get_ledger),
+) -> LookBalanceResponse:
+    """Add the looks from a finished Checkout when the buyer returns; safe to repeat and safe alongside the webhook."""
+    await billing.confirm(claims["sub"], body.session_id)
+    return await ledger.balance(claims)
+
+
+@app.post("/v1/billing/webhook", tags=["looks and billing"], include_in_schema=False)
+async def stripe_webhook(request: Request, billing: Billing = Depends(get_billing)) -> dict:
+    await billing.handle_webhook(await request.body(), request.headers.get("stripe-signature"))
+    return {"received": True}
+
+
 @app.post("/v1/try-ons", response_model=GalleryItem, tags=["virtual try-on"])
 async def create_tryon(
     person_image: UploadFile = File(..., description="Front-facing, full-body user photo"),
@@ -199,6 +265,7 @@ async def create_tryon(
         description='JSON list of up to 4 extra pieces worn with this product, e.g. [{"slot": "footwear", "name": "White sneakers", "image_url": "https://..."}]. Use "upload": 0 to point at outfit_images[0].',
     ),
     outfit_images: list[UploadFile] | None = File(None, description="Photos for extra pieces that have no image URL"),
+    look: Reservation = Depends(spend_look),
     user_id: str = Depends(get_anonymous_user),
     settings: Settings = Depends(get_runtime_settings),
     scraper: BrightDataScraper = Depends(get_scraper),
@@ -285,6 +352,7 @@ async def create_outfit_tryon(
     person_image: UploadFile = File(..., description="Front-facing, full-body user photo"),
     item_ids: str = Form(..., description="Comma-separated wardrobe item ids (1 to 5), e.g. a top, a bottom and shoes"),
     pose: Literal["standard", "keep"] = Form("standard", description="standard: upright front-facing catalogue pose with the whole outfit visible; keep: the pose from the photo"),
+    look: Reservation = Depends(spend_look),
     user_id: str = Depends(get_anonymous_user),
     settings: Settings = Depends(get_runtime_settings),
     service: TryOnService = Depends(get_tryon_service),

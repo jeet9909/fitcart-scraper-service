@@ -303,7 +303,7 @@ function pricingHtml(){
 }
 function pricingPage(){
   return `<section style="display:grid;gap:22px;padding-top:8px">
-    <div class="lp-head"><p class="eyebrow">Plans</p><h1 style="font:800 clamp(32px,7vw,52px)/1 var(--display);letter-spacing:-.035em">Pick how you <span class="grad-text">try it on</span></h1><p>Every look is a whole outfit from up to five stores, in one image.</p></div>
+    <div class="lp-head"><p class="eyebrow">Plans</p><h1 style="font:400 clamp(32px,7vw,52px)/1 var(--display);letter-spacing:-.015em">Pick how you <span class="grad-text">try it on</span></h1><p>Every look is a whole outfit from up to five stores, in one image.</p></div>
     ${pricingHtml()}
   </section>`;
 }

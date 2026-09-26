@@ -30,20 +30,14 @@ const CATALOG = {
 
 function readStore(key, fallback){ try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } }
 function persist(key, value){ try { localStorage.setItem(key, JSON.stringify(value)); } catch {} }
-function freshPlan(){
-  const month = new Date().toISOString().slice(0, 7);
-  const saved = readStore('fitcart-plan', null);
-  if (!saved || saved.month !== month) return {key: saved?.key && saved.key !== 'pass' ? saved.key : 'free', left: saved?.key === 'plus' ? 25 : saved?.key === 'pro' ? 60 : 3, month};
-  return saved;
-}
 
 const state = {
-  view:'landing', billing:'monthly', plan:freshPlan(),
+  view:'landing', billing:'monthly', balance:null, billingCfg:null, pending:null, checkingOut:null,
   look:[],
   wardrobe:null, wardrobeLoading:false, wardrobeError:'', wardrobeTab:'home', wardrobeFilter:'all', confirmDelete:null,
   occasion:null, ideas:[], ideasLoading:false, ideasError:'',
   gallery:null, galleryLoading:false, galleryError:'',
-  photo:null, photoIsSample:true, pose:'standard', consent:false,
+  photo:null, pose:'standard', consent:false,
   current:null, justGenerated:false,
   addSlot:null, addTab:'link', importing:false, importError:'', imported:null, draftSize:null,
   itemDraft:null,
@@ -97,7 +91,7 @@ async function api(path, opts = {}, auth = true){
     throw Error('Could not reach FitCart. Check your connection and try again.');
   }
   const payload = res.status === 204 ? {} : await res.json().catch(() => ({}));
-  if (!res.ok){ const e = Error(apiError(payload, `Something went wrong (${res.status}). Please try again.`)); e.status = res.status; throw e; }
+  if (!res.ok){ const e = Error(apiError(payload, `Something went wrong (${res.status}). Please try again.`)); e.status = res.status; e.code = payload?.detail?.code; throw e; }
   return payload;
 }
 function dataUrlBlob(dataUrl){
@@ -274,12 +268,12 @@ function planPrice(p){
 function pricingHtml(){
   const tiers = PLANS.map(p => {
     const pr = planPrice(p);
-    const current = state.plan.key === p.key;
+    const current = Boolean(state.account) && !unlimited() && (state.balance?.plan || 'free') === p.key;
     return `<article class="tier${p.popular ? ' pop' : ''} reveal">${p.popular ? '<span class="ribbon">Most popular</span>' : ''}
       <div><h3>${p.name}</h3><p class="for">${p.for}</p></div>
       <div><div class="amt"><b>₹${pr.amt.toLocaleString('en-IN')}</b><span>${pr.unit}</span></div>
         <p style="display:flex;gap:8px;flex-wrap:wrap;min-height:20px">${pr.was ? `<span class="was">₹${pr.was}/mo</span>` : ''}${pr.per ? `<span class="per num">₹${pr.per.toFixed(1)} per look</span>` : '<span class="per">No card needed</span>'}</p></div>
-      <button class="btn ${p.popular ? 'brand' : p.key === 'free' ? 'glassy' : ''} wide" data-act="choose-plan" data-plan="${p.key}" ${current && p.key !== 'pass' ? 'disabled' : ''}>${current && p.key !== 'pass' ? 'Your current plan' : p.cta}</button>
+      <button class="btn ${p.popular ? 'brand' : p.key === 'free' ? 'glassy' : ''} wide" data-act="choose-plan" data-plan="${p.key}" ${(current && p.key !== 'pass') || state.checkingOut ? 'disabled' : ''}>${state.checkingOut === p.key ? '<span class="spin" aria-hidden="true"></span> Opening checkout…' : current && p.key !== 'pass' ? 'Your current plan' : p.cta}</button>
       <ul>${p.perks.map(x => `<li>${icon('check','s')}${esc(x)}</li>`).join('')}${p.missing.map(x => `<li class="no">${icon('x','s')}${esc(x)}</li>`).join('')}</ul>
     </article>`;
   }).join('');
@@ -298,7 +292,8 @@ function pricingHtml(){
     <div class="billing glass" role="group" aria-label="Billing period"><button data-act="billing" data-billing="monthly" aria-pressed="${state.billing === 'monthly'}">Monthly</button><button data-act="billing" data-billing="yearly" aria-pressed="${state.billing === 'yearly'}">Yearly <span class="save">Save 21%</span></button></div>
     <div class="tiers">${tiers}</div>
     <div class="plan-table reveal"><table><caption class="sr">Compare plans</caption><thead><tr><th scope="col">Compare plans</th>${PLANS.map(p => `<th scope="col">${p.name}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr><th scope="row">${r[0]}</th>${r.slice(1).map((c, i) => `<td class="${PLANS[i].popular ? 'hi' : ''}">${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
-    <div class="plan-notes"><p>${icon('lock','s')} Prices include 18% GST. Plans renew with UPI AutoPay or card and can be cancelled anytime from your account.</p><p>A look that fails is never counted. Unused looks don't carry over to the next month.</p></div>
+    ${state.billingCfg?.test_mode ? `<div class="notice test-mode" role="note">${icon('info')}<span><strong>Test mode.</strong> No real money moves. Pay with UPI ID <b>success@razorpay</b>, or pick Netbanking, any bank, then Success.</span></div>` : ''}
+    <div class="plan-notes"><p>${icon('lock','s')} Prices include 18% GST. Secure checkout by Razorpay: UPI, cards and netbanking. Plans renew with UPI AutoPay or card until cancelled.</p><p>A look that fails is never counted. Unused looks don't carry over to the next month.</p></div>
   </div>`;
 }
 function pricingPage(){
@@ -367,7 +362,7 @@ function landing(){
       <details class="glass reveal"><summary>Can I cancel anytime?</summary><p>Yes. Cancel from your account and you keep your plan until the end of the period. The Occasion Pass never renews.</p></details>
     </div>
   </section>
-  <section class="cta-band reveal"><h2>Your next outfit is three links away.</h2><p style="opacity:.92;max-width:44ch">Try FitCart free. No card, no signup needed for your first looks.</p><button class="btn big" data-act="go" data-view="home">${icon('spark')} Try it free</button></section>
+  <section class="cta-band reveal"><h2>Your next outfit is three links away.</h2><p style="opacity:.92;max-width:44ch">Try FitCart free. No card needed. Sign in with your email for 3 free looks every month.</p><button class="btn big" data-act="go" data-view="home">${icon('spark')} Try it free</button></section>
   <footer class="lp-foot"><span>© 2026 FitCart · See the look. Choose the fit.</span><span>Prices include GST · Made in India</span></footer>
 </div>`;
 }
@@ -383,8 +378,13 @@ function setupReveal(){
 const unlimited = () => Boolean(state.account?.unlimited);
 function planChip(){
   if (unlimited()) return `<button class="plan-chip" data-act="account">${icon('spark','s')} Unlimited looks · ${esc(state.account.email)}</button>`;
-  const p = PLANS.find(x => x.key === state.plan.key);
-  return `<button class="plan-chip" data-act="go" data-view="pricing">${icon('spark','s')} ${esc(p.name)} · ${state.plan.left} ${state.plan.left === 1 ? 'look' : 'looks'} left</button>`;
+  const free = state.balance?.free_looks_per_month ?? 3;
+  if (!state.account) return `<button class="plan-chip" data-act="account" data-reason="free">${icon('spark','s')} Sign in for ${free} free looks a month</button>`;
+  const left = looksLeft();
+  if (left === null) return `<button class="plan-chip" data-act="go" data-view="pricing">${icon('spark','s')} Checking your looks…</button>`;
+  if (left === Infinity) return `<button class="plan-chip" data-act="go" data-view="pricing">${icon('spark','s')} Looks available</button>`;
+  const p = PLANS.find(x => x.key === (state.balance.plan || 'free'));
+  return `<button class="plan-chip" data-act="go" data-view="pricing">${icon('spark','s')} ${esc(p.name)} · ${left} ${left === 1 ? 'look' : 'looks'} left</button>`;
 }
 
 /* ---------- Home ---------- */
@@ -408,7 +408,7 @@ function home(){
         <button class="chip" data-act="demo">${icon('spark','s')} Try a 3-store sample look</button>
         <button class="chip" data-act="go" data-view="wardrobe">${icon('hanger','s')} Start from my wardrobe</button>
       </div>
-      <div class="trust"><span>${icon('lock','s')} Your look is private</span><span>${icon('shield','s')} No signup needed</span><span>${icon('store','s')} Live prices from each store</span></div>
+      <div class="trust"><span>${icon('lock','s')} Your look is private</span><span>${icon('shield','s')} 3 free looks a month</span><span>${icon('store','s')} Live prices from each store</span></div>
     </div>
     <div class="hero-visual">${compareHtml('before','after','Before','After', true)}<p class="tiny muted" style="margin-top:8px">Drag the handle to compare. Sample result.</p></div>
   </section>
@@ -461,18 +461,31 @@ function poseHtml(prefix){
   </div></fieldset>`;
 }
 function consentHtml(){ return `<label class="consent"><input type="checkbox" data-act="consent" ${state.consent ? 'checked' : ''}>I have permission to use this photo. It is used only to create my try-on.</label>`; }
-function canGenerate(){ return state.look.length > 0 && state.consent; }
+function canGenerate(){ return state.look.length > 0 && Boolean(state.photo) && state.consent; }
+function personHtml(){
+  if (!state.photo) return `<button class="photo-drop" data-act="pick-photo" data-drop="photo">
+      <span class="photo-drop-art" aria-hidden="true">${icon('body')}</span>
+      <span class="photo-drop-copy"><strong>Upload your photo</strong><span class="small muted">A full-body photo, face clearly visible, in good light. JPG or PNG.</span></span>
+      <span class="btn brand small" aria-hidden="true">${icon('upload','s')} Choose photo</span>
+    </button>`;
+  return `<div class="person"><img src="${state.photo}" alt="Your photo"><div style="display:grid;gap:6px;justify-items:start"><strong>Your photo</strong>${privatePill()}<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost small" data-act="pick-photo">${icon('upload','s')} Change photo</button><button class="link small" data-act="remove-photo">Remove</button></div></div></div>`;
+}
+function generateHint(){
+  if (!state.look.length) return 'Add at least one piece to your look.';
+  if (!state.photo) return 'Upload your photo to continue.';
+  return state.consent ? 'About 15 to 30 seconds.' : 'Tick the permission box to continue.';
+}
 function tryPanel(){
   const stores = lookStores();
   return `<div class="card panel">
     <div class="panel-head"><h2>Try it on</h2>${privatePill()}</div>
     ${planChip()}
-    <div class="person"><img src="${state.photo || IMG.before}" alt="${state.photoIsSample ? 'Sample photo' : 'Your photo'}"><div style="display:grid;gap:4px"><strong>${state.photoIsSample ? 'Sample photo' : 'Your photo'}</strong><p class="small muted">${state.photoIsSample ? 'Add yours for a personal try-on.' : 'Ready to use.'}</p><button class="btn ghost small" data-act="pick-photo" style="justify-self:start">${icon('upload','s')} ${state.photoIsSample ? 'Upload my photo' : 'Change photo'}</button></div></div>
+    ${personHtml()}
     ${poseHtml('side')}
     ${state.look.length ? `<div class="panel-total"><span class="small muted num">${state.look.length} ${state.look.length === 1 ? 'piece' : 'pieces'} · ${stores.size} ${stores.size === 1 ? 'store' : 'stores'}</span><span class="total">${inr(lookTotal())}</span></div>` : ''}
     ${consentHtml()}
     <button class="btn brand wide" data-act="generate" ${canGenerate() ? '' : 'disabled'}>${icon('spark')} Generate my look</button>
-    <p class="tiny muted">${state.look.length ? (state.consent ? 'About 15 to 30 seconds.' : 'Tick the permission box to continue.') : 'Add at least one piece to your look.'}</p>
+    <p class="tiny muted gen-hint">${generateHint()}</p>
   </div>`;
 }
 function builder(){
@@ -512,7 +525,7 @@ function generating(){
   }).join('');
   if (g.error){
     return `<section class="gen" aria-labelledby="genTitle">
-      <div class="gen-stage"><div class="gen-visual" aria-hidden="true"><div class="layer l-photo"><img src="${state.photo || IMG.before}" alt=""></div></div></div>
+      <div class="gen-stage"><div class="gen-visual" aria-hidden="true"><div class="layer l-photo"><img src="${state.photo || ''}" alt=""></div></div></div>
       <div class="gen-side">
         <h1 class="gen-title" id="genTitle">We couldn't create your look</h1>
         <div class="notice" role="alert">${icon('alert')}<span>${esc(g.error)}</span></div>
@@ -524,7 +537,7 @@ function generating(){
   return `<section class="gen" aria-labelledby="genTitle">
     <div class="gen-stage">
       <div class="gen-visual p1" id="genVisual" aria-hidden="true">
-        <div class="layer l-photo"><img src="${state.photo || IMG.before}" alt=""></div>
+        <div class="layer l-photo"><img src="${state.photo || ''}" alt=""></div>
         <div class="layer l-aura"><i></i><i></i><i></i></div>
         <div class="layer l-glass">${FIGURE}</div>
         <div class="layer l-soft"><img id="genSoft" alt=""></div>
@@ -545,7 +558,8 @@ function generating(){
   </section>`;
 }
 async function photoBlob(){
-  return state.photo ? dataUrlBlob(state.photo) : toBlob(IMG.before);
+  if (!state.photo) throw Error('Upload your photo first.');
+  return dataUrlBlob(state.photo);
 }
 async function requestTryOn(signal){
   const pieces = orderedLook();
@@ -572,7 +586,8 @@ async function requestTryOn(signal){
 }
 function startGeneration(){
   if (!canGenerate()) return;
-  if (!unlimited() && state.plan.left <= 0){ closeSheet($('#photoSheet')); go('pricing'); toast('You have used all your looks. Pick a pass or plan to keep going.', {kind:'info'}); return; }
+  if (!state.account){ closeSheet($('#photoSheet')); state.pending = {generate:true}; openSignin('free'); return; }
+  if (looksLeft() === 0){ outOfLooks(); return; }
   closeSheet($('#photoSheet'));
   stopGeneration();
   const steps = buildSteps();
@@ -591,6 +606,12 @@ function startGeneration(){
     if (g.at >= g.steps.length - 1){ g.timers.forEach(clearTimeout); g.at = g.steps.length; finishGeneration(); }
   }).catch(err => {
     if (err.name === 'AbortError' || state.gen !== g) return;
+    if (err.code === 'sign_in_required' || err.code === 'no_looks_left'){
+      stopGeneration(); go('builder');
+      if (err.code === 'no_looks_left'){ loadBalance(); outOfLooks(); }
+      else { setAccount(null); state.pending = {generate:true}; openSignin('free'); }
+      return;
+    }
     g.timers.forEach(clearTimeout);
     g.error = err.message || 'Something went wrong. Please try again.';
     render();
@@ -646,14 +667,16 @@ function finishGeneration(){
   later(() => v.classList.add('done'), REDUCED.matches ? 0 : 1050);
   later(() => {
     const item = g.result;
-    const look = {id:item.id, img:item.result_image_url, before:state.photo || IMG.before, title:orderedLook().map(p => short(p.item)).join(', '),
+    const look = {id:item.id, img:item.result_image_url, before:state.photo, title:orderedLook().map(p => short(p.item)).join(', '),
       items:orderedLook().map(p => ({item:{...p.item}, size:p.size})), pose:state.pose, editable:true};
     state.current = look; state.justGenerated = true;
-    if (!unlimited()){ state.plan.left = Math.max(0, state.plan.left - 1); persist('fitcart-plan', state.plan); }
+    if (Number.isFinite(state.balance?.remaining)) state.balance.remaining = Math.max(0, state.balance.remaining - 1);
+    loadBalance();
     state.gallery = null;
     state.gen = null;
     go('result');
-    toast(unlimited() ? 'Look saved privately · unlimited looks' : `Look saved privately · ${state.plan.left} ${state.plan.left === 1 ? 'look' : 'looks'} left`, {action:{label:'View Looks', run:() => go('looks')}});
+    const left = looksLeft();
+    toast(left === Infinity || left === null ? 'Look saved privately' : `Look saved privately · ${left} ${left === 1 ? 'look' : 'looks'} left`, {action:{label:'View Looks', run:() => go('looks')}});
   }, REDUCED.matches ? 300 : 2000);
 }
 function stopGeneration(){
@@ -788,8 +811,8 @@ function startAccountSession(payload){
   setAccount(payload);
   state.wardrobe = null; state.gallery = null; state.ideas = [];
 }
-function openSignin(){
-  state.signin = state.account ? {step:'account'} : {step:'email', email:'', busy:false, error:''};
+function openSignin(reason = null){
+  state.signin = state.account ? {step:'account'} : {step:'email', email:'', busy:false, error:'', reason};
   renderSignin(); openSheet($('#signinSheet'));
   setTimeout(() => $('#signinEmail')?.focus(), 80);
 }
@@ -797,11 +820,12 @@ function renderSignin(){
   const s = state.signin, a = state.account;
   let body;
   if (s.step === 'account'){
-    body = `<div class="account-card"><span class="small muted">Signed in as</span><strong>${esc(a.email)}</strong>${a.unlimited ? `<span class="tag" style="justify-self:start">${icon('spark','s')} Unlimited looks</span>` : `<span class="small muted">${state.plan.left} ${state.plan.left === 1 ? 'look' : 'looks'} left this month</span>`}</div>
+    body = `<div class="account-card"><span class="small muted">Signed in as</span><strong>${esc(a.email)}</strong>${a.unlimited ? `<span class="tag" style="justify-self:start">${icon('spark','s')} Unlimited looks</span>` : `<span class="small muted">${looksLeft() === null ? 'Checking your looks…' : looksLeft() === Infinity ? 'Looks available' : `${looksLeft()} ${looksLeft() === 1 ? 'look' : 'looks'} left`}</span>`}</div>
       <p class="small muted">Your wardrobe and looks are saved to this account, so they follow you to any device you sign in on.</p>
       <button class="btn ghost wide" data-act="sign-out">Sign out</button>`;
   } else if (s.step === 'email'){
     body = `<form id="signinForm" novalidate style="display:grid;gap:14px">
+      ${s.reason === 'free' ? `<div class="notice">${icon('spark')}<span>Sign in to get <strong>${state.balance?.free_looks_per_month ?? 3} free looks every month</strong>. Your looks and wardrobe are saved to your account.</span></div>` : s.reason === 'buy' ? `<div class="notice">${icon('lock')}<span>Sign in first so your pass or plan is added to your account.</span></div>` : ''}
       <p class="small muted">We'll email you a sign-in code. No password needed.</p>
       <label class="field" for="signinEmail">Email<input class="input" id="signinEmail" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com" value="${esc(s.email)}" required></label>
       <p class="error" role="alert">${esc(s.error)}</p>
@@ -826,15 +850,15 @@ function renderSignin(){
 }
 async function sendSigninCode(raw, resend = false){
   const email = String(raw || '').trim().toLowerCase();
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ state.signin = {step:'email', email, busy:false, error:'Enter a valid email address.'}; renderSignin(); $('#signinEmail')?.focus(); return; }
-  state.signin = {step: resend ? 'code' : 'email', email, busy:true, error:''}; renderSignin();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ state.signin = {reason:state.signin?.reason, step:'email', email, busy:false, error:'Enter a valid email address.'}; renderSignin(); $('#signinEmail')?.focus(); return; }
+  state.signin = {reason:state.signin?.reason, step: resend ? 'code' : 'email', email, busy:true, error:''}; renderSignin();
   try {
     await api('/v1/auth/email/code', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email})}, false);
-    state.signin = {step:'code', email, busy:false, error:''}; renderSignin();
+    state.signin = {reason:state.signin?.reason, step:'code', email, busy:false, error:''}; renderSignin();
     setTimeout(() => $('#signinCode')?.focus(), 60);
     if (resend) toast('New code sent.');
   } catch (err){
-    state.signin = {step: resend ? 'code' : 'email', email, busy:false, error:err.message}; renderSignin();
+    state.signin = {reason:state.signin?.reason, step: resend ? 'code' : 'email', email, busy:false, error:err.message}; renderSignin();
   }
 }
 async function verifySigninCode(raw){
@@ -851,8 +875,14 @@ async function verifySigninCode(raw){
 function signedIn(payload){
   startAccountSession(payload);
   closeSheet($('#signinSheet'));
+  state.balance = null;
   render();
   toast(payload.unlimited ? `Signed in as ${payload.email} · unlimited looks` : `Signed in as ${payload.email}`);
+  const pending = state.pending; state.pending = null;
+  loadBalance().then(() => {
+    if (pending?.plan) checkout(pending.plan);
+    else if (pending?.generate && canGenerate()) startGeneration();
+  });
 }
 async function signInFromLink(){
   const params = new URLSearchParams(location.hash.slice(1));
@@ -873,12 +903,84 @@ async function refreshAccount(){
     render();
   } catch {}
 }
+function looksLeft(){
+  if (unlimited()) return Infinity;
+  if (!state.balance) return null;
+  if (!state.balance.enforced) return Infinity;
+  return state.balance.remaining ?? null;
+}
+async function loadBalance(){
+  try {
+    state.balance = await api('/v1/looks/balance');
+    if (state.balance.unlimited !== unlimited() && state.account) setAccount({...state.account, unlimited:state.balance.unlimited});
+  } catch { return; }
+  if (state.view !== 'generating') render();
+  if ($('#signinSheet').open && state.signin?.step === 'account') renderSignin();
+}
+function outOfLooks(){
+  closeSheet($('#photoSheet'));
+  go('pricing');
+  toast('You have used all your looks. Pick a pass or plan to keep going.', {kind:'info'});
+}
+let razorpayScript = null;
+function loadRazorpay(){
+  if (window.Razorpay) return Promise.resolve();
+  razorpayScript ??= new Promise((resolve, reject) => {
+    const tag = document.createElement('script');
+    tag.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    tag.onload = resolve;
+    tag.onerror = () => { razorpayScript = null; reject(Error('Could not load Razorpay. Check your connection and try again.')); };
+    document.head.appendChild(tag);
+  });
+  return razorpayScript;
+}
+async function checkout(plan){
+  if (!state.account){ state.pending = {plan}; openSignin('buy'); return; }
+  state.checkingOut = plan; render();
+  const done = () => { state.checkingOut = null; if (state.view === 'pricing') render(); };
+  try {
+    const [opts] = await Promise.all([
+      api('/v1/billing/checkout', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({plan, billing:state.billing})}),
+      loadRazorpay(),
+    ]);
+    const dark = document.documentElement.dataset.theme === 'dark' || (!document.documentElement.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches);
+    const rzp = new window.Razorpay({
+      key:opts.key_id, name:opts.name, description:opts.description, currency:opts.currency, amount:opts.amount,
+      ...(opts.order_id ? {order_id:opts.order_id} : {subscription_id:opts.subscription_id}),
+      prefill:{email:opts.email}, theme:{color: dark ? '#FF4D8D' : '#D81B64'},
+      handler: response => { done(); confirmPayment(response); },
+      modal:{ondismiss: () => { done(); toast('Payment cancelled. You were not charged.', {kind:'info'}); }},
+    });
+    rzp.on('payment.failed', e => toast(e?.error?.description || 'The payment failed. Please try again.', {kind:'error'}));
+    rzp.open();
+  } catch (err){
+    done();
+    if (err.code === 'sign_in_required'){ setAccount(null); state.pending = {plan}; openSignin('buy'); }
+    else toast(err.message, {kind:'error'});
+  }
+}
+async function confirmPayment(response, attempt = 0){
+  try {
+    state.balance = await api('/v1/billing/confirm', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(response)});
+    const plan = PLANS.find(p => p.key === state.balance.plan);
+    go(state.look.length ? 'builder' : 'home');
+    toast(`Payment received · ${plan && plan.key !== 'free' ? plan.name + ' is active · ' : ''}${state.balance.remaining} looks ready`, {action:{label:'Try it on', run:() => go(state.look.length ? 'builder' : 'home')}});
+  } catch (err){
+    if (err.status === 409 && attempt < 5){
+      if (!attempt) toast('Payment received. Adding your looks…', {kind:'info'});
+      setTimeout(() => confirmPayment(response, attempt + 1), 3000);
+      return;
+    }
+    toast(err.status === 409 ? 'Your payment is still processing. Your looks will appear in a minute.' : err.message, {kind: err.status === 409 ? 'info' : 'error'});
+    setTimeout(loadBalance, 5000);
+  }
+}
 function signOut(){
   try { localStorage.removeItem(SESSION_KEY); } catch {}
   setAccount(null);
-  state.wardrobe = null; state.gallery = null; state.ideas = [];
+  state.wardrobe = null; state.gallery = null; state.ideas = []; state.balance = null;
   closeSheet($('#signinSheet'));
-  session(true).catch(() => {});
+  session(true).then(loadBalance).catch(() => {});
   render();
   toast('Signed out.', {kind:'info'});
 }
@@ -969,11 +1071,12 @@ async function importLink(raw, inSheet){
 function openPhoto(){
   $('#photoSheet').innerHTML = `<div class="grabber" aria-hidden="true"></div><div class="sheet-head"><h2 id="photoTitle">Try it on</h2><button class="iconbtn" data-act="close-sheet" aria-label="Close">${icon('x')}</button></div>
   <div class="sheet-body">
-    <div class="person"><img src="${state.photo || IMG.before}" alt="${state.photoIsSample ? 'Sample photo' : 'Your photo'}"><div style="display:grid;gap:6px;justify-items:start"><strong>${state.photoIsSample ? 'Using a sample photo' : 'Your photo'}</strong>${privatePill()}<button class="btn ghost small" data-act="pick-photo">${icon('upload','s')} ${state.photoIsSample ? 'Upload my photo' : 'Change photo'}</button>${state.photoIsSample ? '' : '<button class="link small" data-act="use-sample">Use the sample photo instead</button>'}</div></div>
+    ${personHtml()}
     <div class="tips"><div class="tip">${icon('face')}Face clearly visible</div><div class="tip">${icon('body')}Standing, head to toe is best</div><div class="tip">${icon('sun')}Good light</div></div>
     ${poseHtml('sheet')}
     ${consentHtml()}
     <button class="btn brand wide" data-act="generate" ${canGenerate() ? '' : 'disabled'}>${icon('spark')} Generate my look</button>
+    <p class="tiny muted gen-hint" style="text-align:center">${state.photo && state.consent ? '' : generateHint()}</p>
     <div style="display:flex;justify-content:center">${planChip()}</div>
     <p class="tiny muted" style="display:flex;gap:6px;align-items:center">${icon('lock','s')} Saved only to your private gallery.</p>
   </div>`;
@@ -1102,7 +1205,7 @@ document.addEventListener('click', e => {
     case 'size': { const p = state.look[Number(t.dataset.index)]; p.size = p.size === t.dataset.size ? null : t.dataset.size; render(); document.querySelector(`[data-act="size"][data-index="${t.dataset.index}"][data-size="${CSS.escape(t.dataset.size)}"]`)?.focus(); break; }
     case 'open-photo': openPhoto(); break;
     case 'pick-photo': $('#photoFile').click(); break;
-    case 'use-sample': state.photo = null; state.photoIsSample = true; openPhoto(); if (state.view === 'builder') render(); break;
+    case 'remove-photo': state.photo = null; if ($('#photoSheet').open) openPhoto(); if (state.view === 'builder') render(); break;
     case 'generate': startGeneration(); break;
     case 'generate-again': state.consent = true; loadLook(state.current.items); startGeneration(); break;
     case 'cancel': stopGeneration(); go('builder'); toast('Cancelled. Your look is just as you left it.', {kind:'info'}); break;
@@ -1149,15 +1252,12 @@ document.addEventListener('click', e => {
     case 'scroll': document.getElementById(t.dataset.target)?.scrollIntoView({behavior: REDUCED.matches ? 'auto' : 'smooth', block:'start'}); break;
     case 'choose-plan': {
       const p = PLANS.find(x => x.key === t.dataset.plan);
-      if (p.key === 'free'){ go('home'); break; }
-      state.plan = {key: p.key === 'pass' && state.plan.key !== 'free' ? state.plan.key : p.key, left: (p.key === 'pass' ? state.plan.left : 0) + p.looks, month:state.plan.month};
-      persist('fitcart-plan', state.plan);
-      render();
-      toast(`${p.name} active (demo checkout) · ${state.plan.left} looks ready. Razorpay with UPI goes live at launch.`, {action:{label:'Try it on', run:() => go(state.look.length ? 'builder' : 'home')}});
+      if (p.key === 'free'){ go('home'); if (!state.account) openSignin('free'); break; }
+      checkout(p.key);
       break;
     }
-    case 'account': openSignin(); break;
-    case 'signin-back': state.signin = {step:'email', email:state.signin?.email || '', busy:false, error:''}; renderSignin(); break;
+    case 'account': openSignin(t.dataset.reason || null); break;
+    case 'signin-back': state.signin = {step:'email', email:state.signin?.email || '', busy:false, error:'', reason:state.signin?.reason}; renderSignin(); break;
     case 'signin-resend': sendSigninCode(state.signin.email, true); break;
     case 'sign-out': signOut(); break;
     case 'toast-action': { const act = toastAction; dismissToast(); act?.run(); break; }
@@ -1169,6 +1269,7 @@ document.addEventListener('change', e => {
     state.consent = t.checked;
     document.querySelectorAll('[data-act="consent"]').forEach(c => c.checked = t.checked);
     document.querySelectorAll('[data-act="generate"]').forEach(b => b.disabled = !canGenerate());
+    document.querySelectorAll('.gen-hint').forEach(h => { h.textContent = h.closest('#photoSheet') && canGenerate() ? '' : generateHint(); });
   }
   if (t.dataset.act === 'pose'){ state.pose = t.value; document.querySelectorAll('[data-act="pose"]').forEach(r => r.checked = r.value === state.pose); }
   if (t.dataset.change === 'import-slot' && state.imported) state.imported.slot = t.value;
@@ -1178,15 +1279,24 @@ document.addEventListener('change', e => {
     if (p){ p.item.slot = t.value; const clash = state.look.filter(x => x !== p && !MULTI.includes(t.value) && x.item.slot === t.value); if (clash.length){ state.look = state.look.filter(x => !clash.includes(x)); toast(`Replaced the other ${SLOT_LABEL[t.value].toLowerCase()} in your look`, {kind:'info'}); } render(); }
   }
 });
-$('#photoFile').onchange = async e => {
-  const file = e.target.files[0]; e.target.value = '';
+async function usePhoto(file){
   try {
-    state.photo = await readPhoto(file); state.photoIsSample = false;
+    state.photo = await readPhoto(file);
     if ($('#photoSheet').open) openPhoto();
     if (state.view === 'builder') render();
     toast('Photo added. It stays private to you.');
   } catch (err){ if (file) toast(err.message, {kind:'error'}); }
-};
+}
+$('#photoFile').onchange = e => { const file = e.target.files[0]; e.target.value = ''; usePhoto(file); };
+document.addEventListener('dragover', e => { const zone = e.target.closest?.('[data-drop="photo"]'); if (zone){ e.preventDefault(); zone.classList.add('over'); } });
+document.addEventListener('dragleave', e => e.target.closest?.('[data-drop="photo"]')?.classList.remove('over'));
+document.addEventListener('drop', e => {
+  const zone = e.target.closest?.('[data-drop="photo"]');
+  if (!zone) return;
+  e.preventDefault(); zone.classList.remove('over');
+  const file = e.dataTransfer?.files?.[0];
+  if (file) usePhoto(file);
+});
 $('#itemFile').onchange = async e => {
   const file = e.target.files[0]; e.target.value = '';
   try { openItemSheet(await readPhoto(file, 1200), $('#addSheet').open); }
@@ -1201,5 +1311,9 @@ document.querySelectorAll('dialog.sheet').forEach(d => {
   if (theme === 'dark' || theme === 'light') document.documentElement.dataset.theme = theme;
   fetch(apiUrl('/health'), {cache:'no-store'}).catch(() => {});
   render();
-  signInFromLink().then(fromLink => { if (!fromLink){ session().catch(() => {}); refreshAccount(); } });
+  fetch(apiUrl('/v1/billing/config')).then(r => r.ok ? r.json() : null).then(cfg => { state.billingCfg = cfg; if (state.view === 'pricing') render(); }).catch(() => {});
+  signInFromLink().then(async fromLink => {
+    if (!fromLink){ await session().catch(() => {}); refreshAccount(); }
+    if (!state.balance) loadBalance();
+  });
 })();

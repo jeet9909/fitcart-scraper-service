@@ -619,6 +619,14 @@ dialog.sheet.closing::backdrop{animation:fade .22s var(--ease-in) reverse forwar
 .ph-slot{width:56px;aspect-ratio:3/4;border-radius:10px;background:var(--surface-2);display:grid;place-items:center;color:var(--muted)}
 .result-visual .link{justify-self:center}
 .action:disabled{opacity:.45}
+.photo-drop{display:grid;grid-template-columns:auto 1fr;grid-template-areas:"art copy" "art cta";gap:6px 14px;align-items:center;text-align:left;width:100%;padding:16px;border-radius:var(--r-m);border:2px dashed var(--accent);background:var(--accent-soft);color:var(--ink);cursor:pointer;transition:background-color .2s var(--ease),border-color .2s var(--ease),transform .15s var(--ease)}
+.photo-drop:hover,.photo-drop.over{border-style:solid;background:color-mix(in srgb,var(--accent) 16%,var(--surface))}
+.photo-drop:active{transform:scale(.99)}
+.photo-drop-art{grid-area:art;width:64px;aspect-ratio:3/4;border-radius:12px;display:grid;place-items:center;background:var(--surface);color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent-line)}
+.photo-drop-art .icon{width:30px;height:30px}
+.photo-drop-copy{grid-area:copy;display:grid;gap:3px}
+.photo-drop-copy strong{font-size:16px}
+.photo-drop .btn{grid-area:cta;justify-self:start;pointer-events:none}
 .account-btn{position:relative}
 h1,h2,h3{font-synthesis-weight:none}
 .lp-copy h1 .grad-text,.lp-head .grad-text,.cta-band .grad-text{font-style:italic;padding-right:.08em}
@@ -627,6 +635,7 @@ h1,h2,h3{font-synthesis-weight:none}
 .account-btn.signed{color:var(--accent-text);background:var(--accent-soft)}
 .account-btn.signed::after{content:"";position:absolute;right:8px;top:8px;width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 2px var(--surface)}
 .code-input{letter-spacing:.4em;text-align:center;font-variant-numeric:tabular-nums;font-size:22px}
+.notice.test-mode{background:var(--gold-soft);color:var(--ink)}
 .account-card{display:grid;gap:6px;padding:14px 16px;border-radius:var(--r-m);background:var(--surface-2)}
 </style>
 </head>

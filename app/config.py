@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     max_concurrent_scrapes: int = Field(default=5, ge=1, le=100)
     allowed_product_hosts_csv: str = Field(default="", validation_alias="ALLOWED_PRODUCT_HOSTS")
     unlimited_emails_csv: str = Field(default="", validation_alias="UNLIMITED_EMAILS")
+    look_limits_enabled: bool = True
+    free_looks_per_month: int = Field(default=3, ge=0, le=100)
+    razorpay_key_id: str = ""
+    razorpay_key_secret: SecretStr = SecretStr("")
+    razorpay_webhook_secret: SecretStr = SecretStr("")
+    razorpay_allow_live: bool = Field(default=False, description="Refuse rzp_live_ keys unless this is set, so test mode cannot turn into real charges by accident")
 
     def is_unlimited(self, email: str | None) -> bool:
         """Signed-in emails listed in UNLIMITED_EMAILS get unlimited looks."""

@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     gemini_api_key: SecretStr = SecretStr("")
     gemini_image_model: str = "gemini-2.5-flash-image"
     gemini_text_model: str = "gemini-2.5-flash"
+    face_lock_enabled: bool = Field(default=True, description="Blend the person's real face back onto generated try-ons and send a face close-up as an identity reference")
     supabase_url: str = ""
     supabase_service_role_key: SecretStr = SecretStr("")
     supabase_storage_bucket: str = "fitcart-tryons"

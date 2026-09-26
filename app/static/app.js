@@ -37,7 +37,7 @@ const state = {
   wardrobe:null, wardrobeLoading:false, wardrobeError:'', wardrobeTab:'home', wardrobeFilter:'all', confirmDelete:null,
   occasion:null, ideas:[], ideasLoading:false, ideasError:'',
   gallery:null, galleryLoading:false, galleryError:'',
-  photo:null, photoIsSample:true, pose:'standard', consent:false,
+  photo:null, pose:'standard', consent:false,
   current:null, justGenerated:false,
   addSlot:null, addTab:'link', importing:false, importError:'', imported:null, draftSize:null,
   itemDraft:null,
@@ -461,18 +461,31 @@ function poseHtml(prefix){
   </div></fieldset>`;
 }
 function consentHtml(){ return `<label class="consent"><input type="checkbox" data-act="consent" ${state.consent ? 'checked' : ''}>I have permission to use this photo. It is used only to create my try-on.</label>`; }
-function canGenerate(){ return state.look.length > 0 && state.consent; }
+function canGenerate(){ return state.look.length > 0 && Boolean(state.photo) && state.consent; }
+function personHtml(){
+  if (!state.photo) return `<button class="photo-drop" data-act="pick-photo" data-drop="photo">
+      <span class="photo-drop-art" aria-hidden="true">${icon('body')}</span>
+      <span class="photo-drop-copy"><strong>Upload your photo</strong><span class="small muted">A full-body photo, face clearly visible, in good light. JPG or PNG.</span></span>
+      <span class="btn brand small" aria-hidden="true">${icon('upload','s')} Choose photo</span>
+    </button>`;
+  return `<div class="person"><img src="${state.photo}" alt="Your photo"><div style="display:grid;gap:6px;justify-items:start"><strong>Your photo</strong>${privatePill()}<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost small" data-act="pick-photo">${icon('upload','s')} Change photo</button><button class="link small" data-act="remove-photo">Remove</button></div></div></div>`;
+}
+function generateHint(){
+  if (!state.look.length) return 'Add at least one piece to your look.';
+  if (!state.photo) return 'Upload your photo to continue.';
+  return state.consent ? 'About 15 to 30 seconds.' : 'Tick the permission box to continue.';
+}
 function tryPanel(){
   const stores = lookStores();
   return `<div class="card panel">
     <div class="panel-head"><h2>Try it on</h2>${privatePill()}</div>
     ${planChip()}
-    <div class="person"><img src="${state.photo || IMG.before}" alt="${state.photoIsSample ? 'Sample photo' : 'Your photo'}"><div style="display:grid;gap:4px"><strong>${state.photoIsSample ? 'Sample photo' : 'Your photo'}</strong><p class="small muted">${state.photoIsSample ? 'Add yours for a personal try-on.' : 'Ready to use.'}</p><button class="btn ghost small" data-act="pick-photo" style="justify-self:start">${icon('upload','s')} ${state.photoIsSample ? 'Upload my photo' : 'Change photo'}</button></div></div>
+    ${personHtml()}
     ${poseHtml('side')}
     ${state.look.length ? `<div class="panel-total"><span class="small muted num">${state.look.length} ${state.look.length === 1 ? 'piece' : 'pieces'} · ${stores.size} ${stores.size === 1 ? 'store' : 'stores'}</span><span class="total">${inr(lookTotal())}</span></div>` : ''}
     ${consentHtml()}
     <button class="btn brand wide" data-act="generate" ${canGenerate() ? '' : 'disabled'}>${icon('spark')} Generate my look</button>
-    <p class="tiny muted">${state.look.length ? (state.consent ? 'About 15 to 30 seconds.' : 'Tick the permission box to continue.') : 'Add at least one piece to your look.'}</p>
+    <p class="tiny muted gen-hint">${generateHint()}</p>
   </div>`;
 }
 function builder(){
@@ -512,7 +525,7 @@ function generating(){
   }).join('');
   if (g.error){
     return `<section class="gen" aria-labelledby="genTitle">
-      <div class="gen-stage"><div class="gen-visual" aria-hidden="true"><div class="layer l-photo"><img src="${state.photo || IMG.before}" alt=""></div></div></div>
+      <div class="gen-stage"><div class="gen-visual" aria-hidden="true"><div class="layer l-photo"><img src="${state.photo || ''}" alt=""></div></div></div>
       <div class="gen-side">
         <h1 class="gen-title" id="genTitle">We couldn't create your look</h1>
         <div class="notice" role="alert">${icon('alert')}<span>${esc(g.error)}</span></div>
@@ -524,7 +537,7 @@ function generating(){
   return `<section class="gen" aria-labelledby="genTitle">
     <div class="gen-stage">
       <div class="gen-visual p1" id="genVisual" aria-hidden="true">
-        <div class="layer l-photo"><img src="${state.photo || IMG.before}" alt=""></div>
+        <div class="layer l-photo"><img src="${state.photo || ''}" alt=""></div>
         <div class="layer l-aura"><i></i><i></i><i></i></div>
         <div class="layer l-glass">${FIGURE}</div>
         <div class="layer l-soft"><img id="genSoft" alt=""></div>
@@ -545,7 +558,8 @@ function generating(){
   </section>`;
 }
 async function photoBlob(){
-  return state.photo ? dataUrlBlob(state.photo) : toBlob(IMG.before);
+  if (!state.photo) throw Error('Upload your photo first.');
+  return dataUrlBlob(state.photo);
 }
 async function requestTryOn(signal){
   const pieces = orderedLook();
@@ -653,7 +667,7 @@ function finishGeneration(){
   later(() => v.classList.add('done'), REDUCED.matches ? 0 : 1050);
   later(() => {
     const item = g.result;
-    const look = {id:item.id, img:item.result_image_url, before:state.photo || IMG.before, title:orderedLook().map(p => short(p.item)).join(', '),
+    const look = {id:item.id, img:item.result_image_url, before:state.photo, title:orderedLook().map(p => short(p.item)).join(', '),
       items:orderedLook().map(p => ({item:{...p.item}, size:p.size})), pose:state.pose, editable:true};
     state.current = look; state.justGenerated = true;
     if (Number.isFinite(state.balance?.remaining)) state.balance.remaining = Math.max(0, state.balance.remaining - 1);
@@ -1057,11 +1071,12 @@ async function importLink(raw, inSheet){
 function openPhoto(){
   $('#photoSheet').innerHTML = `<div class="grabber" aria-hidden="true"></div><div class="sheet-head"><h2 id="photoTitle">Try it on</h2><button class="iconbtn" data-act="close-sheet" aria-label="Close">${icon('x')}</button></div>
   <div class="sheet-body">
-    <div class="person"><img src="${state.photo || IMG.before}" alt="${state.photoIsSample ? 'Sample photo' : 'Your photo'}"><div style="display:grid;gap:6px;justify-items:start"><strong>${state.photoIsSample ? 'Using a sample photo' : 'Your photo'}</strong>${privatePill()}<button class="btn ghost small" data-act="pick-photo">${icon('upload','s')} ${state.photoIsSample ? 'Upload my photo' : 'Change photo'}</button>${state.photoIsSample ? '' : '<button class="link small" data-act="use-sample">Use the sample photo instead</button>'}</div></div>
+    ${personHtml()}
     <div class="tips"><div class="tip">${icon('face')}Face clearly visible</div><div class="tip">${icon('body')}Standing, head to toe is best</div><div class="tip">${icon('sun')}Good light</div></div>
     ${poseHtml('sheet')}
     ${consentHtml()}
     <button class="btn brand wide" data-act="generate" ${canGenerate() ? '' : 'disabled'}>${icon('spark')} Generate my look</button>
+    <p class="tiny muted gen-hint" style="text-align:center">${state.photo && state.consent ? '' : generateHint()}</p>
     <div style="display:flex;justify-content:center">${planChip()}</div>
     <p class="tiny muted" style="display:flex;gap:6px;align-items:center">${icon('lock','s')} Saved only to your private gallery.</p>
   </div>`;
@@ -1190,7 +1205,7 @@ document.addEventListener('click', e => {
     case 'size': { const p = state.look[Number(t.dataset.index)]; p.size = p.size === t.dataset.size ? null : t.dataset.size; render(); document.querySelector(`[data-act="size"][data-index="${t.dataset.index}"][data-size="${CSS.escape(t.dataset.size)}"]`)?.focus(); break; }
     case 'open-photo': openPhoto(); break;
     case 'pick-photo': $('#photoFile').click(); break;
-    case 'use-sample': state.photo = null; state.photoIsSample = true; openPhoto(); if (state.view === 'builder') render(); break;
+    case 'remove-photo': state.photo = null; if ($('#photoSheet').open) openPhoto(); if (state.view === 'builder') render(); break;
     case 'generate': startGeneration(); break;
     case 'generate-again': state.consent = true; loadLook(state.current.items); startGeneration(); break;
     case 'cancel': stopGeneration(); go('builder'); toast('Cancelled. Your look is just as you left it.', {kind:'info'}); break;
@@ -1254,6 +1269,7 @@ document.addEventListener('change', e => {
     state.consent = t.checked;
     document.querySelectorAll('[data-act="consent"]').forEach(c => c.checked = t.checked);
     document.querySelectorAll('[data-act="generate"]').forEach(b => b.disabled = !canGenerate());
+    document.querySelectorAll('.gen-hint').forEach(h => { h.textContent = h.closest('#photoSheet') && canGenerate() ? '' : generateHint(); });
   }
   if (t.dataset.act === 'pose'){ state.pose = t.value; document.querySelectorAll('[data-act="pose"]').forEach(r => r.checked = r.value === state.pose); }
   if (t.dataset.change === 'import-slot' && state.imported) state.imported.slot = t.value;
@@ -1263,15 +1279,24 @@ document.addEventListener('change', e => {
     if (p){ p.item.slot = t.value; const clash = state.look.filter(x => x !== p && !MULTI.includes(t.value) && x.item.slot === t.value); if (clash.length){ state.look = state.look.filter(x => !clash.includes(x)); toast(`Replaced the other ${SLOT_LABEL[t.value].toLowerCase()} in your look`, {kind:'info'}); } render(); }
   }
 });
-$('#photoFile').onchange = async e => {
-  const file = e.target.files[0]; e.target.value = '';
+async function usePhoto(file){
   try {
-    state.photo = await readPhoto(file); state.photoIsSample = false;
+    state.photo = await readPhoto(file);
     if ($('#photoSheet').open) openPhoto();
     if (state.view === 'builder') render();
     toast('Photo added. It stays private to you.');
   } catch (err){ if (file) toast(err.message, {kind:'error'}); }
-};
+}
+$('#photoFile').onchange = e => { const file = e.target.files[0]; e.target.value = ''; usePhoto(file); };
+document.addEventListener('dragover', e => { const zone = e.target.closest?.('[data-drop="photo"]'); if (zone){ e.preventDefault(); zone.classList.add('over'); } });
+document.addEventListener('dragleave', e => e.target.closest?.('[data-drop="photo"]')?.classList.remove('over'));
+document.addEventListener('drop', e => {
+  const zone = e.target.closest?.('[data-drop="photo"]');
+  if (!zone) return;
+  e.preventDefault(); zone.classList.remove('over');
+  const file = e.dataTransfer?.files?.[0];
+  if (file) usePhoto(file);
+});
 $('#itemFile').onchange = async e => {
   const file = e.target.files[0]; e.target.value = '';
   try { openItemSheet(await readPhoto(file, 1200), $('#addSheet').open); }

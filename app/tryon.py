@@ -13,6 +13,7 @@ from uuid import uuid4
 import httpx
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from app import identity
 from app.config import Settings
 from app.models import GalleryItem, GeminiUsageResponse, GeminiUsageSinceStart
 
@@ -98,39 +99,45 @@ class OutfitPiece:
 POSES = ("standard", "keep")
 
 
-def _describe_pieces(pieces: list["OutfitPiece"]) -> str:
+def _describe_pieces(pieces: list["OutfitPiece"], first: int = 2) -> str:
     return "; ".join(
         f"image {index} is the {piece.category}" + (f" ({piece.label})" if piece.label else "")
-        for index, piece in enumerate(pieces, start=2)
+        for index, piece in enumerate(pieces, start=first)
     )
 
 
-def tryon_prompt(pieces: list["OutfitPiece"], pose: str = "standard") -> str:
-    """Instruction for the image model. Image 1 is always the person; images 2.. are the products in order."""
+def tryon_prompt(pieces: list["OutfitPiece"], pose: str = "standard", face_reference: bool = False) -> str:
+    """Instruction for the image model. Image 1 is the person, then an optional face close-up, then the products in order."""
+    first_product = 3 if face_reference else 2
     areas = ", ".join(dict.fromkeys(piece.category for piece in pieces))
+    # Identity comes first: the model weighs early instructions most.
+    identity = (
+        "This is the same real person, not a model or a lookalike. "
+        + ("Image 2 is a close-up of their face: treat it as the identity reference and reproduce that exact face. " if face_reference else "")
+        + "Keep their exact face: eye shape and spacing, eyebrows, nose, lips, jawline, face width, skin texture, moles and marks, "
+        "hairstyle and hairline, facial hair, glasses if worn, skin tone and age. Do not beautify, smooth, slim or idealise anything. "
+        "Keep their real body: the same height, head size relative to the body, shoulder width, chest, waist, hips, arm and leg length and overall build. "
+    )
     products = (
-        f"Image 1 shows the person. The other images are the exact product references: {_describe_pieces(pieces)}. "
+        f"Image 1 shows the person. The other images are the exact product references: {_describe_pieces(pieces, first_product)}. "
         "Product photos may show a model wearing other clothes or accessories; take only the listed product from each photo and ignore everything else. "
         f"Dress the person in {'this product' if len(pieces) == 1 else 'all of these products at the same time'}, replacing what they wear in the {areas} area. "
         "Reproduce each product exactly: same color, fabric texture, print, pattern, logo, collar, sleeves, length, fit and design details. "
         "Do not add clothing, jewelry or accessories that were not provided. "
     )
-    identity = (
-        "The result must clearly be the same person as image 1: keep the face, facial features, expression style, hairstyle, facial hair, "
-        "glasses if worn, skin tone, age, height and body shape exactly. Do not beautify, slim, reshape or change the face or body. "
-    )
     quality = "Photorealistic, natural fabric folds and fit, anatomically correct hands with five fingers each. One single person, no text, no watermark, no collage, no borders."
     if pose == "keep":
         return (
-            "Create a photorealistic virtual try-on. " + products + identity
+            "Photorealistic virtual try-on of the person in image 1. " + identity + products
             + "Keep the person's own pose, background, camera angle and lighting from image 1, and keep their own clothing in body areas the products do not cover. "
             + "Show the full body from head to feet if image 1 does. " + quality
         )
     return (
-        "Create a photorealistic full-body fashion catalogue photo of the person from image 1 wearing the products. " + products + identity
-        + "Pose: ignore the pose in image 1. Show the person standing upright, facing the camera straight on, weight evenly on both feet, feet slightly apart, "
+        "Photorealistic full-body fashion catalogue photo of the person in image 1 wearing the products. " + identity
+        + "Only the position of the arms, legs and head changes; body size, proportions and the face stay exactly as in image 1. " + products
+        + "Pose: ignore the pose in image 1 and stand the person upright, facing the camera straight on, weight evenly on both feet, feet slightly apart, "
         + "arms relaxed and straight down at the sides and held slightly away from the torso so the arms and hands cover no part of the outfit, "
-        + "hands open and relaxed, shoulders level, head straight, calm neutral expression, looking at the camera. "
+        + "hands open and relaxed, shoulders level, head straight and facing the camera like in a passport photo, calm neutral expression, looking at the camera. "
         + "Framing: vertical portrait with the entire body in frame from the top of the head to the soles of the shoes, a small margin above the head and below the feet, "
         + "camera at chest height with no tilt, nothing cropped. "
         + "Background and light: a plain, light neutral studio backdrop with soft, even front lighting so every garment is clearly visible. "
@@ -196,11 +203,13 @@ class TryOnService:
             raise TryOnError(f"Choose between 1 and {MAX_OUTFIT_PIECES} items to try on", 400)
         if pose not in POSES:
             raise TryOnError(f"pose must be one of: {', '.join(POSES)}", 400)
-        prompt = tryon_prompt(pieces, pose)
+        face = await asyncio.to_thread(identity.face_reference, person[0]) if self.settings.face_lock_enabled else None
+        prompt = tryon_prompt(pieces, pose, face_reference=face is not None)
+        face_part = [self._inline_part((face[0], face[1], "jpg"))] if face else []
         payload = {
             "contents": [{
                 "role": "user",
-                "parts": [{"text": prompt}, self._inline_part(person), *(self._inline_part(piece.image) for piece in pieces)],
+                "parts": [{"text": prompt}, self._inline_part(person), *face_part, *(self._inline_part(piece.image) for piece in pieces)],
             }],
             "generationConfig": {
                 "responseModalities": ["TEXT", "IMAGE"],
@@ -218,7 +227,12 @@ class TryOnService:
             data = base64.b64decode(image["data"], validate=True)
         except (KeyError, ValueError) as exc:
             raise TryOnError("Gemini returned an invalid image") from exc
-        return validate_image(data, image.get("mime_type") or image.get("mimeType") or "image/png", 20_000_000)
+        result = validate_image(data, image.get("mime_type") or image.get("mimeType") or "image/png", 20_000_000)
+        if self.settings.face_lock_enabled:
+            locked = await asyncio.to_thread(identity.lock_face, person[0], result[0], result[1])
+            if locked:
+                result = (locked, result[1], result[2])
+        return result
 
     async def generate_json(self, parts: list[dict[str, Any]], schema: dict[str, Any]) -> Any:
         """Ask the Gemini text model for JSON that matches ``schema``."""

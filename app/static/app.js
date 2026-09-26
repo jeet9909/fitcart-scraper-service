@@ -292,8 +292,8 @@ function pricingHtml(){
     <div class="billing glass" role="group" aria-label="Billing period"><button data-act="billing" data-billing="monthly" aria-pressed="${state.billing === 'monthly'}">Monthly</button><button data-act="billing" data-billing="yearly" aria-pressed="${state.billing === 'yearly'}">Yearly <span class="save">Save 21%</span></button></div>
     <div class="tiers">${tiers}</div>
     <div class="plan-table reveal"><table><caption class="sr">Compare plans</caption><thead><tr><th scope="col">Compare plans</th>${PLANS.map(p => `<th scope="col">${p.name}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr><th scope="row">${r[0]}</th>${r.slice(1).map((c, i) => `<td class="${PLANS[i].popular ? 'hi' : ''}">${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
-    ${state.billingCfg?.test_mode ? `<div class="notice test-mode" role="note">${icon('info')}<span><strong>Test mode.</strong> No real money moves. Pay with card <b class="num">4242 4242 4242 4242</b>, any future expiry date and any CVC.</span></div>` : ''}
-    <div class="plan-notes"><p>${icon('lock','s')} Prices include 18% GST. Secure checkout by Stripe. Plans renew each month or year until cancelled.</p><p>A look that fails is never counted. Unused looks don't carry over to the next month.</p></div>
+    ${state.billingCfg?.test_mode ? `<div class="notice test-mode" role="note">${icon('info')}<span><strong>Test mode.</strong> No real money moves. Pay with UPI ID <b>success@razorpay</b>, or pick Netbanking, any bank, then Success.</span></div>` : ''}
+    <div class="plan-notes"><p>${icon('lock','s')} Prices include 18% GST. Secure checkout by Razorpay: UPI, cards and netbanking. Plans renew with UPI AutoPay or card until cancelled.</p><p>A look that fails is never counted. Unused looks don't carry over to the next month.</p></div>
   </div>`;
 }
 function pricingPage(){
@@ -908,31 +908,55 @@ function outOfLooks(){
   go('pricing');
   toast('You have used all your looks. Pick a pass or plan to keep going.', {kind:'info'});
 }
+let razorpayScript = null;
+function loadRazorpay(){
+  if (window.Razorpay) return Promise.resolve();
+  razorpayScript ??= new Promise((resolve, reject) => {
+    const tag = document.createElement('script');
+    tag.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    tag.onload = resolve;
+    tag.onerror = () => { razorpayScript = null; reject(Error('Could not load Razorpay. Check your connection and try again.')); };
+    document.head.appendChild(tag);
+  });
+  return razorpayScript;
+}
 async function checkout(plan){
   if (!state.account){ state.pending = {plan}; openSignin('buy'); return; }
   state.checkingOut = plan; render();
+  const done = () => { state.checkingOut = null; if (state.view === 'pricing') render(); };
   try {
-    const {url} = await api('/v1/billing/checkout', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({plan, billing:state.billing})});
-    location.assign(url);
+    const [opts] = await Promise.all([
+      api('/v1/billing/checkout', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({plan, billing:state.billing})}),
+      loadRazorpay(),
+    ]);
+    const dark = document.documentElement.dataset.theme === 'dark' || (!document.documentElement.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches);
+    const rzp = new window.Razorpay({
+      key:opts.key_id, name:opts.name, description:opts.description, currency:opts.currency, amount:opts.amount,
+      ...(opts.order_id ? {order_id:opts.order_id} : {subscription_id:opts.subscription_id}),
+      prefill:{email:opts.email}, theme:{color: dark ? '#FF4D8D' : '#D81B64'},
+      handler: response => { done(); confirmPayment(response); },
+      modal:{ondismiss: () => { done(); toast('Payment cancelled. You were not charged.', {kind:'info'}); }},
+    });
+    rzp.on('payment.failed', e => toast(e?.error?.description || 'The payment failed. Please try again.', {kind:'error'}));
+    rzp.open();
   } catch (err){
-    state.checkingOut = null; render();
+    done();
     if (err.code === 'sign_in_required'){ setAccount(null); state.pending = {plan}; openSignin('buy'); }
     else toast(err.message, {kind:'error'});
   }
 }
-async function returnFromCheckout(){
-  const params = new URLSearchParams(location.search);
-  const result = params.get('checkout');
-  if (!result) return;
-  const sessionId = params.get('session_id');
-  history.replaceState(null, '', location.pathname + location.hash);
-  if (result !== 'success' || !sessionId){ go('pricing'); toast('Checkout cancelled. You were not charged.', {kind:'info'}); return; }
+async function confirmPayment(response, attempt = 0){
   try {
-    state.balance = await api('/v1/billing/confirm', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({session_id:sessionId})});
+    state.balance = await api('/v1/billing/confirm', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(response)});
     const plan = PLANS.find(p => p.key === state.balance.plan);
     go(state.look.length ? 'builder' : 'home');
     toast(`Payment received · ${plan && plan.key !== 'free' ? plan.name + ' is active · ' : ''}${state.balance.remaining} looks ready`, {action:{label:'Try it on', run:() => go(state.look.length ? 'builder' : 'home')}});
   } catch (err){
+    if (err.status === 409 && attempt < 5){
+      if (!attempt) toast('Payment received. Adding your looks…', {kind:'info'});
+      setTimeout(() => confirmPayment(response, attempt + 1), 3000);
+      return;
+    }
     toast(err.status === 409 ? 'Your payment is still processing. Your looks will appear in a minute.' : err.message, {kind: err.status === 409 ? 'info' : 'error'});
     setTimeout(loadBalance, 5000);
   }
@@ -1265,7 +1289,6 @@ document.querySelectorAll('dialog.sheet').forEach(d => {
   fetch(apiUrl('/v1/billing/config')).then(r => r.ok ? r.json() : null).then(cfg => { state.billingCfg = cfg; if (state.view === 'pricing') render(); }).catch(() => {});
   signInFromLink().then(async fromLink => {
     if (!fromLink){ await session().catch(() => {}); refreshAccount(); }
-    await returnFromCheckout();
     if (!state.balance) loadBalance();
   });
 })();

@@ -55,7 +55,7 @@ values ('fitcart-tryons', 'fitcart-tryons', false, 20000000, array['image/jpeg',
 on conflict (id) do update set public = false;
 
 -- Look allowances. Every signed-in account gets a free grant each month (India time); passes and
--- subscriptions bought through Stripe add more. A try-on spends one look from the grant that expires first.
+-- subscriptions bought through Razorpay add more. A try-on spends one look from the grant that expires first.
 create table if not exists public.look_grants (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null,
@@ -65,7 +65,7 @@ create table if not exists public.look_grants (
   period text,
   starts_at timestamptz not null default now(),
   expires_at timestamptz not null,
-  stripe_ref text unique,
+  payment_ref text unique,
   created_at timestamptz not null default now()
 );
 
@@ -73,6 +73,14 @@ create unique index if not exists look_grants_free_month_idx
   on public.look_grants (user_id, period) where kind = 'free';
 create index if not exists look_grants_user_expiry_idx
   on public.look_grants (user_id, expires_at);
+
+-- Projects that ran an earlier version of this file named the payment column stripe_ref.
+do $$
+begin
+  if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'look_grants' and column_name = 'stripe_ref') then
+    alter table public.look_grants rename column stripe_ref to payment_ref;
+  end if;
+end $$;
 
 alter table public.look_grants enable row level security;
 

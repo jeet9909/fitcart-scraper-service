@@ -225,8 +225,8 @@ async def billing_config(billing: Billing = Depends(get_billing)) -> BillingConf
 
 @app.post("/v1/billing/checkout", response_model=CheckoutResponse, tags=["looks and billing"])
 async def create_checkout(body: CheckoutRequest, claims: dict = Depends(require_email), billing: Billing = Depends(get_billing)) -> CheckoutResponse:
-    """Start Stripe Checkout for a pass or plan; the browser is sent to the returned URL."""
-    return CheckoutResponse(url=await billing.create_checkout(claims["sub"], claims["email"], body.plan, body.billing))
+    """Create the Razorpay order (pass) or subscription (plans) that the browser opens in Razorpay Checkout."""
+    return CheckoutResponse(**await billing.create_checkout(claims["sub"], claims["email"], body.plan, body.billing))
 
 
 @app.post("/v1/billing/confirm", response_model=LookBalanceResponse, tags=["looks and billing"])
@@ -236,14 +236,19 @@ async def confirm_checkout(
     billing: Billing = Depends(get_billing),
     ledger: LookLedger = Depends(get_ledger),
 ) -> LookBalanceResponse:
-    """Add the looks from a finished Checkout when the buyer returns; safe to repeat and safe alongside the webhook."""
-    await billing.confirm(claims["sub"], body.session_id)
+    """Verify the Razorpay checkout callback and add the looks; safe to repeat and safe alongside the webhook."""
+    added = await billing.confirm(
+        claims["sub"], body.razorpay_payment_id, body.razorpay_signature,
+        order_id=body.razorpay_order_id, subscription_id=body.razorpay_subscription_id,
+    )
+    if not added:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Your payment is still processing. Your looks will appear in a minute.")
     return await ledger.balance(claims)
 
 
 @app.post("/v1/billing/webhook", tags=["looks and billing"], include_in_schema=False)
-async def stripe_webhook(request: Request, billing: Billing = Depends(get_billing)) -> dict:
-    await billing.handle_webhook(await request.body(), request.headers.get("stripe-signature"))
+async def razorpay_webhook(request: Request, billing: Billing = Depends(get_billing)) -> dict:
+    await billing.handle_webhook(await request.body(), request.headers.get("x-razorpay-signature"))
     return {"received": True}
 
 

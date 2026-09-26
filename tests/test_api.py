@@ -1,3 +1,4 @@
+import json
 import os
 from io import BytesIO
 from datetime import UTC, datetime
@@ -990,11 +991,11 @@ _FAKE_HANDLERS: dict[str, object] = {}
 
 
 def _install_fakes(monkeypatch, **handlers) -> None:
-    """Route api.stripe.com to the Stripe fake and everything else to the Supabase fake."""
+    """Route api.razorpay.com to the Razorpay fake and everything else to the Supabase fake."""
     _FAKE_HANDLERS.update(handlers)
 
     def route(request):
-        key = "stripe" if request.url.host == "api.stripe.com" else "supabase"
+        key = "razorpay" if request.url.host == "api.razorpay.com" else "supabase"
         return _FAKE_HANDLERS[key](request)
 
     monkeypatch.setattr(
@@ -1010,8 +1011,9 @@ LIMIT_SETTINGS = Settings(
     anonymous_token_secret="a-secure-test-secret-that-is-long-enough",
     supabase_url="https://project.supabase.co",
     supabase_service_role_key="service-key",
-    stripe_secret_key="sk_test_123",
-    stripe_webhook_secret="whsec_test",
+    razorpay_key_id="rzp_test_key",
+    razorpay_key_secret="rzp-secret",
+    razorpay_webhook_secret="hook-secret",
     UNLIMITED_EMAILS="vip@example.com",
 )
 
@@ -1144,125 +1146,146 @@ def test_balance_adds_up_active_grants(monkeypatch) -> None:
     assert guest == {"signed_in": False, "unlimited": False, "enforced": True, "remaining": None, "plan": "free", "free_looks_per_month": 3, "grants": []}
 
 
-class FakeStripe:
+class FakeRazorpay:
     def __init__(self, objects: dict | None = None):
+        import base64
+        import json as _json
         import httpx as _httpx
-        from urllib.parse import parse_qsl
 
-        self.requests: list[tuple[str, str, dict]] = []
+        self.requests: list[tuple[str, str, object]] = []
         self.objects = objects or {}
+        self.plans: list[dict] = []
 
         def handler(request: _httpx.Request) -> _httpx.Response:
-            form = dict(parse_qsl(request.content.decode())) if request.content else {}
+            body = _json.loads(request.content) if request.content else None
             path = request.url.path.replace("/v1", "", 1)
-            self.requests.append((request.method, path, form))
-            assert request.headers["authorization"] == "Bearer sk_test_123"
-            if request.method == "POST" and path == "/checkout/sessions":
-                return _httpx.Response(200, json={"id": "cs_test_new", "url": "https://checkout.stripe.com/c/pay/cs_test_new"})
+            self.requests.append((request.method, path, body))
+            assert request.headers["authorization"] == "Basic " + base64.b64encode(b"rzp_test_key:rzp-secret").decode()
+            if path == "/orders" and request.method == "POST":
+                return _httpx.Response(200, json={"id": "order_New1", "amount": body["amount"], "notes": body["notes"]})
+            if path == "/plans" and request.method == "GET":
+                return _httpx.Response(200, json={"items": self.plans})
+            if path == "/plans" and request.method == "POST":
+                plan = {"id": f"plan_{len(self.plans) + 1}", "notes": body["notes"]}
+                self.plans.append(plan)
+                return _httpx.Response(200, json=plan)
+            if path == "/subscriptions" and request.method == "POST":
+                return _httpx.Response(200, json={"id": "sub_New1", "status": "created"})
+            if path.endswith("/capture"):
+                return _httpx.Response(200, json={**self.objects[path.removesuffix("/capture")], "status": "captured"})
             if path in self.objects:
                 return _httpx.Response(200, json=self.objects[path])
-            return _httpx.Response(404, json={"error": {"message": "No such object"}})
+            return _httpx.Response(400, json={"error": {"description": "The id provided does not exist"}})
 
         self.handler = handler
 
     def install(self, monkeypatch) -> None:
-        _install_fakes(monkeypatch, stripe=self.handler)
+        _install_fakes(monkeypatch, razorpay=self.handler)
 
 
-def test_checkout_builds_the_right_stripe_session(monkeypatch) -> None:
-    stripe = FakeStripe()
-    stripe.install(monkeypatch)
+def _rzp_signature(message: str, secret: str = "rzp-secret") -> str:
+    import hashlib, hmac
+
+    return hmac.new(secret.encode(), message.encode(), hashlib.sha256).hexdigest()
+
+
+def test_checkout_creates_orders_and_subscriptions(monkeypatch) -> None:
+    from app.billing import Billing
+
+    Billing._plan_ids.clear()
+    razorpay = FakeRazorpay()
+    razorpay.install(monkeypatch)
     try:
         with _limit_client(FakeSupabase(), monkeypatch) as client:
             headers = {"Authorization": f"Bearer {_email_token('buyer@example.com')}"}
-            plus = client.post("/v1/billing/checkout", json={"plan": "plus", "billing": "yearly"}, headers=headers)
-            pass_ = client.post("/v1/billing/checkout", json={"plan": "pass"}, headers=headers)
+            pass_ = client.post("/v1/billing/checkout", json={"plan": "pass"}, headers=headers).json()
+            plus = client.post("/v1/billing/checkout", json={"plan": "plus", "billing": "yearly"}, headers=headers).json()
+            again = client.post("/v1/billing/checkout", json={"plan": "plus", "billing": "yearly"}, headers=headers).json()
             guest_token = client.post("/v1/sessions/anonymous").json()["access_token"]
             guest = client.post("/v1/billing/checkout", json={"plan": "pro"}, headers={"Authorization": f"Bearer {guest_token}"})
             config = client.get("/v1/billing/config").json()
     finally:
         app.dependency_overrides.clear()
-    assert plus.json()["url"].startswith("https://checkout.stripe.com/")
-    yearly, once = stripe.requests[0][2], stripe.requests[1][2]
-    assert yearly["mode"] == "subscription" and yearly["line_items[0][price_data][unit_amount]"] == "329900"
-    assert yearly["line_items[0][price_data][recurring][interval]"] == "year" and yearly["line_items[0][price_data][currency]"] == "inr"
-    assert yearly["client_reference_id"] == AUTH_USER_ID and yearly["subscription_data[metadata][plan]"] == "plus"
-    assert yearly["success_url"].endswith("?checkout=success&session_id={CHECKOUT_SESSION_ID}")
-    assert once["mode"] == "payment" and once["line_items[0][price_data][unit_amount]"] == "12900" and "line_items[0][price_data][recurring][interval]" not in once
-    assert guest.status_code == 403 and len(stripe.requests) == 2
-    assert config == {"enabled": True, "test_mode": True}
+    assert pass_["order_id"] == "order_New1" and pass_["amount"] == 12900 and pass_["key_id"] == "rzp_test_key" and pass_["subscription_id"] is None
+    order = razorpay.requests[0][2]
+    assert order["currency"] == "INR" and order["notes"] == {"user_id": AUTH_USER_ID, "plan": "pass", "billing": "once"}
+    assert plus["subscription_id"] == "sub_New1" and plus["amount"] == 329900 and plus["email"] == "buyer@example.com"
+    created_plans = [body for method, path, body in razorpay.requests if (method, path) == ("POST", "/plans")]
+    assert len(created_plans) == 1  # the Razorpay plan is created once, then reused
+    assert created_plans[0]["period"] == "yearly" and created_plans[0]["item"]["amount"] == 329900
+    subscriptions = [body for method, path, body in razorpay.requests if (method, path) == ("POST", "/subscriptions")]
+    assert subscriptions[0]["plan_id"] == "plan_1" and subscriptions[0]["total_count"] == 10 and subscriptions[0]["notes"]["plan"] == "plus"
+    assert again["subscription_id"] == "sub_New1"
+    assert guest.status_code == 403
+    assert config == {"enabled": True, "test_mode": True, "provider": "razorpay"}
 
 
-def test_live_stripe_keys_are_refused_unless_allowed() -> None:
+def test_live_razorpay_keys_are_refused_unless_allowed() -> None:
     from app.billing import Billing
 
-    live = LIMIT_SETTINGS.model_copy(update={"stripe_secret_key": SecretStr("sk_live_abc")})
-    assert Billing(live, None).enabled is False
-    assert Billing(live.model_copy(update={"stripe_allow_live": True}), None).enabled is True
+    live = LIMIT_SETTINGS.model_copy(update={"razorpay_key_id": "rzp_live_abc"})
+    assert Billing(live, None).enabled is False and Billing(live, None).test_mode is False
+    assert Billing(live.model_copy(update={"razorpay_allow_live": True}), None).enabled is True
 
 
-def _signed(payload: dict, secret: str = "whsec_test", at: int | None = None) -> tuple[bytes, str]:
-    import hashlib, hmac, json as _json, time as _time
-
-    body = _json.dumps(payload).encode()
-    t = at or int(_time.time())
-    return body, f"t={t},v1={hmac.new(secret.encode(), f'{t}.'.encode() + body, hashlib.sha256).hexdigest()}"
-
-
-def test_webhook_verifies_signature_and_grants_looks(monkeypatch) -> None:
-    stripe = FakeStripe()
-    stripe.install(monkeypatch)
-    fake = FakeSupabase()
-    paid_pass = {"type": "checkout.session.completed", "data": {"object": {
-        "id": "cs_test_pass", "mode": "payment", "payment_status": "paid", "client_reference_id": AUTH_USER_ID,
-        "created": 1_790_000_000, "metadata": {"user_id": AUTH_USER_ID, "plan": "pass"}}}}
-    yearly_invoice = {"type": "invoice.paid", "data": {"object": {
-        "id": "in_test_year", "status": "paid",
-        "parent": {"subscription_details": {"subscription": "sub_1", "metadata": {"user_id": AUTH_USER_ID, "plan": "pro", "billing": "yearly"}}},
-        "lines": {"data": [{"period": {"start": 1_790_000_000, "end": 1_821_536_000}}]}}}}
-    try:
-        with _limit_client(fake, monkeypatch) as client:
-            body, sig = _signed(paid_pass)
-            forged = client.post("/v1/billing/webhook", content=body, headers={"Stripe-Signature": sig.replace("v1=", "v1=0")})
-            stale_body, stale_sig = _signed(paid_pass, at=1_000)
-            stale = client.post("/v1/billing/webhook", content=stale_body, headers={"Stripe-Signature": stale_sig})
-            ok = client.post("/v1/billing/webhook", content=body, headers={"Stripe-Signature": sig})
-            body, sig = _signed(yearly_invoice)
-            year = client.post("/v1/billing/webhook", content=body, headers={"Stripe-Signature": sig})
-    finally:
-        app.dependency_overrides.clear()
-    assert forged.status_code == 400 and stale.status_code == 400
-    assert ok.status_code == 200 and year.status_code == 200
-    inserts = [call for call in fake.calls if call[:2] == ("POST", "look_grants")]
-    pass_row = inserts[0][2][0]
-    assert pass_row["kind"] == "pass" and pass_row["looks"] == 10 and pass_row["stripe_ref"] == "cs_test_pass"
-    assert pass_row["expires_at"].startswith("2026-09-28")  # 7 days after purchase
-    months = inserts[1][2]
-    assert len(months) == 12 and {row["looks"] for row in months} == {60}
-    assert months[0]["stripe_ref"] == "in_test_year:0" and months[1]["starts_at"] == months[0]["expires_at"]
-
-
-def test_return_page_confirms_only_the_buyers_own_payment(monkeypatch) -> None:
-    stripe = FakeStripe({
-        "/checkout/sessions/cs_test_mine": {"id": "cs_test_mine", "mode": "subscription", "status": "complete", "payment_status": "paid",
-                                            "client_reference_id": AUTH_USER_ID, "invoice": "in_first", "metadata": {"user_id": AUTH_USER_ID, "plan": "plus", "billing": "monthly"}},
-        "/checkout/sessions/cs_test_other": {"id": "cs_test_other", "mode": "payment", "status": "complete", "payment_status": "paid",
-                                             "client_reference_id": "00000000-0000-4000-8000-000000000000"},
-        "/invoices/in_first": {"id": "in_first", "status": "paid", "subscription": "sub_1", "lines": {"data": [{"period": {"start": 1_790_000_000, "end": 1_792_592_000}}]}},
+def test_pass_payment_is_verified_captured_and_granted_once(monkeypatch) -> None:
+    razorpay = FakeRazorpay({
+        "/orders/order_Mine": {"id": "order_Mine", "amount": 12900, "created_at": 1_790_000_000, "notes": {"user_id": AUTH_USER_ID, "plan": "pass"}},
+        "/payments/pay_Mine": {"id": "pay_Mine", "order_id": "order_Mine", "amount": 12900, "currency": "INR", "status": "authorized"},
+        "/orders/order_Other": {"id": "order_Other", "amount": 12900, "notes": {"user_id": "00000000-0000-4000-8000-000000000000", "plan": "pass"}},
     })
-    stripe.install(monkeypatch)
-    fake = FakeSupabase(rows=[{"kind": "plus", "looks": 25, "used": 0, "expires_at": "2026-10-24T00:00:00+00:00"}])
+    razorpay.install(monkeypatch)
+    fake = FakeSupabase(rows=[{"kind": "pass", "looks": 10, "used": 0, "expires_at": "2026-09-28T00:00:00+00:00"}])
     try:
         with _limit_client(fake, monkeypatch) as client:
             headers = {"Authorization": f"Bearer {_email_token('buyer@example.com')}"}
-            mine = client.post("/v1/billing/confirm", json={"session_id": "cs_test_mine"}, headers=headers)
-            other = client.post("/v1/billing/confirm", json={"session_id": "cs_test_other"}, headers=headers)
+            good = {"razorpay_payment_id": "pay_Mine", "razorpay_order_id": "order_Mine", "razorpay_signature": _rzp_signature("order_Mine|pay_Mine")}
+            forged = client.post("/v1/billing/confirm", json={**good, "razorpay_signature": _rzp_signature("order_Mine|pay_Mine", "wrong")}, headers=headers)
+            ok = client.post("/v1/billing/confirm", json=good, headers=headers)
+            other = client.post("/v1/billing/confirm", json={"razorpay_payment_id": "pay_Mine", "razorpay_order_id": "order_Other",
+                                                             "razorpay_signature": _rzp_signature("order_Other|pay_Mine")}, headers=headers)
     finally:
         app.dependency_overrides.clear()
-    assert mine.status_code == 200 and mine.json()["plan"] == "plus" and mine.json()["remaining"] == 25
-    grant = next(call for call in fake.calls if call[:2] == ("POST", "look_grants"))[2][0]
-    assert grant["stripe_ref"] == "in_first" and grant["kind"] == "plus" and grant["looks"] == 25
+    assert forged.status_code == 400
+    assert ok.status_code == 200 and ok.json()["plan"] == "pass" and ok.json()["remaining"] == 10
+    assert ("POST", "/payments/pay_Mine/capture", {"amount": 12900, "currency": "INR"}) in razorpay.requests
+    grant = next(call for call in fake.calls if call[:2] == ("POST", "look_grants"))
+    assert grant[2][0]["payment_ref"] == "order_Mine" and grant[2][0]["looks"] == 10 and grant[2][0]["expires_at"].startswith("2026-09-28")
     assert other.status_code == 403
+
+
+def test_subscription_confirm_and_webhook_grant_plan_looks(monkeypatch) -> None:
+    subscription = {"id": "sub_Mine", "status": "active", "current_start": 1_790_000_000, "current_end": 1_792_592_000,
+                    "notes": {"user_id": AUTH_USER_ID, "plan": "plus", "billing": "monthly"}}
+    razorpay = FakeRazorpay({"/subscriptions/sub_Mine": subscription,
+                             "/subscriptions/sub_Waiting": {**subscription, "id": "sub_Waiting", "status": "authenticated", "current_start": None}})
+    razorpay.install(monkeypatch)
+    fake = FakeSupabase(rows=[{"kind": "plus", "looks": 25, "used": 0, "expires_at": "2026-10-24T00:00:00+00:00"}])
+    yearly = {"event": "subscription.charged", "payload": {"subscription": {"entity": {
+        **subscription, "id": "sub_Year", "current_end": 1_821_536_000, "notes": {"user_id": AUTH_USER_ID, "plan": "pro", "billing": "yearly"}}}}}
+    order_paid = {"event": "order.paid", "payload": {"order": {"entity": {"id": "order_Hook", "created_at": 1_790_000_000, "notes": {"user_id": AUTH_USER_ID, "plan": "pass"}}}}}
+    try:
+        with _limit_client(fake, monkeypatch) as client:
+            headers = {"Authorization": f"Bearer {_email_token('buyer@example.com')}"}
+            ok = client.post("/v1/billing/confirm", headers=headers, json={
+                "razorpay_payment_id": "pay_Sub", "razorpay_subscription_id": "sub_Mine", "razorpay_signature": _rzp_signature("pay_Sub|sub_Mine")})
+            waiting = client.post("/v1/billing/confirm", headers=headers, json={
+                "razorpay_payment_id": "pay_Sub", "razorpay_subscription_id": "sub_Waiting", "razorpay_signature": _rzp_signature("pay_Sub|sub_Waiting")})
+            body = json.dumps(yearly).encode()
+            forged = client.post("/v1/billing/webhook", content=body, headers={"X-Razorpay-Signature": _rzp_signature(body.decode(), "not-the-secret")})
+            year = client.post("/v1/billing/webhook", content=body, headers={"X-Razorpay-Signature": _rzp_signature(body.decode(), "hook-secret")})
+            body = json.dumps(order_paid).encode()
+            paid = client.post("/v1/billing/webhook", content=body, headers={"X-Razorpay-Signature": _rzp_signature(body.decode(), "hook-secret")})
+    finally:
+        app.dependency_overrides.clear()
+    assert ok.status_code == 200 and ok.json()["plan"] == "plus"
+    assert waiting.status_code == 409
+    assert forged.status_code == 400 and year.status_code == 200 and paid.status_code == 200
+    inserts = [call[2] for call in fake.calls if call[:2] == ("POST", "look_grants")]
+    assert inserts[0][0]["payment_ref"] == "sub_Mine:1790000000" and inserts[0][0]["looks"] == 25
+    months = inserts[1]
+    assert len(months) == 12 and {row["looks"] for row in months} == {60} and months[1]["starts_at"] == months[0]["expires_at"]
+    assert inserts[2][0]["payment_ref"] == "order_Hook" and inserts[2][0]["kind"] == "pass"
 
 
 def test_invalid_try_on_form_never_keeps_a_look(monkeypatch) -> None:

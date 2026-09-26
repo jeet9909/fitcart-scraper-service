@@ -101,16 +101,28 @@ class CheckoutRequest(BaseModel):
 
 
 class CheckoutResponse(BaseModel):
-    url: str
+    """Options for the Razorpay checkout window: an order_id for a pass or a subscription_id for a plan."""
+    key_id: str
+    name: str
+    description: str
+    email: str
+    currency: str
+    amount: int
+    order_id: str | None = None
+    subscription_id: str | None = None
 
 
 class CheckoutConfirmRequest(BaseModel):
-    session_id: str = Field(min_length=8, max_length=255, pattern=r"^cs_[A-Za-z0-9_]+$")
+    razorpay_payment_id: str = Field(pattern=r"^pay_[A-Za-z0-9]+$", max_length=64)
+    razorpay_signature: str = Field(pattern=r"^[a-f0-9]{64}$")
+    razorpay_order_id: str | None = Field(default=None, pattern=r"^order_[A-Za-z0-9]+$", max_length=64)
+    razorpay_subscription_id: str | None = Field(default=None, pattern=r"^sub_[A-Za-z0-9]+$", max_length=64)
 
 
 class BillingConfigResponse(BaseModel):
     enabled: bool
     test_mode: bool
+    provider: Literal["razorpay"] = "razorpay"
 
 
 class GalleryItem(BaseModel):

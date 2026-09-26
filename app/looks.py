@@ -1,4 +1,4 @@
-"""Server-side look allowance: free looks every month for signed-in accounts, plus looks bought through Stripe."""
+"""Server-side look allowance: free looks every month for signed-in accounts, plus looks bought through Razorpay."""
 
 import logging
 from dataclasses import dataclass
@@ -108,11 +108,11 @@ class LookLedger:
         return LookBalanceResponse(**base, enforced=True, remaining=sum(g.remaining for g in grants), plan=plan, grants=grants)
 
     async def add_grants(self, rows: list[dict]) -> None:
-        """Insert purchased grants; stripe_ref is unique, so webhook retries and the return-page check never double up."""
+        """Insert purchased grants; payment_ref is unique, so webhook retries and the checkout callback never double up."""
         if not rows:
             return
         response = await self.service.rest(
-            "POST", "look_grants", params={"on_conflict": "stripe_ref"}, json_body=rows, prefer="resolution=ignore-duplicates,return=minimal"
+            "POST", "look_grants", params={"on_conflict": "payment_ref"}, json_body=rows, prefer="resolution=ignore-duplicates,return=minimal"
         )
         if response.status_code >= 400:
             log.error("Could not save look grants: %s %s", response.status_code, response.text[:300])

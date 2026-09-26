@@ -108,18 +108,16 @@ Wardrobes belong to the anonymous session stored in the browser, like the galler
 
 ### Pose
 
-Both try-on endpoints take `pose`: `standard` (default) re-poses the person upright and front-facing, arms at the sides, head to toe on a plain studio background so the whole outfit is visible, while keeping their face, hair, glasses, skin tone and body shape. `keep` keeps the pose and background from the uploaded photo. The prompt lives in `tryon_prompt` in `app/tryon.py`.
+Both try-on endpoints take `pose`: `standard` (default) re-poses the person upright and front-facing, arms at the sides, head to toe on a plain studio background so the whole outfit is visible, while keeping their face, hair, glasses, skin tone and body proportions. `keep` keeps the pose and background from the uploaded photo. The prompt lives in `tryon_prompt` in `app/tryon.py`; identity and body rules come first because the model weighs early instructions most.
 
-## Email sign-in and unlimited looks
+### Face lock
 
-People can sign in with a one-time email code (the account button in the top bar). Supabase Auth sends the email and checks the code, and the API turns it into a FitCart session tied to that account, so their wardrobe and looks follow them across devices. Endpoints: `POST /v1/auth/email/code`, `POST /v1/auth/email/verify`, `POST /v1/auth/email/link` (for the link in the email), and `GET /v1/me`.
+Image models redraw the face on every generation, so a re-posed photo can drift from the real person. With `FACE_LOCK_ENABLED` (default on) the API:
 
-Emails listed in `UNLIMITED_EMAILS` (comma-separated, any case) get unlimited looks. The list is checked on every `GET /v1/me`, so removing an email revokes it on that person's next visit.
+1. sends a close-up of the person's face, cut from the full-resolution upload, as an extra identity reference image;
+2. after generation, finds the face in the upload and in the result (OpenCV YuNet, MIT licensed, `app/assets/face_detection_yunet_2023mar.onnx`), aligns the real face onto the generated head, matches brightness to the new lighting while keeping the real skin tone, and blends it in with a soft oval mask. Hair, ears, neck and body stay as generated.
 
-Supabase setup:
-- **Authentication → Emails → Magic Link** template: add the code, e.g. `<p>Your FitCart code: <strong>{{ .Token }}</strong></p>`, so people can type it in the app.
-- **Authentication → URL Configuration**: set Site URL to the GitHub Pages address so the link in the email opens FitCart.
-- The built-in Supabase mailer sends only a few emails per hour; add custom SMTP before a wider launch.
+Face lock skips itself (and keeps the model's image) when either face is missing or too small, or when the head is turned or tilted differently in the two images. It adds about 0.1 s per try-on. Body proportions cannot be pixel-locked while the pose changes; the prompt anchors them, and `keep` pose is the option that preserves the body exactly.
 
 ## Looks and payments
 

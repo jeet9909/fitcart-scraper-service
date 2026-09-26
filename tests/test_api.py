@@ -857,8 +857,12 @@ def test_standard_pose_prompt_reposes_and_keeps_identity() -> None:
     assert "ignore the pose in image 1" in standard
     assert "arms relaxed and straight down at the sides" in standard
     assert "from the top of the head to the soles of the shoes" in standard
-    assert "same person as image 1" in standard and "glasses" in standard
+    assert "same real person" in standard and "glasses" in standard and "shoulder width" in standard
+    assert standard.index("Keep their exact face") < standard.index("Pose:")  # identity is stated before anything else
     assert "image 2 is the top (CK BLACK Calvin Klein Jeans Men Shirt); image 3 is the footwear (White sneakers)" in standard
+    with_face = tryon_prompt(pieces, face_reference=True)
+    assert "Image 2 is a close-up of their face" in with_face
+    assert "image 3 is the top (CK BLACK Calvin Klein Jeans Men Shirt); image 4 is the footwear (White sneakers)" in with_face
     keep = tryon_prompt(pieces, "keep")
     assert "Keep the person's own pose" in keep and "ignore the pose" not in keep
 
@@ -1297,3 +1301,70 @@ def test_invalid_try_on_form_never_keeps_a_look(monkeypatch) -> None:
         app.dependency_overrides.clear()
     assert response.status_code == 422
     assert fake.paths() in ([], ["rpc/consume_look", "rpc/refund_look"])
+
+def _sample(name: str) -> bytes:
+    with open(f"app/static/img/{name}.jpg", "rb") as handle:
+        return handle.read()
+
+
+def test_face_lock_restores_the_real_face_and_leaves_the_body() -> None:
+    import cv2
+    import numpy as np
+    from app.identity import lock_face
+
+    person, generated = _sample("before"), _sample("after")
+    locked = lock_face(person, generated, "image/png")
+    assert locked is not None
+    before = cv2.imdecode(np.frombuffer(generated, np.uint8), cv2.IMREAD_COLOR)
+    after = cv2.imdecode(np.frombuffer(locked, np.uint8), cv2.IMREAD_COLOR)
+    assert after.shape == before.shape
+    changed = np.abs(after.astype(int) - before.astype(int)).max(axis=2) > 8
+    ys, xs = np.nonzero(changed)
+    assert changed.sum() > 500  # the face was replaced
+    assert ys.max() < before.shape[0] * 0.2  # ...and nothing below the head changed
+    assert xs.min() > before.shape[1] * 0.3 and xs.max() < before.shape[1] * 0.7
+
+
+def test_face_lock_skips_when_it_is_not_safe() -> None:
+    import cv2
+    import numpy as np
+    from app.identity import face_reference, lock_face
+
+    person = _sample("before")
+    assert lock_face(person, _sample("shirt")) is None  # no face in the result
+    image = cv2.imdecode(np.frombuffer(person, np.uint8), cv2.IMREAD_COLOR)
+    h, w = image.shape[:2]
+    tilted = cv2.warpAffine(image, cv2.getRotationMatrix2D((w / 2, h * 0.1), 40, 1.0), (w, h))
+    assert lock_face(person, cv2.imencode(".jpg", tilted)[1].tobytes()) is None  # head angle too different
+    assert lock_face(b"not an image", person) is None
+    crop = face_reference(person)
+    assert crop is not None and crop[1] == "image/jpeg"
+    assert face_reference(_sample("shirt")) is None
+
+
+def test_generation_sends_face_close_up_and_locks_the_face(monkeypatch) -> None:
+    import asyncio as _asyncio
+    import base64
+    import json as _json
+    import httpx as _httpx
+
+    sent: list[dict] = []
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        sent.append(_json.loads(request.content))
+        return _httpx.Response(200, json={"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/jpeg", "data": base64.b64encode(_sample("after")).decode()}}]}}]})
+
+    real_client = _httpx.AsyncClient
+    monkeypatch.setattr("app.tryon.httpx.AsyncClient", lambda **kwargs: real_client(transport=_httpx.MockTransport(handler), **kwargs))
+    service = TryOnService(Settings(gemini_api_key="test"))
+    person = (_sample("before"), "image/jpeg", "jpg")
+    product = (_sample("shirt"), "image/jpeg", "jpg")
+    result = _asyncio.run(service.generate(person, product, "top", "Linen shirt"))
+    parts = sent[0]["contents"][0]["parts"]
+    assert len(parts) == 4 and "Image 2 is a close-up of their face" in parts[0]["text"]  # prompt, person, face, product
+    assert result[0] != _sample("after")  # the real face was blended in
+
+    off = TryOnService(Settings(gemini_api_key="test", face_lock_enabled=False))
+    sent.clear()
+    plain = _asyncio.run(off.generate(person, product, "top", "Linen shirt"))
+    assert len(sent[0]["contents"][0]["parts"]) == 3 and plain[0] == _sample("after")

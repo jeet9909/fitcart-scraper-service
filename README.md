@@ -119,9 +119,11 @@ Image models redraw the face on every generation, so a re-posed photo can drift 
 
 Face lock skips itself (and keeps the model's image) when either face is missing or too small, when the head is turned or tilted differently in the two images, or when the aligned landmarks still differ by more than 6% of the eye distance (the model drew a differently shaped face, so a blend would look pasted on). It adds about 0.1 s per try-on. Body proportions cannot be pixel-locked while the pose changes; the prompt anchors them, and `keep` pose is the option that preserves the body exactly.
 
-### Sending the code email ourselves
+### Our own sign-in codes
 
-Supabase only lets you edit its email templates with custom SMTP, and its mailer hides delivery errors. Set `BREVO_API_KEY` and `EMAIL_SENDER` (a sender verified in Brevo, e.g. your Gmail address) and the API sends the code itself: Supabase's admin `generate_link` creates the code without emailing it, the API emails it through Brevo's HTTPS API, and Supabase still verifies it. Render's free plan blocks outbound SMTP ports, so use Brevo there; `SMTP_HOST`/`SMTP_PORT`/`SMTP_USERNAME`/`SMTP_PASSWORD` work on hosts that allow SMTP. Delivery errors are shown in the app and logged. The same email address can ask for a new code every 45 seconds.
+With a mail account configured, codes never go through Supabase Auth's mailer. The API creates a 6-digit code, keeps only an HMAC of it (keyed by `ANONYMOUS_TOKEN_SECRET`) in memory for 10 minutes, allows 5 tries per code, one new code every 45 seconds and 6 per hour per email, and after a correct code finds or creates the account through Supabase's admin API (which sends nothing).
+
+The code email goes out from your own Gmail through the **Gmail API** over HTTPS, because Render's free plan blocks SMTP ports. Set `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` (scope `https://www.googleapis.com/auth/gmail.send`) and `EMAIL_SENDER` (that Gmail address). Keep the Google OAuth app **In production**, not Testing, or Google expires the refresh token after 7 days. On hosts that allow SMTP, `SMTP_HOST`/`SMTP_PORT`/`SMTP_USERNAME`/`SMTP_PASSWORD` work instead. Pending codes live in memory, so a restart means asking for a new code.
 
 ## Looks and payments
 

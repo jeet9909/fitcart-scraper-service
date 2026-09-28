@@ -833,7 +833,7 @@ function renderSignin(){
     </form>`;
   } else {
     body = `<form id="signinForm" novalidate style="display:grid;gap:14px">
-      <p class="small muted">We sent a code to <strong>${esc(s.email)}</strong>. It can take a minute, so check spam too. You can also tap the link in the email on this device.</p>
+      <p class="small muted">We sent a 6-digit code to <strong>${esc(s.email)}</strong>. It expires in 10 minutes. Can't see it? Check spam or promotions.</p>
       <label class="field" for="signinCode">Code<input class="input code-input" id="signinCode" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="••••••" required></label>
       <p class="error" role="alert">${esc(s.error)}</p>
       <button class="btn brand wide" type="submit" ${s.busy ? 'disabled' : ''}>${s.busy ? '<span class="spin" aria-hidden="true"></span> Checking…' : 'Sign in'}</button>

@@ -115,9 +115,9 @@ Both try-on endpoints take `pose`: `standard` (default) re-poses the person upri
 Image models redraw the face on every generation, so a re-posed photo can drift from the real person. With `FACE_LOCK_ENABLED` (default on) the API:
 
 1. sends a close-up of the person's face, cut from the full-resolution upload, as an extra identity reference image;
-2. after generation, finds the face in the upload and in the result (OpenCV YuNet, MIT licensed, `app/assets/face_detection_yunet_2023mar.onnx`), aligns the real face onto the generated head, matches brightness to the new lighting while keeping the real skin tone, and blends it in with a soft oval mask. Hair, ears, neck and body stay as generated.
+2. after generation, finds the face in the upload and in the result (OpenCV YuNet, MIT licensed, `app/assets/face_detection_yunet_2023mar.onnx`), aligns the real face onto the generated head, and Poisson-blends (`cv2.seamlessClone`) only the inner face: eyebrows, eyes, nose and mouth. The face outline, jaw, beard edge, ears, hair, glasses arms and background stay as generated, so nothing from the photo's surroundings leaks in and light and colour at the seam come from the generated image.
 
-Face lock skips itself (and keeps the model's image) when either face is missing or too small, or when the head is turned or tilted differently in the two images. It adds about 0.1 s per try-on. Body proportions cannot be pixel-locked while the pose changes; the prompt anchors them, and `keep` pose is the option that preserves the body exactly.
+Face lock skips itself (and keeps the model's image) when either face is missing or too small, when the head is turned or tilted differently in the two images, or when the aligned landmarks still differ by more than 6% of the eye distance (the model drew a differently shaped face, so a blend would look pasted on). It adds about 0.1 s per try-on. Body proportions cannot be pixel-locked while the pose changes; the prompt anchors them, and `keep` pose is the option that preserves the body exactly.
 
 ## Production notes
 

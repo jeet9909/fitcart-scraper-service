@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     max_concurrent_scrapes: int = Field(default=5, ge=1, le=100)
     allowed_product_hosts_csv: str = Field(default="", validation_alias="ALLOWED_PRODUCT_HOSTS")
     unlimited_emails_csv: str = Field(default="", validation_alias="UNLIMITED_EMAILS")
+    auth_redirect_url: str = Field(default="https://jeet9909.github.io/fitcart-scraper-service/", description="Where the link in sign-in emails opens")
     look_limits_enabled: bool = True
     free_looks_per_month: int = Field(default=3, ge=0, le=100)
     razorpay_key_id: str = ""

@@ -931,9 +931,11 @@ def test_email_code_sign_in_gives_listed_emails_unlimited_looks(monkeypatch) -> 
     import httpx as _httpx
 
     seen: list[tuple[str, dict]] = []
+    redirects: list[str | None] = []
 
     def handler(request: _httpx.Request) -> _httpx.Response:
         seen.append((request.url.path, _json.loads(request.content or b"{}")))
+        redirects.append(request.url.params.get("redirect_to"))
         assert request.headers["apikey"] == "service-key"
         if request.url.path == "/auth/v1/otp":
             return _httpx.Response(200, json={})
@@ -961,6 +963,7 @@ def test_email_code_sign_in_gives_listed_emails_unlimited_looks(monkeypatch) -> 
         app.dependency_overrides.clear()
 
     assert seen[0] == ("/auth/v1/otp", {"email": "parthpatil2233@gmail.com", "create_user": True})
+    assert redirects[0] == "https://jeet9909.github.io/fitcart-scraper-service/"
     assert wrong.status_code == 401
     assert signed_in.status_code == 200
     assert signed_in.json()["unlimited"] is True and signed_in.json()["anonymous_user_id"] == AUTH_USER_ID

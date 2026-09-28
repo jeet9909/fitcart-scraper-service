@@ -1325,6 +1325,56 @@ def test_face_lock_restores_the_real_face_and_leaves_the_body() -> None:
     assert xs.min() > before.shape[1] * 0.3 and xs.max() < before.shape[1] * 0.7
 
 
+def test_face_lock_never_pulls_in_the_photo_background_or_jaw() -> None:
+    """A real photo with a wider jaw, darker room and different framing must only change the inner face."""
+    import cv2
+    import numpy as np
+    from app.identity import _detect, lock_face
+
+    generated = cv2.imread("app/static/img/after.jpg")
+    h, w = generated.shape[:2]
+    face = _detect(generated)
+    cx, cy = face.box[0] + face.box[2] / 2, face.box[1] + face.box[3] * 0.75
+    ys, xs = np.mgrid[0:h, 0:w].astype(np.float32)
+    bump = np.exp(-(((xs - cx) / (face.box[2] * 0.9)) ** 2 + ((ys - cy) / (face.box[3] * 0.6)) ** 2))
+    real = cv2.remap(generated, xs - (xs - cx) * 0.10 * bump, ys, cv2.INTER_LINEAR)  # wider jaw
+    wall = np.all(np.abs(real.astype(int) - real[20, 20].astype(int)) < 18, axis=2)
+    real[wall] = (real[wall] * 0.55).astype(np.uint8)  # darker room
+    real = cv2.warpAffine(real, cv2.getRotationMatrix2D((cx, cy), 4, 0.9), (w, h), borderMode=cv2.BORDER_REPLICATE)
+
+    locked = lock_face(cv2.imencode(".png", real)[1].tobytes(), cv2.imencode(".png", generated)[1].tobytes())
+    assert locked is not None
+    out = cv2.imdecode(np.frombuffer(locked, np.uint8), cv2.IMREAD_COLOR)
+    changed = np.abs(out.astype(int) - generated.astype(int)).max(axis=2) > 12
+    rows, cols = np.nonzero(changed)
+    assert changed.sum() > 300
+    # Changes stay inside the inner face (eyebrow ends to under the lower lip): not the cheek
+    # outline, jaw, beard edge, ears or the wall.
+    right_eye, left_eye, _, right_mouth, left_mouth = face.points
+    ed = face.eye_distance
+    assert cols.min() > right_eye[0] - ed * 0.5 and cols.max() < left_eye[0] + ed * 0.5
+    assert rows.max() < max(right_mouth[1], left_mouth[1]) + ed * 0.4
+    wall_after = out[20:120, 20:120].astype(int).mean()
+    assert abs(wall_after - generated[20:120, 20:120].astype(int).mean()) < 1
+
+
+def test_face_lock_shape_check_uses_all_landmarks() -> None:
+    import numpy as np
+    from app.identity import MAX_ALIGNMENT_ERROR, Face, _alignment_error, _similarity
+
+    real = np.array([[100, 100], [160, 100], [130, 135], [108, 165], [152, 165]], np.float64)
+    angle = np.radians(5)
+    turn = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
+    same_face = real @ (1.4 * turn).T + [40, -12]  # moved, rotated and scaled, same shape
+    long_chin = same_face.copy()
+    long_chin[3:] += [0, 30]  # mouth drawn much lower: a different face shape
+    face = lambda points: Face(box=np.zeros(4), points=points, score=1.0)
+    for drawn, fits in ((same_face, True), (long_chin, False)):
+        matrix = _similarity(real, drawn)
+        assert (_alignment_error(face(real), face(drawn), matrix) <= MAX_ALIGNMENT_ERROR) is fits
+    assert np.allclose(_similarity(real, same_face)[:, :2], 1.4 * turn)
+
+
 def test_face_lock_skips_when_it_is_not_safe() -> None:
     import cv2
     import numpy as np

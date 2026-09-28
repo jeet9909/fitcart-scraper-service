@@ -1421,3 +1421,134 @@ def test_generation_sends_face_close_up_and_locks_the_face(monkeypatch) -> None:
     sent.clear()
     plain = _asyncio.run(off.generate(person, product, "top", "Linen shirt"))
     assert len(sent[0]["contents"][0]["parts"]) == 3 and plain[0] == _sample("after")
+
+
+SMTP_SETTINGS = AUTH_SETTINGS.model_copy(update={
+    "smtp_host": "smtp.gmail.com", "smtp_port": 465, "smtp_username": "sender@gmail.com",
+    "smtp_password": SecretStr("abcd efgh ijkl mnop"), "email_sender_name": "FitCart",
+})
+
+
+class FakeSMTP:
+    sent: list = []
+    logins: list = []
+    fail_login = False
+
+    def __init__(self, host, port, timeout=None, context=None):
+        self.host, self.port = host, port
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def login(self, user, password):
+        import smtplib
+
+        if FakeSMTP.fail_login:
+            raise smtplib.SMTPAuthenticationError(535, b"5.7.8 Username and Password not accepted")
+        FakeSMTP.logins.append((self.host, self.port, user, password))
+
+    def send_message(self, message):
+        FakeSMTP.sent.append(message)
+
+
+def test_code_email_is_sent_by_the_api_when_smtp_is_set(monkeypatch) -> None:
+    import json as _json
+    import httpx as _httpx
+    from app import email_auth
+
+    calls: list[tuple[str, dict]] = []
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        body = _json.loads(request.content or b"{}")
+        calls.append((request.url.path, body))
+        if request.url.path == "/auth/v1/admin/generate_link":
+            return _httpx.Response(200, json={"id": AUTH_USER_ID, "email": body["email"], "email_otp": "482913", "verification_type": "signup"})
+        if request.url.path == "/auth/v1/verify":
+            if body["type"] == "email":
+                return _httpx.Response(403, json={"msg": "Token has expired or is invalid"})
+            return _httpx.Response(200, json={"access_token": "x", "user": {"id": AUTH_USER_ID, "email": body["email"]}})
+        return _httpx.Response(404)
+
+    _mock_supabase_auth(monkeypatch, handler)
+    monkeypatch.setattr("app.email_auth.smtplib.SMTP_SSL", FakeSMTP)
+    FakeSMTP.sent, FakeSMTP.logins, FakeSMTP.fail_login = [], [], False
+    email_auth._last_sent.clear()
+    app.dependency_overrides[get_runtime_settings] = lambda: SMTP_SETTINGS
+    try:
+        with TestClient(app) as client:
+            sent = client.post("/v1/auth/email/code", json={"email": "New.Person@Gmail.com"})
+            again = client.post("/v1/auth/email/code", json={"email": "new.person@gmail.com"})
+            verified = client.post("/v1/auth/email/verify", json={"email": "new.person@gmail.com", "code": "482913"})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert sent.status_code == 204
+    assert calls[0] == ("/auth/v1/admin/generate_link", {"type": "magiclink", "email": "new.person@gmail.com"})
+    assert "/auth/v1/otp" not in [path for path, _ in calls]  # Supabase's own mailer is not used
+    assert FakeSMTP.logins == [("smtp.gmail.com", 465, "sender@gmail.com", "abcdefghijklmnop")]  # spaces removed
+    message = FakeSMTP.sent[0]
+    assert message["To"] == "new.person@gmail.com" and message["From"] == "FitCart <sender@gmail.com>"
+    assert message["Subject"] == "482913 is your FitCart code"
+    assert "482913" in message.get_body(("plain",)).get_content() and "482913" in message.get_body(("html",)).get_content()
+    assert again.status_code == 429 and len(FakeSMTP.sent) == 1
+    assert verified.status_code == 200 and verified.json()["email"] == "new.person@gmail.com"
+    assert [body["type"] for path, body in calls if path == "/auth/v1/verify"] == ["email", "magiclink"]
+
+
+def test_smtp_login_failure_is_explained(monkeypatch) -> None:
+    import httpx as _httpx
+    from app import email_auth
+
+    _mock_supabase_auth(monkeypatch, lambda request: _httpx.Response(200, json={"email_otp": "111222"}))
+    monkeypatch.setattr("app.email_auth.smtplib.SMTP_SSL", FakeSMTP)
+    FakeSMTP.sent, FakeSMTP.fail_login = [], True
+    email_auth._last_sent.clear()
+    app.dependency_overrides[get_runtime_settings] = lambda: SMTP_SETTINGS
+    try:
+        with TestClient(app) as client:
+            response = client.post("/v1/auth/email/code", json={"email": "someone@example.com"})
+            retry = client.post("/v1/auth/email/code", json={"email": "someone@example.com"})
+    finally:
+        app.dependency_overrides.clear()
+        FakeSMTP.fail_login = False
+    assert response.status_code == 502 and "app password" in response.json()["detail"]
+    assert retry.status_code == 502  # a failed send does not start the resend wait
+
+
+
+def test_code_email_goes_through_brevo_when_its_key_is_set(monkeypatch) -> None:
+    import json as _json
+    import httpx as _httpx
+    from app import email_auth
+
+    brevo_calls: list[tuple[dict, dict]] = []
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        if request.url.host == "api.brevo.com":
+            brevo_calls.append((dict(request.headers), _json.loads(request.content)))
+            if _json.loads(request.content)["to"][0]["email"] == "blocked@example.com":
+                return _httpx.Response(400, json={"code": "invalid_parameter", "message": "Sender is not valid"})
+            return _httpx.Response(201, json={"messageId": "<abc@smtp-relay.mailin.fr>"})
+        return _httpx.Response(200, json={"id": AUTH_USER_ID, "email_otp": "730142"})
+
+    _mock_supabase_auth(monkeypatch, handler)
+    monkeypatch.setattr("app.email_auth.smtplib.SMTP_SSL", FakeSMTP)
+    FakeSMTP.sent = []
+    email_auth._last_sent.clear()
+    settings = SMTP_SETTINGS.model_copy(update={"brevo_api_key": SecretStr("xkeysib-test"), "email_sender": "gajerajeet88@gmail.com"})
+    app.dependency_overrides[get_runtime_settings] = lambda: settings
+    try:
+        with TestClient(app) as client:
+            ok = client.post("/v1/auth/email/code", json={"email": "buyer@example.com"})
+            bad = client.post("/v1/auth/email/code", json={"email": "blocked@example.com"})
+    finally:
+        app.dependency_overrides.clear()
+    assert ok.status_code == 204 and FakeSMTP.sent == []  # Brevo wins over SMTP (Render's free plan blocks SMTP ports)
+    headers, body = brevo_calls[0]
+    assert headers["api-key"] == "xkeysib-test"
+    assert body["sender"] == {"name": "FitCart", "email": "gajerajeet88@gmail.com"} and body["to"] == [{"email": "buyer@example.com"}]
+    assert body["subject"] == "730142 is your FitCart code" and "730142" in body["htmlContent"] and "730142" in body["textContent"]
+    assert bad.status_code == 502 and "Sender is not valid" in bad.json()["detail"]

@@ -119,6 +119,10 @@ Image models redraw the face on every generation, so a re-posed photo can drift 
 
 Face lock skips itself (and keeps the model's image) when either face is missing or too small, when the head is turned or tilted differently in the two images, or when the aligned landmarks still differ by more than 6% of the eye distance (the model drew a differently shaped face, so a blend would look pasted on). It adds about 0.1 s per try-on. Body proportions cannot be pixel-locked while the pose changes; the prompt anchors them, and `keep` pose is the option that preserves the body exactly.
 
+### Sending the code email ourselves
+
+Supabase only lets you edit its email templates with custom SMTP, and its mailer hides delivery errors. Set `BREVO_API_KEY` and `EMAIL_SENDER` (a sender verified in Brevo, e.g. your Gmail address) and the API sends the code itself: Supabase's admin `generate_link` creates the code without emailing it, the API emails it through Brevo's HTTPS API, and Supabase still verifies it. Render's free plan blocks outbound SMTP ports, so use Brevo there; `SMTP_HOST`/`SMTP_PORT`/`SMTP_USERNAME`/`SMTP_PASSWORD` work on hosts that allow SMTP. Delivery errors are shown in the app and logged. The same email address can ask for a new code every 45 seconds.
+
 ## Looks and payments
 
 Try-ons need an email sign-in. Each signed-in account gets `FREE_LOOKS_PER_MONTH` looks (default 3) every calendar month, India time; passes and plans bought through Razorpay add more. The API spends a look before generating and gives it back if the try-on fails. Counting happens in Postgres (`consume_look` in `supabase/schema.sql`), so parallel requests cannot overspend. Emails in `UNLIMITED_EMAILS` skip the count. Until the schema has been run, limits are not enforced and the API logs a warning.

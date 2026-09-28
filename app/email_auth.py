@@ -26,12 +26,14 @@ def _auth_config(settings: Settings) -> tuple[str, str]:
     return url, key
 
 
-async def _auth_request(settings: Settings, method: str, path: str, *, json: dict | None = None, user_token: str | None = None) -> httpx.Response:
+async def _auth_request(
+    settings: Settings, method: str, path: str, *, json: dict | None = None, user_token: str | None = None, params: dict | None = None
+) -> httpx.Response:
     url, key = _auth_config(settings)
     headers = {"apikey": key, "Authorization": f"Bearer {user_token or key}"}
     try:
         async with httpx.AsyncClient(timeout=SUPABASE_AUTH_TIMEOUT_SECONDS) as client:
-            return await client.request(method, f"{url}/auth/v1{path}", json=json, headers=headers)
+            return await client.request(method, f"{url}/auth/v1{path}", json=json, headers=headers, params=params)
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Could not reach the sign-in service. Please try again.") from exc
 
@@ -45,7 +47,11 @@ def _error_text(response: httpx.Response) -> str:
 
 
 async def send_code(email: str, settings: Settings) -> None:
-    response = await _auth_request(settings, "POST", "/otp", json={"email": email, "create_user": True})
+    # redirect_to sends the link in the email back to the site instead of Supabase's Site URL
+    # (localhost:3000 until it is changed). Supabase only honours it for URLs in its Redirect URLs list.
+    response = await _auth_request(
+        settings, "POST", "/otp", json={"email": email, "create_user": True}, params={"redirect_to": settings.auth_redirect_url}
+    )
     if response.status_code == 429:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many sign-in emails. Please wait a minute and try again.")
     if response.status_code >= 400:

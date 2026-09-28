@@ -78,6 +78,53 @@ class AccountResponse(BaseModel):
     unlimited: bool = False
 
 
+class LookGrantSummary(BaseModel):
+    kind: Literal["free", "pass", "plus", "pro", "bonus"]
+    remaining: int
+    total: int
+    expires_at: datetime
+
+
+class LookBalanceResponse(BaseModel):
+    signed_in: bool
+    unlimited: bool = False
+    enforced: bool = True
+    remaining: int | None = Field(default=None, description="Looks left right now; null when unlimited or not signed in")
+    plan: Literal["free", "pass", "plus", "pro"] = "free"
+    free_looks_per_month: int
+    grants: list[LookGrantSummary] = Field(default_factory=list)
+
+
+class CheckoutRequest(BaseModel):
+    plan: Literal["pass", "plus", "pro"]
+    billing: Literal["monthly", "yearly"] = "monthly"
+
+
+class CheckoutResponse(BaseModel):
+    """Options for the Razorpay checkout window: an order_id for a pass or a subscription_id for a plan."""
+    key_id: str
+    name: str
+    description: str
+    email: str
+    currency: str
+    amount: int
+    order_id: str | None = None
+    subscription_id: str | None = None
+
+
+class CheckoutConfirmRequest(BaseModel):
+    razorpay_payment_id: str = Field(pattern=r"^pay_[A-Za-z0-9]+$", max_length=64)
+    razorpay_signature: str = Field(pattern=r"^[a-f0-9]{64}$")
+    razorpay_order_id: str | None = Field(default=None, pattern=r"^order_[A-Za-z0-9]+$", max_length=64)
+    razorpay_subscription_id: str | None = Field(default=None, pattern=r"^sub_[A-Za-z0-9]+$", max_length=64)
+
+
+class BillingConfigResponse(BaseModel):
+    enabled: bool
+    test_mode: bool
+    provider: Literal["razorpay"] = "razorpay"
+
+
 class GalleryItem(BaseModel):
     id: str
     anonymous_user_id: str

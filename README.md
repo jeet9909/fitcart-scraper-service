@@ -119,6 +119,23 @@ Image models redraw the face on every generation, so a re-posed photo can drift 
 
 Face lock skips itself (and keeps the model's image) when either face is missing or too small, when the head is turned or tilted differently in the two images, or when the aligned landmarks still differ by more than 6% of the eye distance (the model drew a differently shaped face, so a blend would look pasted on). It adds about 0.1 s per try-on. Body proportions cannot be pixel-locked while the pose changes; the prompt anchors them, and `keep` pose is the option that preserves the body exactly.
 
+## Looks and payments
+
+Try-ons need an email sign-in. Each signed-in account gets `FREE_LOOKS_PER_MONTH` looks (default 3) every calendar month, India time; passes and plans bought through Razorpay add more. The API spends a look before generating and gives it back if the try-on fails. Counting happens in Postgres (`consume_look` in `supabase/schema.sql`), so parallel requests cannot overspend. Emails in `UNLIMITED_EMAILS` skip the count. Until the schema has been run, limits are not enforced and the API logs a warning.
+
+| Plan | Price (incl. GST) | Looks |
+|---|---|---|
+| Occasion Pass | ₹129 once | 10, valid 7 days |
+| Plus | ₹349/month or ₹3,299/year | 25 every month |
+| Pro | ₹799/month or ₹7,499/year | 60 every month |
+
+Endpoints: `GET /v1/looks/balance`, `GET /v1/billing/config`, `POST /v1/billing/checkout` (creates a Razorpay order for the pass or a subscription for a plan), `POST /v1/billing/confirm` (verifies the checkout signature and adds looks), and `POST /v1/billing/webhook` (Razorpay).
+
+Razorpay setup (test mode):
+1. Razorpay Dashboard in **Test Mode** → Account & Settings → API Keys → Generate Test Key. Put them in Render as `RAZORPAY_KEY_ID` (`rzp_test_...`) and `RAZORPAY_KEY_SECRET`. Plans for Plus and Pro are created in Razorpay automatically on the first purchase.
+2. Account & Settings → Webhooks → Add New Webhook: URL `https://<your-render-service>.onrender.com/v1/billing/webhook`, a secret of your choice, and the events `order.paid` and `subscription.charged`. Put the same secret in Render as `RAZORPAY_WEBHOOK_SECRET`. Renewals need the webhook; first purchases also work through the checkout callback.
+3. Test payments: UPI ID `success@razorpay`, or Netbanking → any bank → Success.
+
 ## Production notes
 
 - Set `ALLOWED_PRODUCT_HOSTS=amazon.in,flipkart.com,myntra.com,ajio.com,meesho.com` to restrict accepted URLs.

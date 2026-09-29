@@ -940,7 +940,9 @@ async function confirmPayment(response, attempt = 0){
     state.balance = await api('/v1/billing/confirm', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(response)});
     const plan = PLANS.find(p => p.key === state.balance.plan);
     go(state.look.length ? 'builder' : 'home');
-    toast(`Payment received · ${plan && plan.key !== 'free' ? plan.name + ' is active · ' : ''}${state.balance.remaining} looks ready`, {action:{label:'Try it on', run:() => go(state.look.length ? 'builder' : 'home')}});
+    // Unlimited accounts (and servers without limits) report no count, so do not print "null looks".
+    const count = state.balance.unlimited ? 'your account already has unlimited looks' : state.balance.remaining == null ? 'your looks are added' : `${state.balance.remaining} looks ready`;
+    toast(`Payment received · ${plan && plan.key !== 'free' ? plan.name + ' is active · ' : ''}${count}`, {action:{label:'Try it on', run:() => go(state.look.length ? 'builder' : 'home')}});
   } catch (err){
     if (err.status === 409 && attempt < 5){
       if (!attempt) toast('Payment received. Adding your looks…', {kind:'info'});

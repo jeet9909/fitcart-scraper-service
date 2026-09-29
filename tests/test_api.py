@@ -1435,34 +1435,51 @@ def test_face_lock_skips_when_it_is_not_safe() -> None:
     assert face_reference(_sample("shirt")) is None
 
 
-def test_generation_sends_face_close_up_and_locks_the_face(monkeypatch) -> None:
+def test_standard_pose_refines_the_face_and_keep_pose_locks_it(monkeypatch) -> None:
     import asyncio as _asyncio
     import base64
     import json as _json
     import httpx as _httpx
+    from app.tryon import FACE_REFINE_PROMPT
 
     sent: list[dict] = []
+    replies: list = []
 
     def handler(request: _httpx.Request) -> _httpx.Response:
         sent.append(_json.loads(request.content))
-        return _httpx.Response(200, json={"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/jpeg", "data": base64.b64encode(_sample("after")).decode()}}]}}]})
+        reply = replies.pop(0) if replies else "after"
+        if reply == "fail":
+            return _httpx.Response(500, json={"error": {"message": "internal"}})
+        return _httpx.Response(200, json={"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/jpeg", "data": base64.b64encode(_sample(reply)).decode()}}]}}]})
 
     real_client = _httpx.AsyncClient
     monkeypatch.setattr("app.tryon.httpx.AsyncClient", lambda **kwargs: real_client(transport=_httpx.MockTransport(handler), **kwargs))
+    async def no_sleep(_seconds: float) -> None: return None
+    monkeypatch.setattr("app.tryon.asyncio.sleep", no_sleep)
     service = TryOnService(Settings(gemini_api_key="test"))
     person = (_sample("before"), "image/jpeg", "jpg")
     product = (_sample("shirt"), "image/jpeg", "jpg")
-    result = _asyncio.run(service.generate(person, product, "top", "Linen shirt"))
-    parts = sent[0]["contents"][0]["parts"]
-    assert len(parts) == 4 and "Image 2 is a close-up of their face" in parts[0]["text"]  # prompt, person, face, product
-    assert result[0] != _sample("after")  # the real face was blended in
+
+    replies[:] = ["after", "tee"]  # first pass, then the refined image
+    standard = _asyncio.run(service.generate(person, product, "top", "Linen shirt"))
+    first, second = sent[0]["contents"][0]["parts"], sent[1]["contents"][0]["parts"]
+    assert len(first) == 4 and "Image 2 is a close-up of their face" in first[0]["text"]  # prompt, person, face, product
+    assert second[0]["text"] == FACE_REFINE_PROMPT and len(second) == 4  # edit prompt, first result, face, full photo
+    assert base64.b64decode(second[1]["inline_data"]["data"]) == _sample("after")
+    assert standard[0] == _sample("tee")  # the refined image, not pixel-pasted
+
+    sent.clear(); replies[:] = ["after", "fail", "fail"]
+    fallback = _asyncio.run(service.generate(person, product, "top", "Linen shirt"))
+    assert fallback[0] == _sample("after")  # a failed refinement keeps the first image
+
+    sent.clear(); replies[:] = ["after"]
+    keep = _asyncio.run(service.generate(person, product, "top", "Linen shirt", pose="keep"))
+    assert len(sent) == 1 and keep[0] != _sample("after")  # one call, real features blended in
 
     off = TryOnService(Settings(gemini_api_key="test", face_lock_enabled=False))
-    sent.clear()
+    sent.clear(); replies[:] = ["after"]
     plain = _asyncio.run(off.generate(person, product, "top", "Linen shirt"))
-    assert len(sent[0]["contents"][0]["parts"]) == 3 and plain[0] == _sample("after")
-
-
+    assert len(sent) == 1 and len(sent[0]["contents"][0]["parts"]) == 3 and plain[0] == _sample("after")
 
 
 def test_unlimited_is_rechecked_so_removing_an_email_revokes_it(monkeypatch) -> None:

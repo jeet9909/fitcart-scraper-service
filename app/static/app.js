@@ -473,7 +473,7 @@ function personHtml(){
 function generateHint(){
   if (!state.look.length) return 'Add at least one piece to your look.';
   if (!state.photo) return 'Upload your photo to continue.';
-  return state.consent ? 'About 15 to 30 seconds.' : 'Tick the permission box to continue.';
+  return state.consent ? 'About 20 to 45 seconds.' : 'Tick the permission box to continue.';
 }
 function tryPanel(){
   const stores = lookStores();
@@ -552,7 +552,7 @@ function generating(){
       <ol class="stages" id="genStages">${g.steps.map((s, i) => `<li data-i="${i}"><span class="dot"></span><span>${esc(s.label)}</span></li>`).join('')}</ol>
       <div class="gen-foot">
         <div class="progress" role="progressbar" aria-label="Try-on progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="genBar"><i></i></div>
-        <div class="gen-foot-row"><span class="small muted">Usually 15–30 seconds</span><button class="btn ghost small" data-act="cancel">Cancel</button></div>
+        <div class="gen-foot-row"><span class="small muted">Usually 20–45 seconds</span><button class="btn ghost small" data-act="cancel">Cancel</button></div>
       </div>
     </div>
   </section>`;

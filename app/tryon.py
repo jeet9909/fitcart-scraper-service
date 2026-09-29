@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 import base64
 import io
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -16,6 +17,8 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from app import identity
 from app.config import Settings
 from app.models import GalleryItem, GeminiUsageResponse, GeminiUsageSinceStart
+
+log = logging.getLogger(__name__)
 
 
 ALLOWED_IMAGE_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
@@ -146,6 +149,16 @@ def tryon_prompt(pieces: list["OutfitPiece"], pose: str = "standard", face_refer
     )
 
 
+FACE_REFINE_PROMPT = (
+    "Edit image 1. Images 2 and 3 show the real person: image 2 is a close-up of their face, image 3 is their own photo. "
+    "Change only the head so it is exactly this real person: the same face shape and width, cheeks, jawline and chin, "
+    "beard and moustache shape, eyes, eyebrows, nose, lips, skin tone and texture, glasses, ears, hairline and hairstyle, "
+    "and the same head size relative to the shoulders as in image 3. Do not slim, smooth, beautify or idealise the face. "
+    "Keep everything else in image 1 exactly as it is: the pose, body, clothes, hands, background, lighting, camera framing and image size. "
+    "Photorealistic, one person, no text."
+)
+
+
 @dataclass
 class GeminiUsage:
     """Usage counted by this process. Resets when the server restarts."""
@@ -216,7 +229,31 @@ class TryOnService:
                 "imageConfig": {"aspectRatio": "3:4"},
             },
         }
-        body = await self._call_gemini(self.settings.gemini_image_model, payload, "Gemini image generation failed")
+        result = await self._generated_image(payload, "Gemini image generation failed")
+        if pose == "standard" and face and self.settings.face_refine_enabled:
+            # Re-posing redraws the whole person, so faces drift (often slimmer, a smaller head). A second,
+            # edit-only pass fixes just the head against the real references; everything else stays.
+            try:
+                refine = {
+                    "contents": [{"role": "user", "parts": [
+                        {"text": FACE_REFINE_PROMPT},
+                        self._inline_part(result), self._inline_part((face[0], face[1], "jpg")), self._inline_part(person),
+                    ]}],
+                    "generationConfig": {"responseModalities": ["TEXT", "IMAGE"], "imageConfig": {"aspectRatio": "3:4"}},
+                }
+                result = await self._generated_image(refine, "Gemini face refinement failed")
+                log.info("Face refinement applied")
+            except TryOnError as exc:
+                log.warning("Face refinement skipped, keeping the first image: %s", exc)
+        elif pose == "keep" and self.settings.face_lock_enabled:
+            # In the person's own pose the head barely moves, so pasting their real features is safe.
+            locked = await asyncio.to_thread(identity.lock_face, person[0], result[0], result[1])
+            if locked:
+                result = (locked, result[1], result[2])
+        return result
+
+    async def _generated_image(self, payload: dict[str, Any], failure: str) -> tuple[bytes, str, str]:
+        body = await self._call_gemini(self.settings.gemini_image_model, payload, failure)
         image = self._find_image(body)
         if not image:
             self.usage.failed += 1
@@ -227,12 +264,7 @@ class TryOnService:
             data = base64.b64decode(image["data"], validate=True)
         except (KeyError, ValueError) as exc:
             raise TryOnError("Gemini returned an invalid image") from exc
-        result = validate_image(data, image.get("mime_type") or image.get("mimeType") or "image/png", 20_000_000)
-        if self.settings.face_lock_enabled:
-            locked = await asyncio.to_thread(identity.lock_face, person[0], result[0], result[1])
-            if locked:
-                result = (locked, result[1], result[2])
-        return result
+        return validate_image(data, image.get("mime_type") or image.get("mimeType") or "image/png", 20_000_000)
 
     async def generate_json(self, parts: list[dict[str, Any]], schema: dict[str, Any]) -> Any:
         """Ask the Gemini text model for JSON that matches ``schema``."""

@@ -932,6 +932,10 @@ async function checkout(plan){
     if (opts.order_id) persist(PENDING_ORDER_KEY, {id:opts.order_id, at:Date.now()});
     rzp.on('payment.failed', e => toast(e?.error?.description || 'The payment failed. Please try again.', {kind:'error'}));
     rzp.open();
+    // The button only waits for the window to open. On phones the success callback can be lost
+    // (bank page or UPI app), which used to leave "Opening checkout…" spinning forever.
+    done();
+    if (opts.order_id) watchPendingOrder(() => { paid = true; try { rzp.close(); } catch {} });
   } catch (err){
     done();
     if (err.code === 'sign_in_required'){ setAccount(null); state.pending = {plan}; openSignin('buy'); }
@@ -941,20 +945,45 @@ async function checkout(plan){
 const PENDING_ORDER_KEY = 'fitcart-pending-order';
 function clearPendingOrder(){ try { localStorage.removeItem(PENDING_ORDER_KEY); } catch {} }
 // A pass paid for but not confirmed (window closed early, callback lost, network error) is added here.
-async function syncPendingOrder(fromDismiss = false){
-  const pending = readStore(PENDING_ORDER_KEY, null);
-  if (!pending?.id || !state.account) { if (fromDismiss) toast('Payment cancelled. You were not charged.', {kind:'info'}); return; }
-  if (Date.now() - (pending.at || 0) > 2 * 864e5){ clearPendingOrder(); return; }
-  try {
-    state.balance = await api('/v1/billing/sync', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({order_id:pending.id})});
-    clearPendingOrder();
-    paymentDone();
-  } catch (err){
-    if (err.status === 403 || err.status === 404) clearPendingOrder();
-    if (fromDismiss) toast('Payment cancelled. You were not charged.', {kind:'info'});
-  }
+let syncing = null;
+function syncPendingOrder(fromDismiss = false){
+  syncing ??= (async () => {
+    const pending = readStore(PENDING_ORDER_KEY, null);
+    if (!pending?.id || !state.account) return false;
+    if (Date.now() - (pending.at || 0) > 2 * 864e5){ clearPendingOrder(); return false; }
+    try {
+      state.balance = await api('/v1/billing/sync', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({order_id:pending.id})});
+      clearPendingOrder();
+      paymentDone();
+      return true;
+    } catch (err){
+      if (err.status === 403 || err.status === 404) clearPendingOrder();
+      return false;
+    }
+  })().finally(() => { syncing = null; });
+  return syncing.then(added => {
+    if (!added && fromDismiss) toast('Payment cancelled. You were not charged.', {kind:'info'});
+    return added;
+  });
 }
+// While a pass order is open, keep asking the server whether it was paid, so the looks arrive
+// even when Razorpay never calls back. Stops once added, cleared, or after about 3 minutes.
+let pendingWatch = null;
+function watchPendingOrder(onPaid){
+  clearInterval(pendingWatch);
+  let tries = 0;
+  pendingWatch = setInterval(async () => {
+    if (++tries > 45 || !readStore(PENDING_ORDER_KEY, null)){ clearInterval(pendingWatch); return; }
+    if (document.hidden) return;
+    if (await syncPendingOrder()){ clearInterval(pendingWatch); onPaid?.(); }
+  }, 4000);
+}
+// Coming back from a UPI app or bank page: check straight away.
+document.addEventListener('visibilitychange', () => { if (!document.hidden && readStore(PENDING_ORDER_KEY, null)) syncPendingOrder(); });
+let lastPaymentDone = 0;
 function paymentDone(){
+  if (Date.now() - lastPaymentDone < 5000) return;  // the callback and the background check can both land
+  lastPaymentDone = Date.now();
   const plan = PLANS.find(p => p.key === state.balance.plan);
   go(state.look.length ? 'builder' : 'home');
   // Unlimited accounts (and servers without limits) report no count, so do not print "null looks".
@@ -965,6 +994,7 @@ async function confirmPayment(response, attempt = 0){
   try {
     state.balance = await api('/v1/billing/confirm', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(response)});
     if (response.razorpay_order_id) clearPendingOrder();
+    clearInterval(pendingWatch);
     paymentDone();
     return;
   } catch (err){

@@ -61,7 +61,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="FitCart Product and Virtual Try-On API",
+    title="Mydripcheck Product and Virtual Try-On API",
     version="0.4.0",
     description="Scrape product details and create private Gemini virtual try-on images.",
     lifespan=lifespan,

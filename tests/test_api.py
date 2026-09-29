@@ -60,7 +60,7 @@ def test_storefront_serves_approved_ui() -> None:
     with TestClient(app) as client:
         response = client.get("/")
     assert response.status_code == 200
-    assert "FitCart" in response.text
+    assert "Mydripcheck" in response.text
     assert "static/config.js" in response.text
     assert "static/app.js" in response.text
 

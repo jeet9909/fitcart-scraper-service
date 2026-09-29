@@ -957,7 +957,8 @@ function syncPendingOrder(fromDismiss = false){
       paymentDone();
       return true;
     } catch (err){
-      if (err.status === 403 || err.status === 404) clearPendingOrder();
+      // 403: another account's order. A plain "Not Found" 404 means the API is older than this page, so keep it and retry later.
+      if (err.status === 403 || (err.status === 404 && err.message !== 'Not Found')) clearPendingOrder();
       return false;
     }
   })().finally(() => { syncing = null; });

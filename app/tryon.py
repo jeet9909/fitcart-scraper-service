@@ -109,6 +109,15 @@ def _describe_pieces(pieces: list["OutfitPiece"], first: int = 2) -> str:
     )
 
 
+# Glasses drawn twice (one pair on top of another) were the most visible glitch in re-posed results.
+FACE_ACCESSORIES = (
+    "Keep every accessory on their face and head exactly as in their photo, and add none they do not wear: "
+    "glasses or sunglasses with the same frame shape, colour, thickness and lens tint, sitting on the nose and ears in the same place, "
+    "and earrings, nose pins, piercings, bindi, caps or headwear the same way. "
+    "Glasses appear as one single pair with clean, sharp frames: no double, overlapping, ghosted or broken frames or lenses. "
+)
+
+
 def tryon_prompt(pieces: list["OutfitPiece"], pose: str = "standard", face_reference: bool = False) -> str:
     """Instruction for the image model. Image 1 is the person, then an optional face close-up, then the products in order."""
     first_product = 3 if face_reference else 2
@@ -118,15 +127,16 @@ def tryon_prompt(pieces: list["OutfitPiece"], pose: str = "standard", face_refer
         "This is the same real person, not a model or a lookalike. "
         + ("Image 2 is a close-up of their face: treat it as the identity reference and reproduce that exact face. " if face_reference else "")
         + "Keep their exact face: eye shape and spacing, eyebrows, nose, lips, jawline, face width, skin texture, moles and marks, "
-        "hairstyle and hairline, facial hair, glasses if worn, skin tone and age. Do not beautify, smooth, slim or idealise anything. "
-        "Keep their real body: the same height, head size relative to the body, shoulder width, chest, waist, hips, arm and leg length and overall build. "
+        "hairstyle and hairline, facial hair, skin tone and age. Do not beautify, smooth, slim or idealise anything. "
+        + FACE_ACCESSORIES
+        + "Keep their real body: the same height, head size relative to the body, shoulder width, chest, waist, hips, arm and leg length and overall build. "
     )
     products = (
         f"Image 1 shows the person. The other images are the exact product references: {_describe_pieces(pieces, first_product)}. "
         "Product photos may show a model wearing other clothes or accessories; take only the listed product from each photo and ignore everything else. "
         f"Dress the person in {'this product' if len(pieces) == 1 else 'all of these products at the same time'}, replacing what they wear in the {areas} area. "
         "Reproduce each product exactly: same color, fabric texture, print, pattern, logo, collar, sleeves, length, fit and design details. "
-        "Do not add clothing, jewelry or accessories that were not provided. "
+        "Do not add clothing, jewelry or accessories that were not provided; the person's own glasses and face accessories stay as they are. "
     )
     quality = "Photorealistic, natural fabric folds and fit, anatomically correct hands with five fingers each. One single person, no text, no watermark, no collage, no borders."
     if pose == "keep":
@@ -151,9 +161,11 @@ def tryon_prompt(pieces: list["OutfitPiece"], pose: str = "standard", face_refer
 
 FACE_REFINE_PROMPT = (
     "Edit image 1. Images 2 and 3 show the real person: image 2 is a close-up of their face, image 3 is their own photo. "
-    "Change only the head so it is exactly this real person: the same face shape and width, cheeks, jawline and chin, "
-    "beard and moustache shape, eyes, eyebrows, nose, lips, skin tone and texture, glasses, ears, hairline and hairstyle, "
+    "Replace the whole head in image 1 so it is exactly this real person, copied from images 2 and 3: the same face shape and width, cheeks, jawline and chin, "
+    "beard and moustache shape, eyes, eyebrows, nose, lips, skin tone and texture, ears, hairline and hairstyle, "
     "and the same head size relative to the shoulders as in image 3. Do not slim, smooth, beautify or idealise the face. "
+    + FACE_ACCESSORIES
+    + "First remove any glasses or face accessories already drawn in image 1, then draw only the ones from images 2 and 3, once, in their real position. "
     "Keep everything else in image 1 exactly as it is: the pose, body, clothes, hands, background, lighting, camera framing and image size. "
     "Photorealistic, one person, no text."
 )

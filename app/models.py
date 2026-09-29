@@ -111,6 +111,10 @@ class CheckoutConfirmRequest(BaseModel):
     razorpay_subscription_id: str | None = Field(default=None, pattern=r"^sub_[A-Za-z0-9]+$", max_length=64)
 
 
+class OrderSyncRequest(BaseModel):
+    order_id: str = Field(pattern=r"^order_[A-Za-z0-9]+$", max_length=64)
+
+
 class BillingConfigResponse(BaseModel):
     enabled: bool
     test_mode: bool

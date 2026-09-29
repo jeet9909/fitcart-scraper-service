@@ -23,6 +23,7 @@ from app.models import (
     AnonymousSessionResponse,
     BillingConfigResponse,
     CheckoutConfirmRequest,
+    OrderSyncRequest,
     CheckoutRequest,
     CheckoutResponse,
     EmailSessionResponse,
@@ -241,6 +242,19 @@ async def confirm_checkout(
     )
     if not added:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Your payment is still processing. Your looks will appear in a minute.")
+    return await ledger.balance(claims)
+
+
+@app.post("/v1/billing/sync", response_model=LookBalanceResponse, tags=["looks and billing"])
+async def sync_order(
+    body: OrderSyncRequest,
+    claims: dict = Depends(require_email),
+    billing: Billing = Depends(get_billing),
+    ledger: LookLedger = Depends(get_ledger),
+) -> LookBalanceResponse:
+    """Add the looks for a pass order that was paid but not confirmed; asks Razorpay directly and is safe to repeat."""
+    if not await billing.sync_order(claims["sub"], body.order_id):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This order has not been paid yet.")
     return await ledger.balance(claims)
 
 

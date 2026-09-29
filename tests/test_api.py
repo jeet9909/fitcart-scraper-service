@@ -857,7 +857,7 @@ def test_standard_pose_prompt_reposes_and_keeps_identity() -> None:
     assert "ignore the pose in image 1" in standard
     assert "arms relaxed and straight down at the sides" in standard
     assert "from the top of the head to the soles of the shoes" in standard
-    assert "same real person" in standard and "glasses" in standard and "shoulder width" in standard
+    assert "same real person" in standard and "one single pair" in standard and "shoulder width" in standard
     assert standard.index("Keep their exact face") < standard.index("Pose:")  # identity is stated before anything else
     assert "image 2 is the top (CK BLACK Calvin Klein Jeans Men Shirt); image 3 is the footwear (White sneakers)" in standard
     with_face = tryon_prompt(pieces, face_reference=True)
@@ -1465,6 +1465,7 @@ def test_standard_pose_refines_the_face_and_keep_pose_locks_it(monkeypatch) -> N
     first, second = sent[0]["contents"][0]["parts"], sent[1]["contents"][0]["parts"]
     assert len(first) == 4 and "Image 2 is a close-up of their face" in first[0]["text"]  # prompt, person, face, product
     assert second[0]["text"] == FACE_REFINE_PROMPT and len(second) == 4  # edit prompt, first result, face, full photo
+    assert "one single pair" in FACE_REFINE_PROMPT and "remove any glasses" in FACE_REFINE_PROMPT
     assert base64.b64decode(second[1]["inline_data"]["data"]) == _sample("after")
     assert standard[0] == _sample("tee")  # the refined image, not pixel-pasted
 

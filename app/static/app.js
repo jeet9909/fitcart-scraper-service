@@ -812,7 +812,7 @@ function startAccountSession(payload){
   state.wardrobe = null; state.gallery = null; state.ideas = [];
 }
 function openSignin(reason = null){
-  state.signin = state.account ? {step:'account'} : {step:'email', email:'', busy:false, error:'', reason};
+  state.signin = state.account ? {step:'account'} : {step:'form', mode:'login', email:'', busy:false, error:'', reason};
   renderSignin(); openSheet($('#signinSheet'));
   setTimeout(() => $('#signinEmail')?.focus(), 80);
 }
@@ -823,53 +823,34 @@ function renderSignin(){
     body = `<div class="account-card"><span class="small muted">Signed in as</span><strong>${esc(a.email)}</strong>${a.unlimited ? `<span class="tag" style="justify-self:start">${icon('spark','s')} Unlimited looks</span>` : `<span class="small muted">${looksLeft() === null ? 'Checking your looks…' : looksLeft() === Infinity ? 'Looks available' : `${looksLeft()} ${looksLeft() === 1 ? 'look' : 'looks'} left`}</span>`}</div>
       <p class="small muted">Your wardrobe and looks are saved to this account, so they follow you to any device you sign in on.</p>
       <button class="btn ghost wide" data-act="sign-out">Sign out</button>`;
-  } else if (s.step === 'email'){
+  } else {
+    const signup = s.mode === 'signup';
     body = `<form id="signinForm" novalidate style="display:grid;gap:14px">
       ${s.reason === 'free' ? `<div class="notice">${icon('spark')}<span>Sign in to get <strong>${state.balance?.free_looks_per_month ?? 3} free looks every month</strong>. Your looks and wardrobe are saved to your account.</span></div>` : s.reason === 'buy' ? `<div class="notice">${icon('lock')}<span>Sign in first so your pass or plan is added to your account.</span></div>` : ''}
-      <p class="small muted">We'll email you a sign-in code. No password needed.</p>
+      <div class="seg" role="tablist" aria-label="Sign in or create an account"><button type="button" role="tab" aria-selected="${!signup}" data-act="signin-mode" data-mode="login">Log in</button><button type="button" role="tab" aria-selected="${signup}" data-act="signin-mode" data-mode="signup">Create account</button></div>
       <label class="field" for="signinEmail">Email<input class="input" id="signinEmail" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com" value="${esc(s.email)}" required></label>
+      <label class="field" for="signinPassword">Password<span class="pw-wrap"><input class="input" id="signinPassword" type="password" autocomplete="${signup ? 'new-password' : 'current-password'}" minlength="8" maxlength="72" placeholder="${signup ? 'At least 8 characters' : 'Your password'}" required><button type="button" class="pw-toggle" data-act="toggle-password" aria-label="Show password">Show</button></span></label>
       <p class="error" role="alert">${esc(s.error)}</p>
-      <button class="btn brand wide" type="submit" ${s.busy ? 'disabled' : ''}>${s.busy ? '<span class="spin" aria-hidden="true"></span> Sending…' : `${icon('mail','s')} Email me a code`}</button>
-    </form>`;
-  } else {
-    body = `<form id="signinForm" novalidate style="display:grid;gap:14px">
-      <p class="small muted">We sent a 6-digit code to <strong>${esc(s.email)}</strong>. It expires in 10 minutes. Can't see it? Check spam or promotions.</p>
-      <label class="field" for="signinCode">Code<input class="input code-input" id="signinCode" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="••••••" required></label>
-      <p class="error" role="alert">${esc(s.error)}</p>
-      <button class="btn brand wide" type="submit" ${s.busy ? 'disabled' : ''}>${s.busy ? '<span class="spin" aria-hidden="true"></span> Checking…' : 'Sign in'}</button>
-      <div style="display:flex;justify-content:space-between;gap:10px"><button class="link small" type="button" data-act="signin-back">Use another email</button><button class="link small" type="button" data-act="signin-resend">Send a new code</button></div>
+      <button class="btn brand wide" type="submit" ${s.busy ? 'disabled' : ''}>${s.busy ? `<span class="spin" aria-hidden="true"></span> ${signup ? 'Creating your account…' : 'Signing in…'}` : signup ? 'Create account' : 'Log in'}</button>
+      <p class="tiny muted" style="text-align:center">${signup ? 'Already have an account? Use Log in above.' : 'New to FitCart? Choose Create account above.'}</p>
     </form>`;
   }
-  $('#signinSheet').innerHTML = `<div class="grabber" aria-hidden="true"></div><div class="sheet-head"><h2 id="signinTitle">${s.step === 'account' ? 'Your account' : 'Sign in'}</h2><button class="iconbtn" data-act="close-sheet" aria-label="Close">${icon('x')}</button></div><div class="sheet-body">${body}</div>`;
+  $('#signinSheet').innerHTML = `<div class="grabber" aria-hidden="true"></div><div class="sheet-head"><h2 id="signinTitle">${s.step === 'account' ? 'Your account' : s.mode === 'signup' ? 'Create your account' : 'Log in'}</h2><button class="iconbtn" data-act="close-sheet" aria-label="Close">${icon('x')}</button></div><div class="sheet-body">${body}</div>`;
   const form = $('#signinForm');
-  if (form) form.onsubmit = e => {
-    e.preventDefault();
-    if (s.step === 'email') sendSigninCode($('#signinEmail').value);
-    else verifySigninCode($('#signinCode').value);
-  };
+  if (form) form.onsubmit = e => { e.preventDefault(); submitSignin($('#signinEmail').value, $('#signinPassword').value); };
 }
-async function sendSigninCode(raw, resend = false){
-  const email = String(raw || '').trim().toLowerCase();
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ state.signin = {reason:state.signin?.reason, step:'email', email, busy:false, error:'Enter a valid email address.'}; renderSignin(); $('#signinEmail')?.focus(); return; }
-  state.signin = {reason:state.signin?.reason, step: resend ? 'code' : 'email', email, busy:true, error:''}; renderSignin();
+async function submitSignin(rawEmail, password){
+  const s = state.signin, email = String(rawEmail || '').trim().toLowerCase(), signup = s.mode === 'signup';
+  const fail = (error, field = '#signinPassword') => { state.signin = {...s, email, busy:false, error}; renderSignin(); $(field)?.focus(); };
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail('Enter a valid email address.', '#signinEmail');
+  if (password.length < (signup ? 8 : 1)) return fail(signup ? 'Use at least 8 characters for your password.' : 'Enter your password.');
+  state.signin = {...s, email, busy:true, error:''}; renderSignin();
   try {
-    await api('/v1/auth/email/code', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email})}, false);
-    state.signin = {reason:state.signin?.reason, step:'code', email, busy:false, error:''}; renderSignin();
-    setTimeout(() => $('#signinCode')?.focus(), 60);
-    if (resend) toast('New code sent.');
-  } catch (err){
-    state.signin = {reason:state.signin?.reason, step: resend ? 'code' : 'email', email, busy:false, error:err.message}; renderSignin();
-  }
-}
-async function verifySigninCode(raw){
-  const s = state.signin, code = String(raw || '').replace(/\s+/g, '');
-  if (!/^\d{6,10}$/.test(code)){ state.signin = {...s, error:'Enter the code from the email.'}; renderSignin(); $('#signinCode')?.focus(); return; }
-  state.signin = {...s, busy:true, error:''}; renderSignin();
-  try {
-    const payload = await api('/v1/auth/email/verify', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email:s.email, code})}, false);
+    const payload = await api(signup ? '/v1/auth/signup' : '/v1/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email, password})}, false);
     signedIn(payload);
   } catch (err){
-    state.signin = {...s, busy:false, error:err.message}; renderSignin(); $('#signinCode')?.focus();
+    if (err.status === 409 && signup){ state.signin = {...s, mode:'login', email, busy:false, error:err.message}; renderSignin(); $('#signinPassword')?.focus(); return; }
+    fail(err.message);
   }
 }
 function signedIn(payload){
@@ -883,17 +864,6 @@ function signedIn(payload){
     if (pending?.plan) checkout(pending.plan);
     else if (pending?.generate && canGenerate()) startGeneration();
   });
-}
-async function signInFromLink(){
-  const params = new URLSearchParams(location.hash.slice(1));
-  const token = params.get('access_token');
-  const failed = params.get('error_description');
-  if (!token && !failed) return false;
-  history.replaceState(null, '', location.pathname + location.search);
-  if (failed){ toast(failed.replace(/\+/g, ' '), {kind:'error'}); return true; }
-  try { signedIn(await api('/v1/auth/email/link', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({access_token:token})}, false)); }
-  catch (err){ toast(err.message, {kind:'error'}); }
-  return true;
 }
 async function refreshAccount(){
   if (!state.account) return;
@@ -1257,8 +1227,8 @@ document.addEventListener('click', e => {
       break;
     }
     case 'account': openSignin(t.dataset.reason || null); break;
-    case 'signin-back': state.signin = {step:'email', email:state.signin?.email || '', busy:false, error:'', reason:state.signin?.reason}; renderSignin(); break;
-    case 'signin-resend': sendSigninCode(state.signin.email, true); break;
+    case 'signin-mode': state.signin = {...state.signin, mode:t.dataset.mode, email:$('#signinEmail')?.value.trim() || state.signin.email, error:''}; renderSignin(); $('#signinEmail')?.value ? $('#signinPassword')?.focus() : $('#signinEmail')?.focus(); break;
+    case 'toggle-password': { const input = $('#signinPassword'); const show = input.type === 'password'; input.type = show ? 'text' : 'password'; t.textContent = show ? 'Hide' : 'Show'; t.setAttribute('aria-label', show ? 'Hide password' : 'Show password'); break; }
     case 'sign-out': signOut(); break;
     case 'toast-action': { const act = toastAction; dismissToast(); act?.run(); break; }
   }
@@ -1312,8 +1282,5 @@ document.querySelectorAll('dialog.sheet').forEach(d => {
   fetch(apiUrl('/health'), {cache:'no-store'}).catch(() => {});
   render();
   fetch(apiUrl('/v1/billing/config')).then(r => r.ok ? r.json() : null).then(cfg => { state.billingCfg = cfg; if (state.view === 'pricing') render(); }).catch(() => {});
-  signInFromLink().then(async fromLink => {
-    if (!fromLink){ await session().catch(() => {}); refreshAccount(); }
-    if (!state.balance) loadBalance();
-  });
+  session().catch(() => {}).then(() => { refreshAccount(); if (!state.balance) loadBalance(); });
 })();

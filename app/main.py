@@ -24,10 +24,8 @@ from app.models import (
     CheckoutConfirmRequest,
     CheckoutRequest,
     CheckoutResponse,
-    EmailCodeRequest,
-    EmailLinkRequest,
     EmailSessionResponse,
-    EmailVerifyRequest,
+    PasswordSignInRequest,
     GalleryItem,
     GalleryResponse,
     GeminiUsageResponse,
@@ -186,22 +184,17 @@ async def create_session(settings: Settings = Depends(get_runtime_settings)) -> 
     return create_anonymous_session(settings)
 
 
-@app.post("/v1/auth/email/code", status_code=204, tags=["sessions"])
-async def send_email_code(body: EmailCodeRequest, settings: Settings = Depends(get_runtime_settings)) -> None:
-    """Email a one-time sign-in code (and link) through Supabase Auth."""
-    await email_auth.send_code(email_auth.normalize_email(body.email), settings)
-
-
-@app.post("/v1/auth/email/verify", response_model=EmailSessionResponse, tags=["sessions"])
-async def verify_email_code(body: EmailVerifyRequest, settings: Settings = Depends(get_runtime_settings)) -> EmailSessionResponse:
-    user_id, email = await email_auth.verify_code(email_auth.normalize_email(body.email), body.code, settings)
+@app.post("/v1/auth/signup", response_model=EmailSessionResponse, status_code=201, tags=["sessions"])
+async def sign_up(body: PasswordSignInRequest, settings: Settings = Depends(get_runtime_settings)) -> EmailSessionResponse:
+    """Create an account with email and password (no confirmation email) and sign in."""
+    email = email_auth.normalize_email(body.email)
+    user_id, email = await email_auth.sign_up(email, email_auth.check_password(body.password), settings)
     return create_email_session(user_id, email, settings)
 
 
-@app.post("/v1/auth/email/link", response_model=EmailSessionResponse, tags=["sessions"])
-async def exchange_email_link(body: EmailLinkRequest, settings: Settings = Depends(get_runtime_settings)) -> EmailSessionResponse:
-    """Turn the access token from a clicked sign-in link into a FitCart session."""
-    user_id, email = await email_auth.user_from_link_token(body.access_token, settings)
+@app.post("/v1/auth/login", response_model=EmailSessionResponse, tags=["sessions"])
+async def log_in(body: PasswordSignInRequest, settings: Settings = Depends(get_runtime_settings)) -> EmailSessionResponse:
+    user_id, email = await email_auth.log_in(email_auth.normalize_email(body.email), body.password, settings)
     return create_email_session(user_id, email, settings)
 
 
@@ -494,6 +487,14 @@ def require_admin(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="ADMIN_API_TOKEN is not configured")
     if not x_admin_token or not hmac.compare_digest(x_admin_token, expected):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin token")
+
+
+@app.post("/v1/admin/users/password", response_model=AccountResponse, tags=["system"], dependencies=[Depends(require_admin)])
+async def admin_set_password(body: PasswordSignInRequest, settings: Settings = Depends(get_runtime_settings)) -> AccountResponse:
+    """Set the password of an account (for example one created with an email code), or create the account."""
+    email = email_auth.normalize_email(body.email)
+    user_id, email = await email_auth.set_password(email, email_auth.check_password(body.password), settings)
+    return AccountResponse(user_id=user_id, email=email, unlimited=settings.is_unlimited(email))
 
 
 @app.get("/v1/admin/gemini/usage", response_model=GeminiUsageResponse, tags=["system"], dependencies=[Depends(require_admin)])

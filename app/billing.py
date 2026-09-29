@@ -31,9 +31,9 @@ class Plan:
 
 # Prices include GST, in paise. Plus and Pro looks refresh every month, also on yearly billing.
 PLANS: dict[str, Plan] = {
-    "pass": Plan(name="FitCart Occasion Pass", looks=10, once=12_900, days=7),
-    "plus": Plan(name="FitCart Plus", looks=25, monthly=34_900, yearly=329_900),
-    "pro": Plan(name="FitCart Pro", looks=60, monthly=79_900, yearly=749_900),
+    "pass": Plan(name="Mydripcheck Occasion Pass", looks=10, once=12_900, days=7),
+    "plus": Plan(name="Mydripcheck Plus", looks=25, monthly=34_900, yearly=329_900),
+    "pro": Plan(name="Mydripcheck Pro", looks=60, monthly=79_900, yearly=749_900),
 }
 # Razorpay needs an end for subscriptions: renew for up to 10 years.
 TOTAL_CYCLES = {"monthly": 120, "yearly": 10}
@@ -124,7 +124,7 @@ class Billing:
         """Create the Razorpay order (pass) or subscription (plans) that the checkout window pays."""
         plan = PLANS[plan_key]
         notes = {"user_id": user_id, "plan": plan_key, "billing": "once" if plan.once else billing}
-        options = {"key_id": self.key_id, "name": "FitCart", "email": email, "currency": "INR"}
+        options = {"key_id": self.key_id, "name": "Mydripcheck", "email": email, "currency": "INR"}
         if plan.once:
             order = await self._razorpay("POST", "/orders", {"amount": plan.once, "currency": "INR", "receipt": f"pass-{user_id[:8]}", "notes": notes})
             return {**options, "order_id": order["id"], "amount": plan.once, "description": f"{plan.name} · {plan.looks} looks for {plan.days} days"}

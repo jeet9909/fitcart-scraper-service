@@ -1,4 +1,4 @@
-/* FitCart web app: marketing page, look builder, try-on, wardrobe and looks, wired to the FitCart API. */
+/* Mydripcheck web app: marketing page, look builder, try-on, wardrobe and looks, wired to the Mydripcheck API. */
 'use strict';
 const IMG = {
   before:'static/img/before.jpg', after:'static/img/after.jpg',
@@ -88,7 +88,7 @@ async function api(path, opts = {}, auth = true){
     } else res = await fetch(apiUrl(path), opts);
   } catch (err){
     if (err.name === 'AbortError') throw err;
-    throw Error('Could not reach FitCart. Check your connection and try again.');
+    throw Error('Could not reach Mydripcheck. Check your connection and try again.');
   }
   const payload = res.status === 204 ? {} : await res.json().catch(() => ({}));
   if (!res.ok){ const e = Error(apiError(payload, `Something went wrong (${res.status}). Please try again.`)); e.status = res.status; e.code = payload?.detail?.code; throw e; }
@@ -250,7 +250,7 @@ function bindCompare(el){
 
 /* ---------- Plans (prices include 18% GST) ---------- */
 const PLANS = [
-  {key:'free', name:'Free', for:'Try FitCart on your next outfit.', monthly:0, yearly:0, looks:3, quality:'Standard', imports:15, stylist:1, wardrobe:25, cta:'Start free',
+  {key:'free', name:'Free', for:'Try Mydripcheck on your next outfit.', monthly:0, yearly:0, looks:3, quality:'Standard', imports:15, stylist:1, wardrobe:25, cta:'Start free',
    perks:['3 looks a month, any mix of stores','Standard quality','Wardrobe up to 25 items','1 AI stylist idea'], missing:['HD looks','Full Looks history']},
   {key:'pass', name:'Occasion Pass', for:'One-time pack for a wedding, festival or trip.', once:129, listOnce:149, days:7, looks:10, quality:'HD', imports:30, stylist:5, wardrobe:25, cta:'Buy the pass',
    perks:['10 HD looks for 7 days','No autopay, pay once with UPI','5 AI stylist ideas','Stacks on any plan'], missing:[]},
@@ -319,7 +319,7 @@ function landing(){
       <div class="lp-copy">
         <span class="pill-new glass"><b>New</b> Multi-store outfit try-on</span>
         <h1>Wear it<br><span class="grad-text">before you buy it.</span></h1>
-        <p class="lede">Paste links from Myntra, Amazon, AJIO and more. FitCart puts the whole outfit on you in seconds, then sends you to each store to buy.</p>
+        <p class="lede">Paste links from Myntra, Amazon, AJIO and more. Mydripcheck puts the whole outfit on you in seconds, then sends you to each store to buy.</p>
         <div class="lp-ctas"><button class="btn brand big" data-act="go" data-view="home">${icon('spark')} Try it free</button><button class="btn glassy big" data-act="scroll" data-target="lpPricing">See plans</button></div>
         <div class="lp-trust"><span>${icon('check','s')} 3 free looks a month</span><span>${icon('lock','s')} Your photo stays private</span><span>${icon('body','s')} Head-to-toe standard pose</span></div>
       </div>
@@ -340,7 +340,7 @@ function landing(){
     </ol>
   </section>
   <section class="lp-section">
-    <div class="lp-head reveal"><p class="eyebrow">Why FitCart</p><h2>A fitting room for <span class="grad-text">the whole internet.</span></h2></div>
+    <div class="lp-head reveal"><p class="eyebrow">Why Mydripcheck</p><h2>A fitting room for <span class="grad-text">the whole internet.</span></h2></div>
     <div class="bento">
       <article class="hero-card wide reveal"><span class="ico">${icon('bag')}</span><h3>One outfit, many stores</h3><p>Mix up to five pieces from different shops and see them together in one image, priced as one look.</p><div class="stack"><img src="${img('shirt')}" alt=""><img src="${img('jeans')}" alt=""><img src="${img('sneakers')}" alt=""></div></article>
       <article class="glass reveal"><span class="ico t">${icon('face')}</span><h3>Built to keep you, you</h3><p>The AI is told to keep your face, hair, skin tone and body exactly as they are. Automatic face checks are coming next.</p></article>
@@ -368,8 +368,8 @@ function landing(){
       <details class="glass reveal"><summary>Can I cancel anytime?</summary><p>Yes. Cancel from your account and you keep your plan until the end of the period. The Occasion Pass never renews.</p></details>
     </div>
   </section>
-  <section class="cta-band reveal"><h2>Your next outfit is three links away.</h2><p style="opacity:.92;max-width:44ch">Try FitCart free. No card needed. Sign in with your email for 3 free looks every month.</p><button class="btn big" data-act="go" data-view="home">${icon('spark')} Try it free</button></section>
-  <footer class="lp-foot"><span>© 2026 FitCart · See the look. Choose the fit.</span><span>Prices include GST · Made in India</span></footer>
+  <section class="cta-band reveal"><h2>Your next outfit is three links away.</h2><p style="opacity:.92;max-width:44ch">Try Mydripcheck free. No card needed. Sign in with your email for 3 free looks every month.</p><button class="btn big" data-act="go" data-view="home">${icon('spark')} Try it free</button></section>
+  <footer class="lp-foot"><span>© 2026 Mydripcheck · See the look. Choose the fit.</span><span>Prices include GST · Made in India</span></footer>
 </div>`;
 }
 
@@ -838,7 +838,7 @@ function renderSignin(){
       <label class="field" for="signinPassword">Password<span class="pw-wrap"><input class="input" id="signinPassword" type="password" autocomplete="${signup ? 'new-password' : 'current-password'}" minlength="8" maxlength="72" placeholder="${signup ? 'At least 8 characters' : 'Your password'}" required><button type="button" class="pw-toggle" data-act="toggle-password" aria-label="Show password">Show</button></span></label>
       <p class="error" role="alert">${esc(s.error)}</p>
       <button class="btn brand wide" type="submit" ${s.busy ? 'disabled' : ''}>${s.busy ? `<span class="spin" aria-hidden="true"></span> ${signup ? 'Creating your account…' : 'Signing in…'}` : signup ? 'Create account' : 'Log in'}</button>
-      <p class="tiny muted" style="text-align:center">${signup ? 'Already have an account? Use Log in above.' : 'New to FitCart? Choose Create account above.'}</p>
+      <p class="tiny muted" style="text-align:center">${signup ? 'Already have an account? Use Log in above.' : 'New to Mydripcheck? Choose Create account above.'}</p>
     </form>`;
   }
   $('#signinSheet').innerHTML = `<div class="grabber" aria-hidden="true"></div><div class="sheet-head"><h2 id="signinTitle">${s.step === 'account' ? 'Your account' : s.mode === 'signup' ? 'Create your account' : 'Log in'}</h2><button class="iconbtn" data-act="close-sheet" aria-label="Close">${icon('x')}</button></div><div class="sheet-body">${body}</div>`;
@@ -1145,7 +1145,7 @@ function removeAt(index){
 function loadLook(items){ state.look = items.map(p => ({item:{...p.item}, size:p.size})); }
 async function shareLook(){
   const look = state.current; if (!look) return;
-  if (navigator.share){ try { await navigator.share({title:'My FitCart look', text:'What do you think of this outfit?', url:look.img}); return; } catch (err){ if (err.name === 'AbortError') return; } }
+  if (navigator.share){ try { await navigator.share({title:'My Mydripcheck look', text:'What do you think of this outfit?', url:look.img}); return; } catch (err){ if (err.name === 'AbortError') return; } }
   try { await navigator.clipboard.writeText(look.img); toast('Private link copied. It works for about an hour.'); }
   catch { toast('Sharing is not available here. Use Open full image and share it from there.', {kind:'info'}); }
 }

@@ -31,32 +31,12 @@ class Settings(BaseSettings):
     max_concurrent_scrapes: int = Field(default=5, ge=1, le=100)
     allowed_product_hosts_csv: str = Field(default="", validation_alias="ALLOWED_PRODUCT_HOSTS")
     unlimited_emails_csv: str = Field(default="", validation_alias="UNLIMITED_EMAILS")
-    smtp_host: str = ""
-    smtp_port: int = 465
-    smtp_username: str = ""
-    smtp_password: SecretStr = SecretStr("")
-    gmail_client_id: str = ""
-    gmail_client_secret: SecretStr = SecretStr("")
-    gmail_refresh_token: SecretStr = SecretStr("")
-    email_sender: str = Field(default="", description="From address for sign-in codes: the Gmail address the refresh token belongs to")
-    email_sender_name: str = "FitCart"
-    auth_redirect_url: str = Field(default="https://jeet9909.github.io/fitcart-scraper-service/", description="Where the link in sign-in emails opens")
     look_limits_enabled: bool = True
     free_looks_per_month: int = Field(default=3, ge=0, le=100)
     razorpay_key_id: str = ""
     razorpay_key_secret: SecretStr = SecretStr("")
     razorpay_webhook_secret: SecretStr = SecretStr("")
     razorpay_allow_live: bool = Field(default=False, description="Refuse rzp_live_ keys unless this is set, so test mode cannot turn into real charges by accident")
-
-    @property
-    def code_email_sender(self) -> str | None:
-        """Who delivers our own sign-in codes: 'gmail' (Gmail API over HTTPS, works on Render's free plan),
-        'smtp', or None to let Supabase Auth send and check the code."""
-        if self.gmail_client_id and self.gmail_client_secret.get_secret_value() and self.gmail_refresh_token.get_secret_value() and self.email_sender:
-            return "gmail"
-        if self.smtp_host and self.smtp_username and self.smtp_password.get_secret_value():
-            return "smtp"
-        return None
 
     def is_unlimited(self, email: str | None) -> bool:
         """Signed-in emails listed in UNLIMITED_EMAILS get unlimited looks."""

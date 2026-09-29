@@ -119,11 +119,13 @@ Image models redraw the face on every generation, so a re-posed photo can drift 
 
 Face lock skips itself (and keeps the model's image) when either face is missing or too small, when the head is turned or tilted differently in the two images, or when the aligned landmarks still differ by more than 6% of the eye distance (the model drew a differently shaped face, so a blend would look pasted on). It adds about 0.1 s per try-on. Body proportions cannot be pixel-locked while the pose changes; the prompt anchors them, and `keep` pose is the option that preserves the body exactly.
 
-### Our own sign-in codes
+## Accounts and unlimited looks
 
-With a mail account configured, codes never go through Supabase Auth's mailer. The API creates a 6-digit code, keeps only an HMAC of it (keyed by `ANONYMOUS_TOKEN_SECRET`) in memory for 10 minutes, allows 5 tries per code, one new code every 45 seconds and 6 per hour per email, and after a correct code finds or creates the account through Supabase's admin API (which sends nothing).
+People create an account with **email and password** (the account button in the top bar: Log in / Create account). Accounts live in Supabase Auth: the API creates them through the admin API as already confirmed, so no email is sent, and checks passwords with Supabase's password sign-in; FitCart never stores passwords. Eight wrong passwords for one email lock it for 15 minutes. Endpoints: `POST /v1/auth/signup`, `POST /v1/auth/login`, `GET /v1/me`.
 
-The code email goes out from your own Gmail through the **Gmail API** over HTTPS, because Render's free plan blocks SMTP ports. Set `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` (scope `https://www.googleapis.com/auth/gmail.send`) and `EMAIL_SENDER` (that Gmail address). Keep the Google OAuth app **In production**, not Testing, or Google expires the refresh token after 7 days. On hosts that allow SMTP, `SMTP_HOST`/`SMTP_PORT`/`SMTP_USERNAME`/`SMTP_PASSWORD` work instead. Pending codes live in memory, so a restart means asking for a new code.
+Accounts made earlier with an email code have no password. Give them one with `POST /v1/admin/users/password` (header `X-Admin-Token: <ADMIN_API_TOKEN>`, body `{"email": ..., "password": ...}`), for example from `/docs`; it creates the account if it does not exist.
+
+Emails listed in `UNLIMITED_EMAILS` (comma-separated, any case) get unlimited looks. The list is checked on every `GET /v1/me`, so removing an email revokes it on that person's next visit. Because sign-up does not confirm the email address, create the accounts for unlimited emails yourself (with the admin endpoint) before anyone else can register them.
 
 ## Looks and payments
 

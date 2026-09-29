@@ -59,17 +59,9 @@ class EmailSessionResponse(AnonymousSessionResponse):
     unlimited: bool = False
 
 
-class EmailCodeRequest(BaseModel):
+class PasswordSignInRequest(BaseModel):
     email: str = Field(max_length=254)
-
-
-class EmailVerifyRequest(BaseModel):
-    email: str = Field(max_length=254)
-    code: str = Field(max_length=20)
-
-
-class EmailLinkRequest(BaseModel):
-    access_token: str = Field(min_length=20, max_length=8000)
+    password: str = Field(max_length=200)
 
 
 class AccountResponse(BaseModel):

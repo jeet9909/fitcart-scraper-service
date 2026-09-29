@@ -926,68 +926,108 @@ def _mock_supabase_auth(monkeypatch, handler) -> None:
     monkeypatch.setattr("app.email_auth.httpx.AsyncClient", lambda **kwargs: real_client(transport=_httpx.MockTransport(handler), **kwargs))
 
 
-def test_email_code_sign_in_gives_listed_emails_unlimited_looks(monkeypatch) -> None:
+def _password_world(monkeypatch, accounts: dict, calls: list) -> None:
+    """A fake Supabase Auth with admin create/list/update and password sign-in."""
     import json as _json
     import httpx as _httpx
 
-    seen: list[tuple[str, dict]] = []
-    redirects: list[str | None] = []
-
     def handler(request: _httpx.Request) -> _httpx.Response:
-        seen.append((request.url.path, _json.loads(request.content or b"{}")))
-        redirects.append(request.url.params.get("redirect_to"))
+        body = _json.loads(request.content or b"{}")
+        calls.append((request.method, request.url.path, dict(request.url.params), body))
         assert request.headers["apikey"] == "service-key"
-        if request.url.path == "/auth/v1/otp":
-            return _httpx.Response(200, json={})
-        if request.url.path == "/auth/v1/verify":
-            if request.content and _json.loads(request.content)["token"] != "123456":
-                return _httpx.Response(403, json={"msg": "Token has expired or is invalid"})
-            email = _json.loads(request.content)["email"]
-            return _httpx.Response(200, json={"access_token": "x", "user": {"id": AUTH_USER_ID, "email": email}})
+        path = request.url.path
+        if path == "/auth/v1/admin/users" and request.method == "POST":
+            if body["email"] in accounts:
+                return _httpx.Response(422, json={"code": 422, "error_code": "email_exists", "msg": "A user with this email address has already been registered"})
+            accounts[body["email"]] = {"id": AUTH_USER_ID, "email": body["email"], "password": body["password"]}
+            return _httpx.Response(200, json={"id": AUTH_USER_ID, "email": body["email"]})
+        if path == "/auth/v1/admin/users" and request.method == "GET":
+            return _httpx.Response(200, json={"users": [{"id": a["id"], "email": a["email"]} for a in accounts.values()]})
+        if path.startswith("/auth/v1/admin/users/") and request.method == "PUT":
+            account = next(a for a in accounts.values() if a["id"] == path.rsplit("/", 1)[1])
+            account["password"] = body["password"]
+            return _httpx.Response(200, json={"id": account["id"], "email": account["email"]})
+        if path == "/auth/v1/token":
+            account = accounts.get(body["email"])
+            if not account or account.get("password") != body["password"]:
+                return _httpx.Response(400, json={"error": "invalid_grant", "error_description": "Invalid login credentials"})
+            return _httpx.Response(200, json={"access_token": "x", "user": {"id": account["id"], "email": account["email"]}})
         return _httpx.Response(404)
 
     _mock_supabase_auth(monkeypatch, handler)
+
+
+def test_password_sign_up_and_log_in(monkeypatch) -> None:
+    from app import email_auth
+
+    accounts, calls = {}, []
+    _password_world(monkeypatch, accounts, calls)
+    email_auth._failed_logins.clear()
     app.dependency_overrides[get_runtime_settings] = lambda: AUTH_SETTINGS
     try:
         with TestClient(app) as client:
-            assert client.post("/v1/auth/email/code", json={"email": " ParthPatil2233@Gmail.com "}).status_code == 204
-            wrong = client.post("/v1/auth/email/verify", json={"email": "parthpatil2233@gmail.com", "code": "000000"})
-            signed_in = client.post("/v1/auth/email/verify", json={"email": "parthpatil2233@gmail.com", "code": "123 456"})
-            me = client.get("/v1/me", headers={"Authorization": f"Bearer {signed_in.json()['access_token']}"})
-            gallery = client.get("/v1/gallery", headers={"Authorization": f"Bearer {signed_in.json()['access_token']}"})
-            other = client.post("/v1/auth/email/verify", json={"email": "someone@example.com", "code": "123456"})
-            anonymous = client.post("/v1/sessions/anonymous").json()
-            anonymous_me = client.get("/v1/me", headers={"Authorization": f"Bearer {anonymous['access_token']}"})
-            bad_email = client.post("/v1/auth/email/code", json={"email": "not-an-email"})
+            short = client.post("/v1/auth/signup", json={"email": "Buyer@Example.com", "password": "short"})
+            created = client.post("/v1/auth/signup", json={"email": " Buyer@Example.com ", "password": "correct horse"})
+            again = client.post("/v1/auth/signup", json={"email": "buyer@example.com", "password": "another one"})
+            wrong = client.post("/v1/auth/login", json={"email": "buyer@example.com", "password": "not it at all"})
+            ok = client.post("/v1/auth/login", json={"email": "BUYER@example.com", "password": "correct horse"})
+            me = client.get("/v1/me", headers={"Authorization": f"Bearer {ok.json()['access_token']}"})
+            vip = client.post("/v1/auth/signup", json={"email": "parthpatil2233@gmail.com", "password": "parth-password"})
+            old_routes = [client.post(path, json={"email": "a@b.co"}).status_code for path in ("/v1/auth/email/code", "/v1/auth/email/verify")]
     finally:
         app.dependency_overrides.clear()
+    assert short.status_code == 422 and "8 characters" in short.json()["detail"]
+    assert created.status_code == 201 and created.json()["email"] == "buyer@example.com" and created.json()["unlimited"] is False
+    create_call = next(c for c in calls if c[:2] == ("POST", "/auth/v1/admin/users"))
+    assert create_call[3] == {"email": "buyer@example.com", "password": "correct horse", "email_confirm": True}  # no confirmation email
+    assert again.status_code == 409 and "Log in" in again.json()["detail"]
+    assert wrong.status_code == 401 and "don't match" in wrong.json()["detail"]
+    token_call = next(c for c in calls if c[1] == "/auth/v1/token")
+    assert token_call[2] == {"grant_type": "password"}
+    assert ok.status_code == 200 and ok.json()["anonymous_user_id"] == AUTH_USER_ID
+    assert me.json() == {"user_id": AUTH_USER_ID, "email": "buyer@example.com", "unlimited": False}
+    assert vip.status_code == 201 and vip.json()["unlimited"] is True
+    assert old_routes == [404, 404]  # the email-code sign-in is gone
 
-    assert seen[0] == ("/auth/v1/otp", {"email": "parthpatil2233@gmail.com", "create_user": True})
-    assert redirects[0] == "https://jeet9909.github.io/fitcart-scraper-service/"
-    assert wrong.status_code == 401
-    assert signed_in.status_code == 200
-    assert signed_in.json()["unlimited"] is True and signed_in.json()["anonymous_user_id"] == AUTH_USER_ID
-    assert me.json() == {"user_id": AUTH_USER_ID, "email": "parthpatil2233@gmail.com", "unlimited": True}
-    assert gallery.status_code == 503  # authenticated; storage is not configured in tests
-    assert other.json()["unlimited"] is False
-    assert anonymous_me.json()["unlimited"] is False and anonymous_me.json()["email"] is None
-    assert bad_email.status_code == 422
 
+def test_repeated_wrong_passwords_are_slowed_down(monkeypatch) -> None:
+    from app import email_auth
 
-def test_unlimited_is_rechecked_so_removing_an_email_revokes_it(monkeypatch) -> None:
-    import httpx as _httpx
-
-    _mock_supabase_auth(monkeypatch, lambda request: _httpx.Response(200, json={"id": AUTH_USER_ID, "email": "gajerajeet88@gmail.com"}))
+    accounts, calls = {"a@example.com": {"id": AUTH_USER_ID, "email": "a@example.com", "password": "right password"}}, []
+    _password_world(monkeypatch, accounts, calls)
+    email_auth._failed_logins.clear()
     app.dependency_overrides[get_runtime_settings] = lambda: AUTH_SETTINGS
     try:
         with TestClient(app) as client:
-            session = client.post("/v1/auth/email/link", json={"access_token": "a" * 40}).json()
-            app.dependency_overrides[get_runtime_settings] = lambda: AUTH_SETTINGS.model_copy(update={"unlimited_emails_csv": ""})
-            me = client.get("/v1/me", headers={"Authorization": f"Bearer {session['access_token']}"}).json()
+            codes = [client.post("/v1/auth/login", json={"email": "a@example.com", "password": f"guess {i}"}).status_code for i in range(9)]
+            right = client.post("/v1/auth/login", json={"email": "a@example.com", "password": "right password"})
     finally:
         app.dependency_overrides.clear()
-    assert session["unlimited"] is True
-    assert me["unlimited"] is False
+        email_auth._failed_logins.clear()
+    assert codes == [401] * 8 + [429]
+    assert right.status_code == 429  # locked for 15 minutes even with the right password
+    assert sum(1 for c in calls if c[1] == "/auth/v1/token") == 8  # locked attempts never reach Supabase
+
+
+def test_admin_can_give_an_existing_account_a_password(monkeypatch) -> None:
+    from app import email_auth
+
+    accounts, calls = {"gajerajeet88@gmail.com": {"id": AUTH_USER_ID, "email": "gajerajeet88@gmail.com"}}, []
+    _password_world(monkeypatch, accounts, calls)
+    email_auth._failed_logins.clear()
+    settings = AUTH_SETTINGS.model_copy(update={"admin_api_token": SecretStr("admin-secret")})
+    app.dependency_overrides[get_runtime_settings] = lambda: settings
+    try:
+        with TestClient(app) as client:
+            anonymous = client.post("/v1/admin/users/password", json={"email": "gajerajeet88@gmail.com", "password": "new password!"})
+            done = client.post("/v1/admin/users/password", json={"email": "gajerajeet88@gmail.com", "password": "new password!"}, headers={"X-Admin-Token": "admin-secret"})
+            login = client.post("/v1/auth/login", json={"email": "gajerajeet88@gmail.com", "password": "new password!"})
+    finally:
+        app.dependency_overrides.clear()
+    assert anonymous.status_code == 401
+    assert done.status_code == 200 and done.json() == {"user_id": AUTH_USER_ID, "email": "gajerajeet88@gmail.com", "unlimited": True}
+    assert login.status_code == 200 and login.json()["unlimited"] is True
+
 
 
 import httpx as _httpx_module
@@ -1424,169 +1464,17 @@ def test_generation_sends_face_close_up_and_locks_the_face(monkeypatch) -> None:
 
 
 
-GMAIL_SETTINGS = AUTH_SETTINGS.model_copy(update={
-    "gmail_client_id": "client-id.apps.googleusercontent.com", "gmail_client_secret": SecretStr("client-secret"),
-    "gmail_refresh_token": SecretStr("1//refresh"), "email_sender": "gajerajeet88@gmail.com", "email_sender_name": "FitCart",
-})
-SMTP_SETTINGS = AUTH_SETTINGS.model_copy(update={
-    "smtp_host": "smtp.gmail.com", "smtp_port": 465, "smtp_username": "sender@gmail.com",
-    "smtp_password": SecretStr("abcd efgh ijkl mnop"), "email_sender_name": "FitCart",
-})
 
-
-class FakeSMTP:
-    sent: list = []
-    logins: list = []
-    fail_login = False
-
-    def __init__(self, host, port, timeout=None, context=None):
-        self.host, self.port = host, port
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def login(self, user, password):
-        import smtplib
-
-        if FakeSMTP.fail_login:
-            raise smtplib.SMTPAuthenticationError(535, b"5.7.8 Username and Password not accepted")
-        FakeSMTP.logins.append((self.host, self.port, user, password))
-
-    def send_message(self, message):
-        FakeSMTP.sent.append(message)
-
-
-def _reset_codes() -> None:
-    from app import email_auth
-
-    email_auth._pending.clear()
-    email_auth._sends.clear()
-    email_auth._gmail_token = None
-
-
-def _gmail_world(monkeypatch, sent: list, token_calls: list, account_calls: list):
-    """Google token + Gmail send + Supabase admin, all faked."""
-    import base64
-    import email as _email
-    import json as _json
-    from urllib.parse import parse_qs
-    import httpx as _httpx
-
-    def handler(request: _httpx.Request) -> _httpx.Response:
-        if request.url.host == "oauth2.googleapis.com":
-            token_calls.append(parse_qs(request.content.decode()))
-            return _httpx.Response(200, json={"access_token": "ya29.token", "expires_in": 3599})
-        if request.url.host == "gmail.googleapis.com":
-            assert request.headers["authorization"] == "Bearer ya29.token"
-            raw = _json.loads(request.content)["raw"]
-            sent.append(_email.message_from_bytes(base64.urlsafe_b64decode(raw), policy=_email.policy.default))
-            return _httpx.Response(200, json={"id": "18c", "labelIds": ["SENT"]})
-        account_calls.append((request.url.path, _json.loads(request.content or b"{}")))
-        if request.url.path == "/auth/v1/admin/generate_link":
-            return _httpx.Response(200, json={"id": AUTH_USER_ID, "email": _json.loads(request.content)["email"], "email_otp": "000000"})
-        return _httpx.Response(404)
-
-    _mock_supabase_auth(monkeypatch, handler)
-
-
-def _code_from(message) -> str:
-    return message["Subject"].split()[0]
-
-
-def test_own_codes_are_emailed_through_gmail_and_checked_by_the_api(monkeypatch) -> None:
-    sent, token_calls, account_calls = [], [], []
-    _gmail_world(monkeypatch, sent, token_calls, account_calls)
-    _reset_codes()
-    app.dependency_overrides[get_runtime_settings] = lambda: GMAIL_SETTINGS
+def test_unlimited_is_rechecked_so_removing_an_email_revokes_it(monkeypatch) -> None:
+    accounts, calls = {}, []
+    _password_world(monkeypatch, accounts, calls)
+    app.dependency_overrides[get_runtime_settings] = lambda: AUTH_SETTINGS
     try:
         with TestClient(app) as client:
-            first = client.post("/v1/auth/email/code", json={"email": "New.Person@Gmail.com"})
-            too_soon = client.post("/v1/auth/email/code", json={"email": "new.person@gmail.com"})
-            code = _code_from(sent[0])
-            wrong = client.post("/v1/auth/email/verify", json={"email": "new.person@gmail.com", "code": "999999" if code != "999999" else "111111"})
-            right = client.post("/v1/auth/email/verify", json={"email": "new.person@gmail.com", "code": code})
-            reused = client.post("/v1/auth/email/verify", json={"email": "new.person@gmail.com", "code": code})
+            session = client.post("/v1/auth/signup", json={"email": "gajerajeet88@gmail.com", "password": "long enough"}).json()
+            app.dependency_overrides[get_runtime_settings] = lambda: AUTH_SETTINGS.model_copy(update={"unlimited_emails_csv": ""})
+            me = client.get("/v1/me", headers={"Authorization": f"Bearer {session['access_token']}"}).json()
     finally:
         app.dependency_overrides.clear()
-
-    assert first.status_code == 204 and too_soon.status_code == 429 and len(sent) == 1
-    message = sent[0]
-    assert message["To"] == "new.person@gmail.com" and message["From"] == "FitCart <gajerajeet88@gmail.com>"
-    assert len(code) == 6 and code.isdigit() and message["Subject"] == f"{code} is your FitCart code"
-    assert code in message.get_body(("plain",)).get_content() and code in message.get_body(("html",)).get_content()
-    assert token_calls[0]["grant_type"] == ["refresh_token"] and token_calls[0]["refresh_token"] == ["1//refresh"]
-    assert wrong.status_code == 401 and "4 tries left" in wrong.json()["detail"]
-    assert right.status_code == 200 and right.json()["email"] == "new.person@gmail.com" and right.json()["anonymous_user_id"] == AUTH_USER_ID
-    assert reused.status_code == 401  # a code works once
-    # Supabase is only used to find/create the account after the code checks out; it never sends email.
-    assert [path for path, _ in account_calls] == ["/auth/v1/admin/generate_link"]
-    assert all("/otp" not in path and "/verify" not in path for path, _ in account_calls)
-
-
-def test_own_codes_lock_after_five_wrong_tries_and_expire(monkeypatch) -> None:
-    from app import email_auth
-
-    sent, token_calls, account_calls = [], [], []
-    _gmail_world(monkeypatch, sent, token_calls, account_calls)
-    _reset_codes()
-    app.dependency_overrides[get_runtime_settings] = lambda: GMAIL_SETTINGS
-    try:
-        with TestClient(app) as client:
-            client.post("/v1/auth/email/code", json={"email": "a@example.com"})
-            code = _code_from(sent[0])
-            wrong = "123456" if code != "123456" else "654321"
-            attempts = [client.post("/v1/auth/email/verify", json={"email": "a@example.com", "code": wrong}).status_code for _ in range(5)]
-            after_lock = client.post("/v1/auth/email/verify", json={"email": "a@example.com", "code": code})
-
-            email_auth._sends.clear()
-            client.post("/v1/auth/email/code", json={"email": "b@example.com"})
-            email_auth._pending["b@example.com"].expires = 0  # ten minutes pass
-            expired = client.post("/v1/auth/email/verify", json={"email": "b@example.com", "code": _code_from(sent[1])})
-    finally:
-        app.dependency_overrides.clear()
-    assert attempts == [401, 401, 401, 401, 429]
-    assert after_lock.status_code == 401  # the right code no longer works once locked
-    assert expired.status_code == 401 and "expired" in expired.json()["detail"]
-    assert len(token_calls) == 1  # the Google access token is reused
-
-
-def test_gmail_refresh_token_problems_are_explained(monkeypatch) -> None:
-    import httpx as _httpx
-
-    _mock_supabase_auth(monkeypatch, lambda request: _httpx.Response(400, json={"error": "invalid_grant", "error_description": "Token has been expired or revoked."}))
-    _reset_codes()
-    app.dependency_overrides[get_runtime_settings] = lambda: GMAIL_SETTINGS
-    try:
-        with TestClient(app) as client:
-            response = client.post("/v1/auth/email/code", json={"email": "someone@example.com"})
-            retry = client.post("/v1/auth/email/code", json={"email": "someone@example.com"})
-    finally:
-        app.dependency_overrides.clear()
-    assert response.status_code == 502 and "refresh token" in response.json()["detail"]
-    assert retry.status_code == 502  # a failed send does not start the resend wait
-
-
-def test_own_codes_can_go_out_over_smtp(monkeypatch) -> None:
-    import httpx as _httpx
-
-    _mock_supabase_auth(monkeypatch, lambda request: _httpx.Response(200, json={"id": AUTH_USER_ID, "email": "x@example.com"}))
-    monkeypatch.setattr("app.email_auth.smtplib.SMTP_SSL", FakeSMTP)
-    FakeSMTP.sent, FakeSMTP.logins, FakeSMTP.fail_login = [], [], False
-    _reset_codes()
-    app.dependency_overrides[get_runtime_settings] = lambda: SMTP_SETTINGS
-    try:
-        with TestClient(app) as client:
-            sent = client.post("/v1/auth/email/code", json={"email": "x@example.com"})
-            verified = client.post("/v1/auth/email/verify", json={"email": "x@example.com", "code": _code_from(FakeSMTP.sent[0])})
-            FakeSMTP.fail_login = True
-            _reset_codes()
-            failed = client.post("/v1/auth/email/code", json={"email": "y@example.com"})
-    finally:
-        app.dependency_overrides.clear()
-        FakeSMTP.fail_login = False
-    assert sent.status_code == 204 and FakeSMTP.logins[0] == ("smtp.gmail.com", 465, "sender@gmail.com", "abcdefghijklmnop")
-    assert verified.status_code == 200
-    assert failed.status_code == 502 and "app password" in failed.json()["detail"]
+    assert session["unlimited"] is True
+    assert me["unlimited"] is False

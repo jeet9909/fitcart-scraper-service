@@ -252,18 +252,24 @@ function bindCompare(el){
 const PLANS = [
   {key:'free', name:'Free', for:'Try FitCart on your next outfit.', monthly:0, yearly:0, looks:3, quality:'Standard', imports:15, stylist:1, wardrobe:25, cta:'Start free',
    perks:['3 looks a month, any mix of stores','Standard quality','Wardrobe up to 25 items','1 AI stylist idea'], missing:['HD looks','Full Looks history']},
-  {key:'pass', name:'Occasion Pass', for:'One-time pack for a wedding, festival or trip.', once:129, days:7, looks:10, quality:'HD', imports:30, stylist:5, wardrobe:25, cta:'Buy the pass',
+  {key:'pass', name:'Occasion Pass', for:'One-time pack for a wedding, festival or trip.', once:129, listOnce:149, days:7, looks:10, quality:'HD', imports:30, stylist:5, wardrobe:25, cta:'Buy the pass',
    perks:['10 HD looks for 7 days','No autopay, pay once with UPI','5 AI stylist ideas','Stacks on any plan'], missing:[]},
-  {key:'plus', name:'Plus', for:'For people who shop online every month.', monthly:349, yearly:3299, looks:25, quality:'HD', imports:150, stylist:20, wardrobe:200, cta:'Get Plus', popular:true,
+  {key:'plus', name:'Plus', for:'For people who shop online every month.', monthly:349, listMonthly:399, yearly:3299, looks:25, quality:'HD', imports:150, stylist:20, wardrobe:200, cta:'Get Plus', popular:true,
    perks:['25 HD looks every month','Standard pose, head to toe','Wardrobe up to 200 items','20 AI stylist ideas','Full Looks history and HD downloads'], missing:[]},
-  {key:'pro', name:'Pro', for:'For stylists, creators and big wardrobes.', monthly:799, yearly:7499, looks:60, quality:'HD', imports:300, stylist:40, wardrobe:1000, cta:'Get Pro',
+  {key:'pro', name:'Pro', for:'For stylists, creators and big wardrobes.', monthly:799, listMonthly:999, yearly:7499, looks:60, quality:'HD', imports:300, stylist:40, wardrobe:1000, cta:'Get Pro',
    perks:['60 HD looks every month','Priority generation','Wardrobe up to 1,000 items','40 AI stylist ideas','Early access to Fit score'], missing:[]},
 ];
+// Shown price, crossed-out list price and the discount between them. Yearly plans compare the
+// monthly equivalent with the monthly list price.
 function planPrice(p){
-  if (p.once) return {amt:p.once, unit:'one-time', per:p.once / p.looks, was:null};
-  if (!p.monthly) return {amt:0, unit:'forever', per:null, was:null};
-  if (state.billing === 'yearly') return {amt:Math.round(p.yearly / 12), unit:'/mo, billed ₹' + p.yearly.toLocaleString('en-IN') + ' yearly', per:p.yearly / 12 / p.looks, was:p.monthly};
-  return {amt:p.monthly, unit:'/month', per:p.monthly / p.looks, was:null};
+  const off = (amt, was) => was && was > amt ? Math.round((was - amt) / was * 100) : 0;
+  if (p.once) return {amt:p.once, unit:'one-time', was:p.listOnce || null, off:off(p.once, p.listOnce)};
+  if (!p.monthly) return {amt:0, unit:'forever', was:null, off:0};
+  if (state.billing === 'yearly'){
+    const amt = Math.round(p.yearly / 12);
+    return {amt, unit:'/mo, billed ₹' + p.yearly.toLocaleString('en-IN') + ' yearly', was:p.listMonthly || p.monthly, off:off(amt, p.listMonthly || p.monthly)};
+  }
+  return {amt:p.monthly, unit:'/month', was:p.listMonthly || null, off:off(p.monthly, p.listMonthly)};
 }
 function pricingHtml(){
   const tiers = PLANS.map(p => {
@@ -271,8 +277,8 @@ function pricingHtml(){
     const current = Boolean(state.account) && !unlimited() && (state.balance?.plan || 'free') === p.key;
     return `<article class="tier${p.popular ? ' pop' : ''} reveal">${p.popular ? '<span class="ribbon">Most popular</span>' : ''}
       <div><h3>${p.name}</h3><p class="for">${p.for}</p></div>
-      <div><div class="amt"><b>₹${pr.amt.toLocaleString('en-IN')}</b><span>${pr.unit}</span></div>
-        <p style="display:flex;gap:8px;flex-wrap:wrap;min-height:20px">${pr.was ? `<span class="was">₹${pr.was}/mo</span>` : ''}${pr.per ? `<span class="per num">₹${pr.per.toFixed(1)} per look</span>` : '<span class="per">No card needed</span>'}</p></div>
+      <div><div class="amt">${pr.was ? `<s class="was num" aria-label="Was ₹${pr.was.toLocaleString('en-IN')}">₹${pr.was.toLocaleString('en-IN')}</s>` : ''}<b>₹${pr.amt.toLocaleString('en-IN')}</b><span>${pr.unit}</span></div>
+        <p style="display:flex;gap:8px;flex-wrap:wrap;min-height:24px">${pr.off ? `<span class="save-badge num">${pr.off}% off</span>` : '<span class="per">No card needed</span>'}</p></div>
       <button class="btn ${p.popular ? 'brand' : p.key === 'free' ? 'glassy' : ''} wide" data-act="choose-plan" data-plan="${p.key}" ${(current && p.key !== 'pass') || state.checkingOut ? 'disabled' : ''}>${state.checkingOut === p.key ? '<span class="spin" aria-hidden="true"></span> Opening checkout…' : current && p.key !== 'pass' ? 'Your current plan' : p.cta}</button>
       <ul>${p.perks.map(x => `<li>${icon('check','s')}${esc(x)}</li>`).join('')}${p.missing.map(x => `<li class="no">${icon('x','s')}${esc(x)}</li>`).join('')}</ul>
     </article>`;

@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr = SecretStr("")
     brightdata_api_token: SecretStr
     gemini_api_key: SecretStr = SecretStr("")
-    gemini_image_model: str = "gemini-2.5-flash-image"
+    gemini_image_model: str = "gemini-3.1-flash-image-preview"  # gemini-2.5-flash-image shuts down on 2 Oct 2026
     gemini_text_model: str = "gemini-2.5-flash"
     face_lock_enabled: bool = Field(default=True, description="Blend the person's real face back onto generated try-ons and send a face close-up as an identity reference")
     supabase_url: str = ""

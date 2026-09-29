@@ -373,20 +373,31 @@ class TryOnService:
         return (message or response.text or "unknown error").strip()[:300]
 
     def _find_image(self, value: Any) -> dict[str, Any] | None:
+        """The final generated image. Gemini 3 image models first return up to two draft images marked
+        thought=true; the final image is the last part without that flag."""
+        images: list[tuple[bool, dict[str, Any]]] = []
+        self._collect_images(value, images, thought=False)
+        final = [image for is_thought, image in images if not is_thought]
+        if final:
+            return final[-1]
+        return images[-1][1] if images else None
+
+    def _collect_images(self, value: Any, found: list[tuple[bool, dict[str, Any]]], thought: bool) -> None:
         if isinstance(value, dict):
+            thought = thought or bool(value.get("thought"))
             if isinstance(value.get("data"), str) and str(value.get("mime_type", "")).startswith("image/"):
-                return value
+                found.append((thought, value))
+                return
             inline = value.get("inlineData") or value.get("inline_data")
             if isinstance(inline, dict) and isinstance(inline.get("data"), str):
-                return {"data": inline["data"], "mime_type": inline.get("mimeType") or inline.get("mime_type")}
+                found.append((thought, {"data": inline["data"], "mime_type": inline.get("mimeType") or inline.get("mime_type")}))
+                return
             for key in ("candidates", "parts", "output_image", "outputs", "output", "content", "steps"):
-                found = self._find_image(value.get(key)) if key in value else None
-                if found: return found
+                if key in value:
+                    self._collect_images(value[key], found, thought)
         elif isinstance(value, list):
             for item in value:
-                found = self._find_image(item)
-                if found: return found
-        return None
+                self._collect_images(item, found, thought)
 
     async def _upload(self, path: str, image: tuple[bytes, str, str]) -> None:
         url = f"{self.settings.supabase_url.rstrip('/')}/storage/v1/object/{self.settings.supabase_storage_bucket}/{quote(path)}"

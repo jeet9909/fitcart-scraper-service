@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from typing import Literal
 
 import hmac
+import logging
 
 import httpx
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile, status
@@ -43,6 +44,10 @@ from app.scraper import BrightDataScraper, ScrapeProviderError
 from app.security import UnsafeUrlError, validate_public_url
 from app.tryon import MAX_OUTFIT_PIECES, OutfitPiece, TryOnError, TryOnService, validate_image
 from app.wardrobe import SLOT_LABELS, WardrobeService
+
+
+# Show the app's own INFO logs (face lock decisions, look grants) next to uvicorn's in the Render log.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s: %(message)s")
 
 
 @asynccontextmanager

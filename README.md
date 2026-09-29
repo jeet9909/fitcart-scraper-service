@@ -161,7 +161,7 @@ Returns whether the Gemini key and model work, the all-time number of saved try-
 
 ### "429: You exceeded your current quota"
 
-Gemini image models such as `gemini-2.5-flash-image` have **no free-tier quota**; a key on a project without billing gets `429` with a limit of `0` on every request. Open [Google AI Studio → API keys](https://aistudio.google.com/apikey), choose **Set up billing** for the key's project (or create a key in a project that already has billing), then update `GEMINI_API_KEY` on Render. The API now reports which limit was hit (no quota, daily, or per-minute) and retries a short per-minute limit once automatically.
+Gemini image models such as `gemini-3.1-flash-image-preview` (default; `gemini-2.5-flash-image` shut down on 2 October 2026) have **no free-tier quota**; a key on a project without billing gets `429` with a limit of `0` on every request. Open [Google AI Studio → API keys](https://aistudio.google.com/apikey), choose **Set up billing** for the key's project (or create a key in a project that already has billing), then update `GEMINI_API_KEY` on Render. The API now reports which limit was hit (no quota, daily, or per-minute) and retries a short per-minute limit once automatically.
 
 ## Tests
 

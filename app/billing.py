@@ -149,15 +149,44 @@ class Billing:
             payment = await self._razorpay("GET", f"/payments/{payment_id}")
             if payment.get("order_id") != order_id or payment.get("amount") != order.get("amount"):
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="The payment does not match this order.")
-            if payment.get("status") == "authorized":
-                payment = await self._razorpay("POST", f"/payments/{payment_id}/capture", {"amount": payment["amount"], "currency": payment.get("currency", "INR")})
-            if payment.get("status") != "captured":
+            if not await self._settle(payment):
+                log.info("Pass payment %s for order %s is %s, not captured yet", payment_id, order_id, payment.get("status"))
                 return False
             await self._grant_pass(order)
+            log.info("Pass granted for order %s", order_id)
             return True
         subscription = await self._razorpay("GET", f"/subscriptions/{subscription_id}")
         self._check_owner(subscription, user_id)
         return await self._grant_subscription(subscription)
+
+    async def _settle(self, payment: dict) -> bool:
+        """Capture an authorized payment. Razorpay may auto-capture it at the same moment, so a failed
+        capture is followed by a fresh read rather than treated as an error."""
+        if payment.get("status") == "authorized":
+            try:
+                payment = await self._razorpay("POST", f"/payments/{payment['id']}/capture", {"amount": payment["amount"], "currency": payment.get("currency", "INR")})
+            except HTTPException:
+                payment = await self._razorpay("GET", f"/payments/{payment['id']}")
+        return payment.get("status") == "captured"
+
+    async def sync_order(self, user_id: str, order_id: str) -> bool:
+        """Add the pass for an order that was paid but never confirmed, for example when the checkout
+        window closed before its success callback ran. Razorpay is asked directly, so no signature is needed."""
+        order = await self._razorpay("GET", f"/orders/{order_id}")
+        self._check_owner(order, user_id)
+        if (order.get("notes") or {}).get("plan") != "pass":
+            return False
+        paid = order.get("status") == "paid"
+        if not paid:
+            payments = await self._razorpay("GET", f"/orders/{order_id}/payments")
+            for payment in payments.get("items", []):
+                if payment.get("amount") == order.get("amount") and payment.get("status") in ("authorized", "captured") and await self._settle(payment):
+                    paid = True
+                    break
+        if paid:
+            await self._grant_pass(order)
+            log.info("Pass granted for order %s by sync", order_id)
+        return paid
 
     @staticmethod
     def _check_owner(entity: dict, user_id: str) -> None:

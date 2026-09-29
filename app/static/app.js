@@ -920,13 +920,16 @@ async function checkout(plan){
       loadRazorpay(),
     ]);
     const dark = document.documentElement.dataset.theme === 'dark' || (!document.documentElement.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches);
+    let paid = false;
     const rzp = new window.Razorpay({
       key:opts.key_id, name:opts.name, description:opts.description, currency:opts.currency, amount:opts.amount,
       ...(opts.order_id ? {order_id:opts.order_id} : {subscription_id:opts.subscription_id}),
       prefill:{email:opts.email}, theme:{color: dark ? '#FF4D8D' : '#D81B64'},
-      handler: response => { done(); confirmPayment(response); },
-      modal:{ondismiss: () => { done(); toast('Payment cancelled. You were not charged.', {kind:'info'}); }},
+      handler: response => { paid = true; done(); confirmPayment(response); },
+      // The window can close without the success callback (a bank page or UPI app took over), so ask the server.
+      modal:{ondismiss: () => { done(); if (!paid) syncPendingOrder(true); }},
     });
+    if (opts.order_id) persist(PENDING_ORDER_KEY, {id:opts.order_id, at:Date.now()});
     rzp.on('payment.failed', e => toast(e?.error?.description || 'The payment failed. Please try again.', {kind:'error'}));
     rzp.open();
   } catch (err){
@@ -935,22 +938,44 @@ async function checkout(plan){
     else toast(err.message, {kind:'error'});
   }
 }
+const PENDING_ORDER_KEY = 'fitcart-pending-order';
+function clearPendingOrder(){ try { localStorage.removeItem(PENDING_ORDER_KEY); } catch {} }
+// A pass paid for but not confirmed (window closed early, callback lost, network error) is added here.
+async function syncPendingOrder(fromDismiss = false){
+  const pending = readStore(PENDING_ORDER_KEY, null);
+  if (!pending?.id || !state.account) { if (fromDismiss) toast('Payment cancelled. You were not charged.', {kind:'info'}); return; }
+  if (Date.now() - (pending.at || 0) > 2 * 864e5){ clearPendingOrder(); return; }
+  try {
+    state.balance = await api('/v1/billing/sync', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({order_id:pending.id})});
+    clearPendingOrder();
+    paymentDone();
+  } catch (err){
+    if (err.status === 403 || err.status === 404) clearPendingOrder();
+    if (fromDismiss) toast('Payment cancelled. You were not charged.', {kind:'info'});
+  }
+}
+function paymentDone(){
+  const plan = PLANS.find(p => p.key === state.balance.plan);
+  go(state.look.length ? 'builder' : 'home');
+  // Unlimited accounts (and servers without limits) report no count, so do not print "null looks".
+  const count = state.balance.unlimited ? 'your account already has unlimited looks' : state.balance.remaining == null ? 'your looks are added' : `${state.balance.remaining} looks ready`;
+  toast(`Payment received · ${plan && plan.key !== 'free' ? plan.name + ' is active · ' : ''}${count}`, {action:{label:'Try it on', run:() => go(state.look.length ? 'builder' : 'home')}});
+}
 async function confirmPayment(response, attempt = 0){
   try {
     state.balance = await api('/v1/billing/confirm', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(response)});
-    const plan = PLANS.find(p => p.key === state.balance.plan);
-    go(state.look.length ? 'builder' : 'home');
-    // Unlimited accounts (and servers without limits) report no count, so do not print "null looks".
-    const count = state.balance.unlimited ? 'your account already has unlimited looks' : state.balance.remaining == null ? 'your looks are added' : `${state.balance.remaining} looks ready`;
-    toast(`Payment received · ${plan && plan.key !== 'free' ? plan.name + ' is active · ' : ''}${count}`, {action:{label:'Try it on', run:() => go(state.look.length ? 'builder' : 'home')}});
+    if (response.razorpay_order_id) clearPendingOrder();
+    paymentDone();
+    return;
   } catch (err){
     if (err.status === 409 && attempt < 5){
       if (!attempt) toast('Payment received. Adding your looks…', {kind:'info'});
       setTimeout(() => confirmPayment(response, attempt + 1), 3000);
       return;
     }
+    if (response.razorpay_order_id && err.status !== 409 && !attempt){ setTimeout(() => syncPendingOrder(), 2000); return; }
     toast(err.status === 409 ? 'Your payment is still processing. Your looks will appear in a minute.' : err.message, {kind: err.status === 409 ? 'info' : 'error'});
-    setTimeout(loadBalance, 5000);
+    setTimeout(() => { loadBalance(); syncPendingOrder(); }, 5000);
   }
 }
 function signOut(){
@@ -1290,5 +1315,5 @@ document.querySelectorAll('dialog.sheet').forEach(d => {
   fetch(apiUrl('/health'), {cache:'no-store'}).catch(() => {});
   render();
   fetch(apiUrl('/v1/billing/config')).then(r => r.ok ? r.json() : null).then(cfg => { state.billingCfg = cfg; if (state.view === 'pricing') render(); }).catch(() => {});
-  session().catch(() => {}).then(() => { refreshAccount(); if (!state.balance) loadBalance(); });
+  session().catch(() => {}).then(() => { refreshAccount(); if (!state.balance) loadBalance(); syncPendingOrder(); });
 })();

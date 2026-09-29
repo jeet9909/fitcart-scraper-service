@@ -1512,3 +1512,61 @@ def test_gemini_draft_thought_images_are_skipped() -> None:
     assert service._find_image(only_drafts)["data"] == "ZHJhZnQ="
     older = {"candidates": [{"content": {"parts": [{"inline_data": {"mime_type": "image/png", "data": "b2xk"}}]}}]}
     assert service._find_image(older) == {"data": "b2xk", "mime_type": "image/png"}  # gemini-2.5 style still works
+
+
+def test_paid_order_is_recovered_by_sync(monkeypatch) -> None:
+    order = {"id": "order_Lost", "amount": 12900, "created_at": 1_790_000_000, "status": "attempted", "notes": {"user_id": AUTH_USER_ID, "plan": "pass"}}
+    razorpay = FakeRazorpay({
+        "/orders/order_Lost": order,
+        "/orders/order_Lost/payments": {"items": [
+            {"id": "pay_Failed", "amount": 12900, "status": "failed"},
+            {"id": "pay_Lost", "amount": 12900, "currency": "INR", "status": "authorized"},
+        ]},
+        "/payments/pay_Lost": {"id": "pay_Lost", "amount": 12900, "currency": "INR", "status": "authorized"},
+        "/orders/order_Unpaid": {**order, "id": "order_Unpaid"},
+        "/orders/order_Unpaid/payments": {"items": []},
+        "/orders/order_Other": {**order, "id": "order_Other", "notes": {"user_id": "00000000-0000-4000-8000-000000000000", "plan": "pass"}},
+    })
+    razorpay.install(monkeypatch)
+    fake = FakeSupabase(rows=[{"kind": "pass", "looks": 10, "used": 0, "expires_at": "2026-09-28T00:00:00+00:00"}])
+    try:
+        with _limit_client(fake, monkeypatch) as client:
+            headers = {"Authorization": f"Bearer {_email_token('buyer@example.com')}"}
+            ok = client.post("/v1/billing/sync", json={"order_id": "order_Lost"}, headers=headers)
+            unpaid = client.post("/v1/billing/sync", json={"order_id": "order_Unpaid"}, headers=headers)
+            other = client.post("/v1/billing/sync", json={"order_id": "order_Other"}, headers=headers)
+    finally:
+        app.dependency_overrides.clear()
+    assert ok.status_code == 200 and ok.json()["plan"] == "pass" and ok.json()["remaining"] == 10
+    assert ("POST", "/payments/pay_Lost/capture", {"amount": 12900, "currency": "INR"}) in razorpay.requests
+    assert not any(path == "/payments/pay_Failed/capture" for _, path, _ in razorpay.requests)
+    grants = [call for call in fake.calls if call[:2] == ("POST", "look_grants")]
+    assert len(grants) == 1 and grants[0][2][0]["payment_ref"] == "order_Lost"
+    assert unpaid.status_code == 409 and other.status_code == 403
+
+
+def test_capture_race_with_auto_capture_still_grants(monkeypatch) -> None:
+    razorpay = FakeRazorpay({
+        "/orders/order_Race": {"id": "order_Race", "amount": 12900, "created_at": 1_790_000_000, "notes": {"user_id": AUTH_USER_ID, "plan": "pass"}},
+        "/payments/pay_Race": {"id": "pay_Race", "order_id": "order_Race", "amount": 12900, "currency": "INR", "status": "authorized"},
+    })
+    razorpay.install(monkeypatch)
+    original = _FAKE_HANDLERS["razorpay"]
+
+    def already_captured(request):
+        # Razorpay captured it on its own between our read and our capture call.
+        if request.url.path.endswith("/capture"):
+            razorpay.objects["/payments/pay_Race"] = {**razorpay.objects["/payments/pay_Race"], "status": "captured"}
+            return _httpx_module.Response(400, json={"error": {"description": "This payment has already been captured"}})
+        return original(request)
+
+    _FAKE_HANDLERS["razorpay"] = already_captured
+    fake = FakeSupabase(rows=[{"kind": "pass", "looks": 10, "used": 0, "expires_at": "2026-09-28T00:00:00+00:00"}])
+    try:
+        with _limit_client(fake, monkeypatch) as client:
+            headers = {"Authorization": f"Bearer {_email_token('buyer@example.com')}"}
+            ok = client.post("/v1/billing/confirm", headers=headers, json={
+                "razorpay_payment_id": "pay_Race", "razorpay_order_id": "order_Race", "razorpay_signature": _rzp_signature("order_Race|pay_Race")})
+    finally:
+        app.dependency_overrides.clear()
+    assert ok.status_code == 200 and ok.json()["remaining"] == 10

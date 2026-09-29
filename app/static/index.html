@@ -7,9 +7,9 @@
 <meta name="description" content="Paste links from Myntra, Amazon, AJIO and more. Mydripcheck puts the whole outfit on you, then sends you to each store to buy.">
 <meta name="theme-color" content="#C8175D">
 <meta name="robots" content="noindex,nofollow">
-<link rel="preconnect" href="https://api.fontshare.com">
-<link rel="preconnect" href="https://cdn.fontshare.com" crossorigin>
-<link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&display=swap">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400..800&display=swap">
 <style>
 @property --pos{syntax:'<percentage>';initial-value:50%;inherits:true}
 :root{
@@ -31,8 +31,8 @@
   --glow:0 10px 30px -10px rgba(216,27,100,.55);
   --scrim:rgba(23,18,28,.45);
   --r-s:10px; --r-m:14px; --r-l:22px;
-  --display:"Satoshi",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-  --body:"Satoshi",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --display:"Outfit",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --body:"Outfit",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   --ease:cubic-bezier(.2,.8,.2,1); --ease-in:cubic-bezier(.5,0,.75,0); --spring:cubic-bezier(.34,1.4,.64,1);
   --tab-h:64px; --safe-b:env(safe-area-inset-bottom,0px); --safe-t:env(safe-area-inset-top,0px);
   --z-bar:20; --z-float:25; --z-sheet:40; --z-toast:50;
@@ -633,6 +633,8 @@ h1,h2,h3{font-synthesis-weight:none}
 .lp-copy h1 .grad-text,.lp-head .grad-text,.cta-band .grad-text{font-style:normal;padding-right:.02em}
 .lookpill{white-space:nowrap;flex-shrink:0}
 @media (max-width:420px){.topbar-in{gap:4px}.topbar-in .spacer{min-width:4px}.lookpill{padding-left:12px;gap:6px}}
+@media (max-width:420px){a.brand{font-size:19px;gap:7px}}
+@media (max-width:380px){.lookpill .lbl{display:none}.lookpill{padding-left:10px}}
 .account-btn.signed{color:var(--accent-text);background:var(--accent-soft)}
 .account-btn.signed::after{content:"";position:absolute;right:8px;top:8px;width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 2px var(--surface)}
 .pw-wrap{position:relative;display:block}
@@ -655,7 +657,7 @@ h1,h2,h3{font-synthesis-weight:none}
     <div class="spacer"></div>
     <button class="iconbtn account-btn" data-act="account" id="accountBtn" aria-label="Sign in"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></button>
     <button class="iconbtn" data-act="theme" aria-label="Switch light or dark theme"><svg class="icon" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/></svg></button>
-    <button class="lookpill" data-act="go" data-view="builder" aria-label="Open your look"><svg class="icon s" viewBox="0 0 24 24"><path d="M6 7h12l-1 13H7z"/><path d="M9 7a3 3 0 0 1 6 0"/></svg>My look <span class="count num" id="lookCount">0</span></button>
+    <button class="lookpill" data-act="go" data-view="builder" aria-label="Open your look"><svg class="icon s" viewBox="0 0 24 24"><path d="M6 7h12l-1 13H7z"/><path d="M9 7a3 3 0 0 1 6 0"/></svg><span class="lbl">My look</span> <span class="count num" id="lookCount">0</span></button>
   </div>
 </header>
 <main id="view" tabindex="-1"></main>

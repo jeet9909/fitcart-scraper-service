@@ -1478,3 +1478,19 @@ def test_unlimited_is_rechecked_so_removing_an_email_revokes_it(monkeypatch) -> 
         app.dependency_overrides.clear()
     assert session["unlimited"] is True
     assert me["unlimited"] is False
+
+
+def test_gemini_draft_thought_images_are_skipped() -> None:
+    service = TryOnService(Settings(gemini_api_key="test"))
+    body = {"candidates": [{"content": {"parts": [
+        {"text": "Planning the composition", "thought": True},
+        {"inlineData": {"mimeType": "image/png", "data": "ZHJhZnQx"}, "thought": True},
+        {"inlineData": {"mimeType": "image/png", "data": "ZHJhZnQy"}, "thought": True},
+        {"inlineData": {"mimeType": "image/jpeg", "data": "ZmluYWw="}},
+        {"text": "Here is the try-on."},
+    ]}}]}
+    assert service._find_image(body) == {"data": "ZmluYWw=", "mime_type": "image/jpeg"}  # the final image, not a draft
+    only_drafts = {"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": "ZHJhZnQ="}, "thought": True}]}}]}
+    assert service._find_image(only_drafts)["data"] == "ZHJhZnQ="
+    older = {"candidates": [{"content": {"parts": [{"inline_data": {"mime_type": "image/png", "data": "b2xk"}}]}}]}
+    assert service._find_image(older) == {"data": "b2xk", "mime_type": "image/png"}  # gemini-2.5 style still works

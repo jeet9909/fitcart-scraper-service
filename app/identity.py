@@ -148,6 +148,10 @@ def lock_face(original: bytes, generated: bytes, output_mime: str = "image/png")
         # Poisson blending keeps the real eyes, nose and mouth but takes light and colour at the seam
         # from the generated image, so there is no visible edge or colour patch.
         blended = cv2.seamlessClone(warped, result, mask, (x + w // 2, y + h // 2), cv2.NORMAL_CLONE)
+        log.info(
+            "Face lock applied: eye distance %.0f px (photo) -> %.0f px (result), alignment error %.3f",
+            real.eye_distance, drawn.eye_distance, _alignment_error(real, drawn, matrix),
+        )
         extension = ".jpg" if output_mime == "image/jpeg" else ".webp" if output_mime == "image/webp" else ".png"
         params = [cv2.IMWRITE_JPEG_QUALITY, 95] if extension == ".jpg" else []
         ok, encoded = cv2.imencode(extension, blended, params)

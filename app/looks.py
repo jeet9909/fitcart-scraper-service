@@ -107,15 +107,20 @@ class LookLedger:
         plan = next((kind for kind in PAID_KINDS if kind in active_paid), "free")
         return LookBalanceResponse(**base, enforced=True, remaining=sum(g.remaining for g in grants), plan=plan, grants=grants)
 
-    async def has_plan(self, claims: dict, *plans: str) -> bool:
-        """True when the account has an active grant of any of these plans. Unlimited accounts, and servers
-        without look limits (local development), have every plan."""
+    async def plan_kinds(self, claims: dict) -> set[str]:
+        """Kinds of the account's active grants. {"*"} stands for every plan: unlimited accounts, and servers
+        without look limits (local development)."""
         if self.settings.is_unlimited(claims.get("email")) or not self._limits_active():
-            return True
+            return {"*"}
         if not claims.get("email"):
-            return False
+            return set()
         balance = await self.balance(claims)
-        return not balance.enforced or any(grant.kind in plans for grant in balance.grants)
+        return {"*"} if not balance.enforced else {grant.kind for grant in balance.grants}
+
+    async def has_plan(self, claims: dict, *plans: str) -> bool:
+        """True when the account has an active grant of any of these plans (unlimited accounts have all)."""
+        kinds = await self.plan_kinds(claims)
+        return "*" in kinds or bool(kinds & set(plans))
 
     async def paid_until(self, user_id: str, kind: str) -> datetime | None:
         """When the user's current grants of this plan run out, or None when they have none."""

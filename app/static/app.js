@@ -162,7 +162,6 @@ const icon = (n, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" aria
 const privatePill = (text = 'Private to you') => `<span class="private">${icon('lock','s')}${text}</span>`;
 const POSE_STD = '<svg class="fig" viewBox="0 0 44 56" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="22" cy="7" r="4.5"/><path d="M22 12v20M22 32l-5 20M22 32l5 20M22 16l-7 15M22 16l7 15"/></svg>';
 const POSE_KEEP = '<svg class="fig" viewBox="0 0 44 56" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="20" cy="7" r="4.5"/><path d="M20 12l3 18M23 30l-8 22M23 30l9 21M21 16l11 3 3-9M21 17l-10 5 5 8"/></svg>';
-const FIGURE = '<svg viewBox="0 0 120 220" aria-hidden="true"><ellipse cx="60" cy="30" rx="19" ry="23" fill="currentColor"/><path d="M60 58c-22 0-38 9-42 26l-8 64c-1 6 3 10 8 10h8l2 62h64l2-62h8c5 0 9-4 8-10l-8-64c-4-17-20-26-42-26z" fill="currentColor"/></svg>';
 const EMPTY_ART = '<svg class="art" viewBox="0 0 148 112" fill="none" aria-hidden="true"><rect x="8" y="14" width="132" height="4" rx="2" fill="var(--line-strong)"/><path d="M40 18v10" stroke="var(--line-strong)" stroke-width="3" stroke-linecap="round"/><path d="M40 28 20 44h40z" stroke="var(--accent)" stroke-width="3" stroke-linejoin="round" fill="var(--accent-soft)"/><path d="M26 44h28l4 50H22z" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="3" stroke-linejoin="round"/><path d="M76 18v10" stroke="var(--line-strong)" stroke-width="3" stroke-linecap="round"/><path d="M76 28 58 44h36z" stroke="var(--gold)" stroke-width="3" stroke-linejoin="round" fill="var(--gold-soft)"/><path d="M62 44h28v22l-4 32H78l-2-24-2 24h-8l-4-32z" fill="var(--gold-soft)" stroke="var(--gold)" stroke-width="3" stroke-linejoin="round"/><path d="M112 18v10" stroke="var(--line-strong)" stroke-width="3" stroke-linecap="round"/><rect x="99" y="30" width="26" height="30" rx="8" stroke="var(--line-strong)" stroke-width="3" stroke-dasharray="5 5"/><path d="M112 39v12M106 45h12" stroke="var(--muted)" stroke-width="3" stroke-linecap="round"/></svg>';
 
 /* ---------- Toast ---------- */
@@ -549,7 +548,7 @@ function generating(){
       <div class="gen-visual p1" id="genVisual" aria-hidden="true">
         <div class="layer l-photo"><img src="${state.photo || ''}" alt=""></div>
         <div class="layer l-aura"><i></i><i></i><i></i></div>
-        <div class="layer l-glass">${FIGURE}</div>
+        <div class="layer l-glass"></div>
         <div class="layer l-soft"><img id="genSoft" alt=""></div>
         <div class="layer l-sharp"><img id="genSharp" alt=""></div>
         <div class="layer l-scan"></div>

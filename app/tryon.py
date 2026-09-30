@@ -183,7 +183,7 @@ SPIN_VIEWS = {
 
 
 # Social-ready poses: the finished look redrawn in a pose and setting made for a feed post (4:5).
-# Plus gets the first three; Pro gets all of them. Keys are shared with the web app.
+# Plus gets the three that read best as posts; Pro gets all of them. Keys are shared with the web app.
 @dataclass(frozen=True)
 class SocialPose:
     key: str
@@ -197,27 +197,29 @@ SOCIAL_POSES: dict[str, SocialPose] = {pose.key: pose for pose in (
     SocialPose("street-walk", "Street walk", "plus",
                "walking towards the camera mid-stride, one foot forward, arms swinging naturally, relaxed confident expression",
                "a clean, softly lit city street with blurred shopfronts behind"),
-    SocialPose("pockets", "Hands in pockets", "plus",
-               "standing relaxed with weight on one leg, hands in pockets or resting on the hips if the outfit has no pockets, slight smile",
-               "a plain warm-toned wall with soft daylight and a gentle shadow"),
+    SocialPose("mirror-selfie", "Mirror selfie", "plus",
+               "taking a full-length mirror selfie holding a plain phone at chest height, the phone not covering the face",
+               "a tidy, bright bedroom or dressing area with a tall mirror"),
     SocialPose("over-shoulder", "Over the shoulder", "plus",
                "body turned three-quarters away, looking back over the shoulder at the camera",
                "a bright minimal studio with a soft beige backdrop"),
+    SocialPose("pockets", "Hands in pockets", "pro",
+               "standing relaxed with weight on one leg, hands in pockets or resting on the hips if the outfit has no pockets, slight smile",
+               "a plain warm-toned wall with soft daylight and a gentle shadow"),
     SocialPose("wall-lean", "Wall lean", "pro",
                "leaning one shoulder against a wall, legs crossed at the ankles, arms relaxed",
                "a textured light concrete wall in late-afternoon sun"),
     SocialPose("seated", "Seated", "pro",
-               "sitting on a simple stool or low steps, one leg extended, hands resting naturally, the whole outfit visible",
+               "sitting on a simple stool or low steps with both feet near the body, hands resting naturally, the camera at eye level so the "
+               "legs and feet keep natural proportions",
                "a calm, softly lit interior with neutral tones"),
     SocialPose("candid-laugh", "Candid laugh", "pro",
-               "a natural candid moment laughing and glancing away from the camera, relaxed shoulders",
+               "a genuine candid laugh with a wide natural smile, glancing slightly away from the camera, relaxed shoulders, mid-movement",
                "an outdoor terrace with soft golden-hour light and a blurred background"),
     SocialPose("power-stance", "Power stance", "pro",
-               "a confident editorial stance, feet apart, shoulders squared, chin slightly up, looking into the camera",
-               "a bold solid-colour studio backdrop that complements the outfit"),
-    SocialPose("mirror-selfie", "Mirror selfie", "pro",
-               "taking a full-length mirror selfie holding a plain phone at chest height, the phone not covering the face",
-               "a tidy, bright bedroom or dressing area with a tall mirror"),
+               "a bold editorial stance: feet planted wide, one hand on the hip, shoulders squared, chin slightly raised, a strong gaze into "
+               "the camera, photographed from a slightly low angle",
+               "a solid-colour studio backdrop that complements the outfit"),
 )}
 
 
@@ -225,10 +227,12 @@ def social_pose_prompt(pose: SocialPose) -> str:
     return (
         "Image 1 is a finished fashion photo of a person. Create a new photorealistic photo for a social media post of exactly this person "
         "wearing exactly this outfit: the same face, hairstyle, skin tone, body size and proportions, and every garment, colour, print, fabric, "
-        "fit, length and the shoes unchanged. Image 2 is their own photo, for their real face and build; image 3 is a product reference. "
+        "fit, length and the shoes unchanged. Do not add or remove any garment detail such as pockets, buttons, seams, logos or prints. "
+        "Image 2 is their own photo, for their real face and build; image 3 is a product reference. "
         + FACE_ACCESSORIES
         + f"Pose: {pose.pose}. Setting: {pose.setting}. "
-        "Vertical 4:5 framing like a fashion influencer post, the whole outfit clearly visible, natural flattering light, sharp focus on the person, "
+        "Vertical 4:5 framing like a fashion influencer post, showing the whole body from the top of the head to the shoes with a little space "
+        "around, so the complete outfit including the footwear is visible; nothing cropped. Natural flattering light, sharp focus on the person, "
         "shallow depth of field. Anatomically correct hands with five fingers each. One person, no text, no logo, no watermark, no borders, no collage."
     )
 

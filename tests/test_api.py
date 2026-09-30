@@ -361,7 +361,7 @@ def test_tryon_reuses_scraped_image_without_scraping_again() -> None:
             fetched.append(url)
             return _tiny_png(), "image/png", "png"
 
-        async def generate(self, person, product, category, product_name=None, pose="standard"):
+        async def generate(self, person, product, category, product_name=None, pose="standard", face_check=False):
             return _tiny_png(), "image/png", "png"
 
         async def save(self, user_id, person, product, result, category, product_source, product_url, items=None) -> GalleryItem:
@@ -653,7 +653,7 @@ def test_outfit_tryon_endpoint_uses_wardrobe_items() -> None:
         def ensure_configured(self) -> None:
             pass
 
-        async def generate_outfit(self, person, pieces, pose="standard"):
+        async def generate_outfit(self, person, pieces, pose="standard", face_check=False):
             calls["pieces"] = len(pieces)
             return _tiny_png(), "image/png", "png"
 
@@ -728,7 +728,7 @@ def test_tryon_with_extra_pieces_from_other_stores() -> None:
             calls["fetched"].append(url)
             return _tiny_png(), "image/png", "png"
 
-        async def generate_outfit(self, person, pieces, pose="standard"):
+        async def generate_outfit(self, person, pieces, pose="standard", face_check=False):
             calls["pose"] = pose
             calls["pieces"] = [(piece.category, piece.label) for piece in pieces]
             return _tiny_png(), "image/png", "png"
@@ -880,7 +880,7 @@ def test_tryon_passes_pose_and_rejects_unknown_pose() -> None:
         async def fetch_image(self, url: str):
             return _tiny_png(), "image/png", "png"
 
-        async def generate(self, person, product, category, product_name=None, pose="standard"):
+        async def generate(self, person, product, category, product_name=None, pose="standard", face_check=False):
             seen.append(pose)
             return _tiny_png(), "image/png", "png"
 
@@ -1146,7 +1146,7 @@ def test_no_looks_left_stops_before_generating(monkeypatch) -> None:
         app.dependency_overrides.clear()
     assert response.status_code == 402
     assert response.json()["detail"]["code"] == "no_looks_left"
-    assert fake.calls[0] == ("POST", "rpc/consume_look", {"p_user": AUTH_USER_ID, "p_free_looks": 3})
+    assert fake.calls[0] == ("POST", "rpc/consume_look", {"p_user": AUTH_USER_ID, "p_free_looks": 2})
 
 
 def test_failed_try_on_gives_the_look_back(monkeypatch) -> None:
@@ -1191,7 +1191,7 @@ def test_balance_adds_up_active_grants(monkeypatch) -> None:
     assert balance["remaining"] == 33 and balance["plan"] == "plus" and balance["signed_in"] is True
     assert [g["remaining"] for g in balance["grants"]] == [0, 8, 25]
     assert fake.paths()[0] == "rpc/ensure_free_looks"
-    assert guest == {"signed_in": False, "unlimited": False, "enforced": True, "remaining": None, "plan": "free", "free_looks_per_month": 3, "grants": []}
+    assert guest == {"signed_in": False, "unlimited": False, "enforced": True, "remaining": None, "plan": "free", "free_looks_per_month": 2, "grants": []}
 
 
 class FakeRazorpay:
@@ -1298,7 +1298,7 @@ def test_pass_payment_is_verified_captured_and_granted_once(monkeypatch) -> None
     assert ok.status_code == 200 and ok.json()["plan"] == "pass" and ok.json()["remaining"] == 10
     assert ("POST", "/payments/pay_Mine/capture", {"amount": 12900, "currency": "INR"}) in razorpay.requests
     grant = next(call for call in fake.calls if call[:2] == ("POST", "look_grants"))
-    assert grant[2][0]["payment_ref"] == "order_Mine" and grant[2][0]["looks"] == 10 and grant[2][0]["expires_at"].startswith("2026-09-28")
+    assert grant[2][0]["payment_ref"] == "order_Mine" and grant[2][0]["looks"] == 7 and grant[2][0]["expires_at"].startswith("2026-09-28")
     assert other.status_code == 403
 
 
@@ -1330,9 +1330,9 @@ def test_subscription_confirm_and_webhook_grant_plan_looks(monkeypatch) -> None:
     assert waiting.status_code == 409
     assert forged.status_code == 400 and year.status_code == 200 and paid.status_code == 200
     inserts = [call[2] for call in fake.calls if call[:2] == ("POST", "look_grants")]
-    assert inserts[0][0]["payment_ref"] == "sub_Mine:1790000000" and inserts[0][0]["looks"] == 25
+    assert inserts[0][0]["payment_ref"] == "sub_Mine:1790000000" and inserts[0][0]["looks"] == 18
     months = inserts[1]
-    assert len(months) == 12 and {row["looks"] for row in months} == {60} and months[1]["starts_at"] == months[0]["expires_at"]
+    assert len(months) == 12 and {row["looks"] for row in months} == {40} and months[1]["starts_at"] == months[0]["expires_at"]
     assert inserts[2][0]["payment_ref"] == "order_Hook" and inserts[2][0]["kind"] == "pass"
 
 
@@ -1573,7 +1573,7 @@ def test_capture_race_with_auto_capture_still_grants(monkeypatch) -> None:
     assert ok.status_code == 200 and ok.json()["remaining"] == 10
 
 
-def _spin_backend(rows_by_plan: list[dict], spin_paths: list[str] | None = None, patch_status: int = 200):
+def _spin_backend(rows_by_plan: list[dict], spin_paths: list[str] | None = None, patch_status: int = 200, grants_left: int = 99):
     """One fake for Supabase REST and storage plus Gemini, for the 360° view endpoint."""
     import base64
     import json as _json
@@ -1603,7 +1603,8 @@ def _spin_backend(rows_by_plan: list[dict], spin_paths: list[str] | None = None,
                 return _httpx.Response(patch_status, json={"message": "column spin_paths does not exist"})
             return _httpx.Response(200, json=[{**row, **body}])
         if path == "/rest/v1/rpc/consume_look":
-            return _httpx.Response(200, content=b'"g-1"', headers={"content-type": "application/json"})
+            spent = sum(1 for c in calls if c[1] == "/rest/v1/rpc/consume_look")
+            return _httpx.Response(200, content=b'"g-1"' if spent <= grants_left else b"null", headers={"content-type": "application/json"})
         if path in ("/rest/v1/rpc/refund_look", "/rest/v1/rpc/ensure_free_looks"):
             return _httpx.Response(204)
         if path == "/rest/v1/look_grants":
@@ -1625,7 +1626,7 @@ PRO_GRANT = {"kind": "pro", "looks": 60, "used": 2, "expires_at": "2099-01-01T00
 PLUS_GRANT = {"kind": "plus", "looks": 25, "used": 0, "expires_at": "2099-01-01T00:00:00+00:00"}
 
 
-def test_pro_look_gets_a_360_view_for_one_look(monkeypatch) -> None:
+def test_pro_look_gets_a_360_view_for_two_looks(monkeypatch) -> None:
     from app.tryon import SPIN_ANGLES
 
     row, calls, handler = _spin_backend([PRO_GRANT])
@@ -1642,7 +1643,7 @@ def test_pro_look_gets_a_360_view_for_one_look(monkeypatch) -> None:
     assert any("directly from behind" in p for p in prompts) and sum("full profile" in p for p in prompts) == 2
     patch = next(c for c in calls if c[0] == "PATCH")
     assert patch[2]["spin_paths"][0] == "u/l/result.jpg" and len(patch[2]["spin_paths"]) == 4
-    assert [c[1] for c in calls].count("/rest/v1/rpc/consume_look") == 1
+    assert [c[1] for c in calls].count("/rest/v1/rpc/consume_look") == 2
     assert "/rest/v1/rpc/refund_look" not in [c[1] for c in calls]
 
 
@@ -1677,7 +1678,7 @@ def test_failed_360_view_gives_the_look_back(monkeypatch) -> None:
     finally:
         app.dependency_overrides.clear()
     assert response.status_code == 503 and "spin_paths" in response.json()["detail"]
-    assert "/rest/v1/rpc/refund_look" in [c[1] for c in calls]
+    assert [c[1] for c in calls].count("/rest/v1/rpc/refund_look") == 2  # both looks come back
 
 
 def test_plans_are_prepaid_orders_without_autopay(monkeypatch) -> None:
@@ -1710,10 +1711,10 @@ def test_plans_are_prepaid_orders_without_autopay(monkeypatch) -> None:
     grants = [call[2] for call in fake.calls if call[:2] == ("POST", "look_grants")]
     yearly = next(rows for rows in grants if rows[0]["kind"] == "plus")
     assert len(yearly) == 12 and yearly[0]["payment_ref"] == "order_Year:0" and yearly[11]["payment_ref"] == "order_Year:11"
-    assert all(row["looks"] == 25 for row in yearly)
+    assert all(row["looks"] == 18 for row in yearly)
     assert yearly[0]["starts_at"].startswith("2026-09-21") and yearly[11]["expires_at"].startswith("2027-09-21")
     monthly = next(rows for rows in grants if rows[0]["kind"] == "pro")
-    assert len(monthly) == 1 and monthly[0]["looks"] == 60
+    assert len(monthly) == 1 and monthly[0]["looks"] == 40
     assert monthly[0]["starts_at"].startswith("2099-01-01") and monthly[0]["expires_at"].startswith("2099-02-01")
 
 
@@ -1868,3 +1869,79 @@ def test_face_signature_scores_the_same_face_higher_than_another() -> None:
     if real is None:  # the sample photo has no readable face at this size; the unit above covers the logic
         return
     assert _identity.face_match(real, before) > 0.99
+
+
+def test_360_view_with_one_look_left_refunds_it_and_explains(monkeypatch) -> None:
+    row, calls, handler = _spin_backend([PRO_GRANT], grants_left=1)
+    try:
+        with _spin_client(monkeypatch, handler) as client:
+            response = client.post(f"/v1/try-ons/{row['id']}/spin", headers={"Authorization": f"Bearer {_email_token('buyer@example.com')}"})
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 402 and response.json()["detail"]["code"] == "no_looks_left"
+    assert "2 looks" in response.json()["detail"]["message"]
+    assert [c[1] for c in calls].count("/rest/v1/rpc/refund_look") == 1  # the one look it did take
+    assert not any(c[2] and "contents" in c[2] for c in calls)  # nothing was drawn
+
+
+def test_face_check_runs_for_plus_and_pro_only(monkeypatch) -> None:
+    from app.models import GalleryItem
+
+    seen: list[bool] = []
+
+    class StubTryOn(TryOnService):  # real look counting, stubbed image work
+        def ensure_configured(self) -> None:
+            pass
+
+        async def fetch_image(self, url: str):
+            return _tiny_png(), "image/png", "png"
+
+        async def generate(self, person, product, category, product_name=None, pose="standard", face_check=False):
+            seen.append(face_check)
+            return _tiny_png(), "image/png", "png"
+
+        async def save(self, user_id, person, product, result, category, product_source, product_url, items=None) -> GalleryItem:
+            return GalleryItem(
+                id="1", anonymous_user_id=user_id, category=category, product_source=product_source, product_url=product_url,
+                person_image_url="https://example.com/p.png", product_image_url="https://example.com/i.png",
+                result_image_url="https://example.com/r.png", model="test", created_at=datetime(2026, 9, 23, tzinfo=UTC),
+            )
+
+    for rows in ([], [PASS_GRANT], [PLUS_GRANT], [PRO_GRANT]):
+        fake = FakeSupabase(grant="g-1", rows=rows)
+        try:
+            with _limit_client(fake, monkeypatch) as client:
+                stub = StubTryOn(LIMIT_SETTINGS)
+                app.dependency_overrides[get_tryon_service] = lambda: stub
+                response = client.post(
+                    "/v1/try-ons", headers={"Authorization": f"Bearer {_email_token('buyer@example.com')}"},
+                    files={"person_image": ("p.png", _tiny_png(), "image/png")},
+                    data={"product_image_url": "https://assets.myntassets.com/shirt.jpg"})
+        finally:
+            app.dependency_overrides.clear()
+        assert response.status_code == 200, response.text
+    assert seen == [False, False, True, True]  # free, pass, plus, pro
+
+
+def test_face_refine_without_check_is_one_pass_and_never_scored(monkeypatch) -> None:
+    import asyncio as _asyncio
+    import base64
+    import httpx as _httpx
+    from app import identity as _identity
+
+    calls: list[int] = []
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        calls.append(1)
+        return _httpx.Response(200, json={"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/jpeg", "data": base64.b64encode(_sample("tee")).decode()}}]}}]})
+
+    def no_scoring(*_args):
+        raise AssertionError("the identity check must not run without check")
+
+    monkeypatch.setattr("app.tryon.httpx.AsyncClient", lambda **kwargs: _REAL_ASYNC_CLIENT(transport=_httpx.MockTransport(handler), **kwargs))
+    monkeypatch.setattr(_identity, "face_signature", no_scoring)
+    monkeypatch.setattr(_identity, "face_match", no_scoring)
+    service = TryOnService(Settings(gemini_api_key="test"))
+    kept = _asyncio.run(service._refine_face((_sample("after"), "image/jpeg", "jpg"), (_sample("before"), "image/jpeg", "jpg"),
+                                             (_sample("before"), "image/jpeg"), "3:4", "test", check=False))
+    assert len(calls) == 1 and kept[0] == _sample("tee")

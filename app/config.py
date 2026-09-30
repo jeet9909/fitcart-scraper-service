@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     allowed_product_hosts_csv: str = Field(default="", validation_alias="ALLOWED_PRODUCT_HOSTS")
     unlimited_emails_csv: str = Field(default="", validation_alias="UNLIMITED_EMAILS")
     look_limits_enabled: bool = True
-    free_looks_per_month: int = Field(default=3, ge=0, le=100)
+    free_looks_per_month: int = Field(default=2, ge=0, le=100)
     razorpay_key_id: str = ""
     razorpay_key_secret: SecretStr = SecretStr("")
     razorpay_webhook_secret: SecretStr = SecretStr("")

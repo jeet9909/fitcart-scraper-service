@@ -60,7 +60,7 @@ def test_storefront_serves_approved_ui() -> None:
     with TestClient(app) as client:
         response = client.get("/")
     assert response.status_code == 200
-    assert "Mydripcheck" in response.text
+    assert "MyDripCheck" in response.text
     assert "static/config.js" in response.text
     assert "static/app.js" in response.text
 
@@ -1888,6 +1888,8 @@ def test_face_check_runs_for_plus_and_pro_only(monkeypatch) -> None:
     from app.models import GalleryItem
 
     seen: list[bool] = []
+    saved: list[bytes] = []
+    monkeypatch.setattr("app.main.watermark", lambda image: (b"marked:" + image[0], image[1], image[2]))
 
     class StubTryOn(TryOnService):  # real look counting, stubbed image work
         def ensure_configured(self) -> None:
@@ -1901,6 +1903,7 @@ def test_face_check_runs_for_plus_and_pro_only(monkeypatch) -> None:
             return _tiny_png(), "image/png", "png"
 
         async def save(self, user_id, person, product, result, category, product_source, product_url, items=None) -> GalleryItem:
+            saved.append(result[0])
             return GalleryItem(
                 id="1", anonymous_user_id=user_id, category=category, product_source=product_source, product_url=product_url,
                 person_image_url="https://example.com/p.png", product_image_url="https://example.com/i.png",
@@ -1921,6 +1924,7 @@ def test_face_check_runs_for_plus_and_pro_only(monkeypatch) -> None:
             app.dependency_overrides.clear()
         assert response.status_code == 200, response.text
     assert seen == [False, False, True, True]  # free, pass, plus, pro
+    assert [b.startswith(b"marked:") for b in saved] == [True, False, False, False]  # only the free plan is watermarked
 
 
 def test_face_refine_without_check_is_one_pass_and_never_scored(monkeypatch) -> None:
@@ -1945,3 +1949,21 @@ def test_face_refine_without_check_is_one_pass_and_never_scored(monkeypatch) -> 
     kept = _asyncio.run(service._refine_face((_sample("after"), "image/jpeg", "jpg"), (_sample("before"), "image/jpeg", "jpg"),
                                              (_sample("before"), "image/jpeg"), "3:4", "test", check=False))
     assert len(calls) == 1 and kept[0] == _sample("tee")
+
+
+def test_watermark_badge_sits_top_right_and_keeps_the_image() -> None:
+    import io
+    from PIL import Image
+    from app.branding import watermark
+
+    plain = Image.new("RGB", (600, 800), (200, 180, 160))
+    buffer = io.BytesIO(); plain.save(buffer, "JPEG", quality=95)
+    data, mime, ext = watermark((buffer.getvalue(), "image/jpeg", "jpg"))
+    marked = Image.open(io.BytesIO(data)).convert("RGB")
+    assert (mime, ext, marked.size) == ("image/jpeg", "jpg", (600, 800))
+    corner = marked.crop((600 - 160, 20, 600 - 20, 55))
+    top_left = marked.crop((0, 0, 100, 100))
+    assert max(abs(a - b) for a, b in zip(corner.resize((1, 1)).getpixel((0, 0)), (200, 180, 160))) > 25
+    assert max(abs(a - b) for a, b in zip(top_left.resize((1, 1)).getpixel((0, 0)), (200, 180, 160))) < 4
+    broken = (b"not an image", "image/png", "png")
+    assert watermark(broken) == broken  # never loses the look

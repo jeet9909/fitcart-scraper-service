@@ -830,13 +830,13 @@ function bindSpin(el){
 // Keys match SOCIAL_POSES in app/tryon.py.
 const SOCIAL_POSES = [
   {key:'street-walk', label:'Street walk', plan:'plus'},
-  {key:'pockets', label:'Hands in pockets', plan:'plus'},
+  {key:'mirror-selfie', label:'Mirror selfie', plan:'plus'},
   {key:'over-shoulder', label:'Over the shoulder', plan:'plus'},
+  {key:'pockets', label:'Hands in pockets', plan:'pro'},
   {key:'wall-lean', label:'Wall lean', plan:'pro'},
   {key:'seated', label:'Seated', plan:'pro'},
   {key:'candid-laugh', label:'Candid laugh', plan:'pro'},
   {key:'power-stance', label:'Power stance', plan:'pro'},
-  {key:'mirror-selfie', label:'Mirror selfie', plan:'pro'},
 ];
 function hasPlus(){ return hasPro() || state.balance?.plan === 'plus'; }
 function poseAllowed(p){ return p.plan === 'pro' ? hasPro() : hasPlus(); }

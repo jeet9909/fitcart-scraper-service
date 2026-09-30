@@ -1757,7 +1757,7 @@ def _pose(client, row, pose):
 def test_plus_gets_three_social_poses_and_pro_gets_all(monkeypatch) -> None:
     from app.tryon import SOCIAL_POSES
 
-    assert [p.key for p in SOCIAL_POSES.values() if p.plan == "plus"] == ["street-walk", "pockets", "over-shoulder"]
+    assert [p.key for p in SOCIAL_POSES.values() if p.plan == "plus"] == ["street-walk", "mirror-selfie", "over-shoulder"]
     assert len(SOCIAL_POSES) == 8
 
     row, calls, handler = _spin_backend([PLUS_GRANT])
@@ -1772,6 +1772,7 @@ def test_plus_gets_three_social_poses_and_pro_gets_all(monkeypatch) -> None:
     assert [(p["pose"], p["label"]) for p in walk.json()["pose_images"]] == [("street-walk", "Street walk")]
     prompt = next(c[2]["contents"][0]["parts"][0]["text"] for c in calls if c[2] and "contents" in c[2])
     assert "walking towards the camera" in prompt and "4:5" in prompt and "one single pair" in prompt
+    assert "to the shoes" in prompt and "pockets, buttons" in prompt
     gemini = [c[2] for c in calls if c[2] and "contents" in c[2]]
     assert all(g["generationConfig"]["imageConfig"]["aspectRatio"] == "4:5" for g in gemini)
     patch = next(c for c in calls if c[0] == "PATCH")
@@ -1793,7 +1794,7 @@ def test_social_poses_need_plus_and_are_free_once_made(monkeypatch) -> None:
     row, calls, handler = _spin_backend([PASS_GRANT])
     try:
         with _spin_client(monkeypatch, handler) as client:
-            pass_user = _pose(client, row, "pockets")
+            pass_user = _pose(client, row, "mirror-selfie")
     finally:
         app.dependency_overrides.clear()
     assert pass_user.status_code == 403 and pass_user.json()["detail"]["code"] == "plan_required"
@@ -1803,7 +1804,7 @@ def test_social_poses_need_plus_and_are_free_once_made(monkeypatch) -> None:
     row["pose_shots"] = [{"pose": "pockets", "path": "u/l/pose_pockets.jpg"}]
     try:
         with _spin_client(monkeypatch, handler) as client:
-            again = _pose(client, row, "pockets")
+            again = _pose(client, row, "pockets")  # made earlier: free, whatever the plan now
     finally:
         app.dependency_overrides.clear()
     assert again.status_code == 200 and again.json()["pose_images"][0]["label"] == "Hands in pockets"

@@ -1715,3 +1715,33 @@ def test_plans_are_prepaid_orders_without_autopay(monkeypatch) -> None:
     monthly = next(rows for rows in grants if rows[0]["kind"] == "pro")
     assert len(monthly) == 1 and monthly[0]["looks"] == 60
     assert monthly[0]["starts_at"].startswith("2099-01-01") and monthly[0]["expires_at"].startswith("2099-02-01")
+
+
+def test_network_errors_get_their_own_message_and_supabase_retries(monkeypatch) -> None:
+    import asyncio as _asyncio
+    import httpx as _httpx
+    from app.tryon import TryOnError
+
+    attempts = {"gemini": 0, "supabase": 0}
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        if "generativelanguage" in request.url.host:
+            attempts["gemini"] += 1
+            raise _httpx.ReadTimeout("slow", request=request)
+        attempts["supabase"] += 1
+        if attempts["supabase"] == 1:  # a pooled connection the server had closed
+            raise _httpx.RemoteProtocolError("Server disconnected", request=request)
+        return _httpx.Response(200, json=[])
+
+    real_client = _httpx.AsyncClient
+    monkeypatch.setattr("app.tryon.httpx.AsyncClient", lambda **kwargs: real_client(transport=_httpx.MockTransport(handler), **kwargs))
+    service = TryOnService(LIMIT_SETTINGS)
+    person = (_sample("before"), "image/jpeg", "jpg")
+    product = (_sample("shirt"), "image/jpeg", "jpg")
+    try:
+        _asyncio.run(service.generate(person, product, "top"))
+        raise AssertionError("expected a TryOnError")
+    except TryOnError as exc:
+        assert exc.status_code == 504 and "took too long" in str(exc)
+    rows = _asyncio.run(service.rest("GET", "look_grants"))
+    assert rows.status_code == 200 and attempts["supabase"] == 2

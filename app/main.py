@@ -50,6 +50,7 @@ from app.wardrobe import SLOT_LABELS, WardrobeService
 
 # Show the app's own INFO logs (face lock decisions, look grants) next to uvicorn's in the Render log.
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s: %(message)s")
+log = logging.getLogger("app.main")
 
 
 @asynccontextmanager
@@ -343,9 +344,11 @@ async def create_tryon(
     except ScrapeProviderError as exc:
         raise HTTPException(status_code=502, detail={"code": exc.code, "message": str(exc)}) from exc
     except TryOnError as exc:
+        log.warning("Try-on failed (%s): %s", exc.status_code, exc)
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail="Could not download the product image") from exc
+        log.exception("Try-on failed on a network error")
+        raise HTTPException(status_code=502, detail="Could not reach the image or storage service. Please try again.") from exc
 
 
 def _parse_outfit_items(raw: str | None, upload_count: int) -> list[OutfitExtraItem]:
@@ -386,9 +389,11 @@ async def create_outfit_tryon(
         product_url = next((item["product_url"] for item in summary if item.get("product_url")), None)
         return await service.save(user_id, person, pieces[0].image, result, category, "wardrobe", product_url, items=summary)
     except TryOnError as exc:
+        log.warning("Try-on failed (%s): %s", exc.status_code, exc)
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail="Could not reach the image or storage service") from exc
+        log.exception("Try-on failed on a network error")
+        raise HTTPException(status_code=502, detail="Could not reach the image or storage service. Please try again.") from exc
 
 
 @app.post("/v1/try-ons/{item_id}/spin", response_model=GalleryItem, tags=["virtual try-on"])
@@ -414,9 +419,11 @@ async def create_spin(
             await ledger.refund(reservation)
             raise
     except TryOnError as exc:
+        log.warning("Try-on failed (%s): %s", exc.status_code, exc)
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail="Could not reach the image or storage service") from exc
+        log.exception("Try-on failed on a network error")
+        raise HTTPException(status_code=502, detail="Could not reach the image or storage service. Please try again.") from exc
 
 
 @app.get("/v1/wardrobe", response_model=WardrobeResponse, tags=["wardrobe"])
@@ -477,9 +484,11 @@ async def add_wardrobe_item(
     except UnsafeUrlError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except TryOnError as exc:
+        log.warning("Try-on failed (%s): %s", exc.status_code, exc)
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail="Could not download the product image") from exc
+        log.exception("Try-on failed on a network error")
+        raise HTTPException(status_code=502, detail="Could not reach the image or storage service. Please try again.") from exc
 
 
 @app.delete("/v1/wardrobe/{item_id}", status_code=204, tags=["wardrobe"])

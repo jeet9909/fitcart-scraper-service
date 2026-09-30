@@ -38,13 +38,14 @@ from app.models import (
     OutfitSuggestionRequest,
     OutfitSuggestionResponse,
     ScrapeRequest,
+    SocialPoseRequest,
     ScrapeResponse,
     WardrobeItem,
     WardrobeResponse,
 )
 from app.scraper import BrightDataScraper, ScrapeProviderError
 from app.security import UnsafeUrlError, validate_public_url
-from app.tryon import MAX_OUTFIT_PIECES, OutfitPiece, TryOnError, TryOnService, validate_image
+from app.tryon import MAX_OUTFIT_PIECES, SOCIAL_POSES, OutfitPiece, TryOnError, TryOnService, validate_image
 from app.wardrobe import SLOT_LABELS, WardrobeService
 
 
@@ -423,6 +424,42 @@ async def create_spin(
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except httpx.HTTPError as exc:
         log.exception("Try-on failed on a network error")
+        raise HTTPException(status_code=502, detail="Could not reach the image or storage service. Please try again.") from exc
+
+
+@app.post("/v1/try-ons/{item_id}/poses", response_model=GalleryItem, tags=["virtual try-on"])
+async def create_social_pose(
+    item_id: UUID,
+    body: SocialPoseRequest,
+    claims: dict = Depends(get_session_claims),
+    service: TryOnService = Depends(get_tryon_service),
+    ledger: LookLedger = Depends(get_ledger),
+) -> GalleryItem:
+    """Plus and Pro: redraw a saved look in a social-ready pose (4:5). Plus has 3 poses, Pro all of them.
+    Uses one look per pose; a pose already made for this look is returned free."""
+    pose = SOCIAL_POSES.get(body.pose)
+    if pose is None:
+        raise HTTPException(status_code=422, detail=f"pose must be one of: {', '.join(SOCIAL_POSES)}")
+    try:
+        service.ensure_configured()
+        row = await service.get_gallery_row(claims["sub"], str(item_id))
+        if any(shot.get("pose") == pose.key for shot in row.get("pose_shots") or []):
+            return await service._to_item(row)
+        allowed = ("plus", "pro") if pose.plan == "plus" else ("pro",)
+        if not await ledger.has_plan(claims, *allowed):
+            code, message = ("pro_required", f"The {pose.label} pose is part of Pro.") if pose.plan == "pro" else ("plan_required", "Social poses are part of Plus and Pro.")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": code, "message": message})
+        reservation = await ledger.reserve(claims)
+        try:
+            return await service.create_social_pose(claims["sub"], row, pose)
+        except BaseException:
+            await ledger.refund(reservation)
+            raise
+    except TryOnError as exc:
+        log.warning("Social pose failed (%s): %s", exc.status_code, exc)
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except httpx.HTTPError as exc:
+        log.exception("Social pose failed on a network error")
         raise HTTPException(status_code=502, detail="Could not reach the image or storage service. Please try again.") from exc
 
 

@@ -16,7 +16,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app import identity
 from app.config import Settings
-from app.models import GalleryItem, GeminiUsageResponse, GeminiUsageSinceStart
+from app.models import GalleryItem, GeminiUsageResponse, GeminiUsageSinceStart, PoseImage
 
 log = logging.getLogger(__name__)
 
@@ -182,6 +182,57 @@ SPIN_VIEWS = {
 }
 
 
+# Social-ready poses: the finished look redrawn in a pose and setting made for a feed post (4:5).
+# Plus gets the first three; Pro gets all of them. Keys are shared with the web app.
+@dataclass(frozen=True)
+class SocialPose:
+    key: str
+    label: str
+    plan: str  # lowest plan that includes it: "plus" or "pro"
+    pose: str
+    setting: str
+
+
+SOCIAL_POSES: dict[str, SocialPose] = {pose.key: pose for pose in (
+    SocialPose("street-walk", "Street walk", "plus",
+               "walking towards the camera mid-stride, one foot forward, arms swinging naturally, relaxed confident expression",
+               "a clean, softly lit city street with blurred shopfronts behind"),
+    SocialPose("pockets", "Hands in pockets", "plus",
+               "standing relaxed with weight on one leg, hands in pockets or resting on the hips if the outfit has no pockets, slight smile",
+               "a plain warm-toned wall with soft daylight and a gentle shadow"),
+    SocialPose("over-shoulder", "Over the shoulder", "plus",
+               "body turned three-quarters away, looking back over the shoulder at the camera",
+               "a bright minimal studio with a soft beige backdrop"),
+    SocialPose("wall-lean", "Wall lean", "pro",
+               "leaning one shoulder against a wall, legs crossed at the ankles, arms relaxed",
+               "a textured light concrete wall in late-afternoon sun"),
+    SocialPose("seated", "Seated", "pro",
+               "sitting on a simple stool or low steps, one leg extended, hands resting naturally, the whole outfit visible",
+               "a calm, softly lit interior with neutral tones"),
+    SocialPose("candid-laugh", "Candid laugh", "pro",
+               "a natural candid moment laughing and glancing away from the camera, relaxed shoulders",
+               "an outdoor terrace with soft golden-hour light and a blurred background"),
+    SocialPose("power-stance", "Power stance", "pro",
+               "a confident editorial stance, feet apart, shoulders squared, chin slightly up, looking into the camera",
+               "a bold solid-colour studio backdrop that complements the outfit"),
+    SocialPose("mirror-selfie", "Mirror selfie", "pro",
+               "taking a full-length mirror selfie holding a plain phone at chest height, the phone not covering the face",
+               "a tidy, bright bedroom or dressing area with a tall mirror"),
+)}
+
+
+def social_pose_prompt(pose: SocialPose) -> str:
+    return (
+        "Image 1 is a finished fashion photo of a person. Create a new photorealistic photo for a social media post of exactly this person "
+        "wearing exactly this outfit: the same face, hairstyle, skin tone, body size and proportions, and every garment, colour, print, fabric, "
+        "fit, length and the shoes unchanged. Image 2 is their own photo, for their real face and build; image 3 is a product reference. "
+        + FACE_ACCESSORIES
+        + f"Pose: {pose.pose}. Setting: {pose.setting}. "
+        "Vertical 4:5 framing like a fashion influencer post, the whole outfit clearly visible, natural flattering light, sharp focus on the person, "
+        "shallow depth of field. Anatomically correct hands with five fingers each. One person, no text, no logo, no watermark, no borders, no collage."
+    )
+
+
 def spin_prompt(angle: int) -> str:
     return (
         "Image 1 is a finished fashion photo of a person. Redraw the same photo with the person " + SPIN_VIEWS[angle] + ". "
@@ -324,6 +375,38 @@ class TryOnService:
                 raise
             log.warning("360 view %s failed once, retrying: %s", angle, exc)
             return await self._generated_image(payload, "Gemini 360 view failed")
+
+    async def create_social_pose(self, user_id: str, row: dict[str, Any], pose: SocialPose) -> GalleryItem:
+        """Draw a saved look in a social pose, then fix the face against the real photo, and store it."""
+        look, person, product = await asyncio.gather(
+            self.download(row["result_path"]), self.download(row["person_path"]), self.download(row["product_path"]))
+        config = {"responseModalities": ["TEXT", "IMAGE"], "imageConfig": {"aspectRatio": "4:5"}}
+        payload = {"contents": [{"role": "user", "parts": [
+            {"text": social_pose_prompt(pose)}, self._inline_part(look), self._inline_part(person), self._inline_part(product),
+        ]}], "generationConfig": config}
+        image = await self._generated_image(payload, "Gemini social pose failed")
+        face = await asyncio.to_thread(identity.face_reference, person[0]) if self.settings.face_lock_enabled else None
+        if face and self.settings.face_refine_enabled:
+            # A new pose redraws the whole person, so the face drifts the same way as in the standard pose.
+            try:
+                refine = {"contents": [{"role": "user", "parts": [
+                    {"text": FACE_REFINE_PROMPT}, self._inline_part(image), self._inline_part((face[0], face[1], "jpg")), self._inline_part(person),
+                ]}], "generationConfig": config}
+                image = await self._generated_image(refine, "Gemini face refinement failed")
+            except TryOnError as exc:
+                log.warning("Face refinement skipped for pose %s: %s", pose.key, exc)
+        path = f"{user_id}/{row['id']}/pose_{pose.key}_{uuid4().hex[:8]}.{image[2]}"
+        await self._upload(path, image)
+        shots = [shot for shot in row.get("pose_shots") or [] if shot.get("pose") != pose.key] + [{"pose": pose.key, "path": path}]
+        response = await self.rest(
+            "PATCH", "try_on_gallery", params={"id": f"eq.{row['id']}", "anonymous_user_id": f"eq.{user_id}"},
+            json_body={"pose_shots": shots}, prefer="return=representation")
+        if response.status_code >= 400:
+            await self.delete_objects([path])
+            log.error("Could not save the social pose: %s %s", response.status_code, response.text[:300])
+            raise TryOnError("Could not save the pose. Run supabase/schema.sql to add the pose_shots column.", 503)
+        log.info("Social pose %s created for look %s", pose.key, row["id"])
+        return await self._to_item(response.json()[0])
 
     async def get_gallery_row(self, user_id: str, item_id: str) -> dict[str, Any]:
         response = await self.rest("GET", "try_on_gallery", params={"id": f"eq.{item_id}", "anonymous_user_id": f"eq.{user_id}", "select": "*"})
@@ -622,8 +705,11 @@ class TryOnService:
         if missing:
             raise TryOnError("Could not create a private gallery URL")
         spin = [signed[path] for path in row.get("spin_paths") or []]
-        return GalleryItem(id=row["id"], anonymous_user_id=row["anonymous_user_id"], category=row["category"], product_source=row["product_source"], product_url=row.get("product_url"), person_image_url=signed[row["person_path"]], product_image_url=signed[row["product_path"]], result_image_url=signed[row["result_path"]], model=row["model"], items=row.get("items") or [], spin_image_urls=spin, created_at=datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")))
+        poses = [PoseImage(pose=shot["pose"], label=SOCIAL_POSES[shot["pose"]].label if shot["pose"] in SOCIAL_POSES else shot["pose"], url=signed[shot["path"]])
+                 for shot in row.get("pose_shots") or []]
+        return GalleryItem(id=row["id"], anonymous_user_id=row["anonymous_user_id"], category=row["category"], product_source=row["product_source"], product_url=row.get("product_url"), person_image_url=signed[row["person_path"]], product_image_url=signed[row["product_path"]], result_image_url=signed[row["result_path"]], model=row["model"], items=row.get("items") or [], spin_image_urls=spin, pose_images=poses, created_at=datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")))
 
 
 def _row_paths(row: dict[str, Any]) -> list[str]:
-    return [row["person_path"], row["product_path"], row["result_path"], *(row.get("spin_paths") or [])]
+    return [row["person_path"], row["product_path"], row["result_path"], *(row.get("spin_paths") or []),
+            *(shot["path"] for shot in row.get("pose_shots") or [])]

@@ -156,7 +156,7 @@ const ic = {
   face:'<circle cx="12" cy="12" r="9"/><path d="M9 10h.01M15 10h.01M8.5 15a4.5 4.5 0 0 0 7 0"/>', body:'<circle cx="12" cy="4.5" r="2"/><path d="M12 7v8M8 10h8M12 15l-3 6M12 15l3 6"/>',
   info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>', alert:'<path d="M12 4 2.5 20h19z"/><path d="M12 10v4M12 17h.01"/>',
   user:'<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>', mail:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 7 8.5-7"/>',
-  swap:'<path d="m9 6-6 6 6 6M15 6l6 6-6 6"/>', spin:'<circle cx="12" cy="5" r="2"/><path d="M12 8v6"/><path d="M16.5 11.4c2.7.6 4.5 1.6 4.5 2.8 0 1.9-4 3.4-9 3.4s-9-1.5-9-3.4c0-1.2 1.8-2.2 4.5-2.8"/><path d="m14 15.6 2.4 2-2.4 2"/>', hanger:'<path d="M12 6a2 2 0 1 1 2 2c-1 0-2 .8-2 2v1"/><path d="M12 11 3 17.5a1 1 0 0 0 .6 1.8h16.8a1 1 0 0 0 .6-1.8z"/>',
+  swap:'<path d="m9 6-6 6 6 6M15 6l6 6-6 6"/>', download:'<path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/>', spin:'<circle cx="12" cy="5" r="2"/><path d="M12 8v6"/><path d="M16.5 11.4c2.7.6 4.5 1.6 4.5 2.8 0 1.9-4 3.4-9 3.4s-9-1.5-9-3.4c0-1.2 1.8-2.2 4.5-2.8"/><path d="m14 15.6 2.4 2-2.4 2"/>', hanger:'<path d="M12 6a2 2 0 1 1 2 2c-1 0-2 .8-2 2v1"/><path d="M12 11 3 17.5a1 1 0 0 0 .6 1.8h16.8a1 1 0 0 0 .6-1.8z"/>',
 };
 const icon = (n, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ic[n]}</svg>`;
 const privatePill = (text = 'Private to you') => `<span class="private">${icon('lock','s')}${text}</span>`;
@@ -250,13 +250,13 @@ function bindCompare(el){
 /* ---------- Plans (prices include 18% GST) ---------- */
 const PLANS = [
   {key:'free', name:'Free', for:'Try Mydripcheck on your next outfit.', monthly:0, yearly:0, looks:3, quality:'Standard', imports:15, stylist:1, wardrobe:25, cta:'Start free',
-   perks:['3 looks a month, any mix of stores','Standard quality','Wardrobe up to 25 items','1 AI stylist idea'], missing:['HD looks','Full Looks history','360° view']},
+   perks:['3 looks a month, any mix of stores','Standard quality','Wardrobe up to 25 items','1 AI stylist idea'], missing:['HD looks','Full Looks history','Social-ready poses','360° view']},
   {key:'pass', name:'Occasion Pass', for:'One-time pack for a wedding, festival or trip.', once:129, listOnce:149, days:7, looks:10, quality:'HD', imports:30, stylist:5, wardrobe:25, cta:'Buy the pass',
-   perks:['10 HD looks for 7 days','No autopay, pay once with UPI','5 AI stylist ideas','Stacks on any plan'], missing:['360° view']},
+   perks:['10 HD looks for 7 days','No autopay, pay once with UPI','5 AI stylist ideas','Stacks on any plan'], missing:['Social-ready poses','360° view']},
   {key:'plus', name:'Plus', for:'For people who shop online every month.', monthly:349, listMonthly:399, yearly:3299, looks:25, quality:'HD', imports:150, stylist:20, wardrobe:200, cta:'Get Plus', popular:true,
-   perks:['25 HD looks every month','Standard pose, head to toe','Wardrobe up to 200 items','20 AI stylist ideas','Full Looks history and HD downloads'], missing:['360° view']},
+   perks:['25 HD looks every month','3 social-ready poses for your posts','Standard pose, head to toe','Wardrobe up to 200 items','20 AI stylist ideas','Full Looks history and HD downloads'], missing:['360° view']},
   {key:'pro', name:'Pro', for:'For stylists, creators and big wardrobes.', monthly:799, listMonthly:999, yearly:7499, looks:60, quality:'HD', imports:300, stylist:40, wardrobe:1000, cta:'Get Pro',
-   perks:['360° view: spin your look to see the side and back','60 HD looks every month','Priority generation','Wardrobe up to 1,000 items','40 AI stylist ideas'], missing:[]},
+   perks:['360° view: spin your look to see the side and back','All 8 social-ready poses','60 HD looks every month','Priority generation','Wardrobe up to 1,000 items','40 AI stylist ideas'], missing:[]},
 ];
 // Shown price, crossed-out list price and the discount between them. Yearly plans compare the
 // monthly equivalent with the monthly list price.
@@ -677,7 +677,7 @@ function finishGeneration(){
   later(() => {
     const item = g.result;
     const look = {id:item.id, img:item.result_image_url, before:state.photo, title:orderedLook().map(p => short(p.item)).join(', '),
-      items:orderedLook().map(p => ({item:{...p.item}, size:p.size})), pose:state.pose, editable:true, spin:item.spin_image_urls || []};
+      items:orderedLook().map(p => ({item:{...p.item}, size:p.size})), pose:state.pose, editable:true, spin:item.spin_image_urls || [], poses:item.pose_images || []};
     state.current = look; state.justGenerated = true; state.resultMode = 'compare'; state.spinIndex = 0;
     if (Number.isFinite(state.balance?.remaining)) state.balance.remaining = Math.max(0, state.balance.remaining - 1);
     loadBalance();
@@ -720,6 +720,7 @@ function result(){
         <button class="action" data-act="toggle-pose" ${look.editable ? '' : 'disabled'}>${icon('body')}${look.pose === 'keep' ? 'Standard pose' : 'My pose'}</button>
       </div>
       ${spinCard(look)}
+      ${posesCard(look)}
       <div class="card feedback"><span style="font-weight:700">Does this look like you?</span><div class="thumbs"><button class="btn ghost small" data-act="feedback">${icon('up','s')} Yes</button><button class="btn ghost small" data-act="feedback-no">${icon('down','s')} Not quite</button></div></div>
       <p class="tiny muted">AI preview of appearance only. Check each store's size chart before buying.</p>
     </div>
@@ -825,6 +826,109 @@ function bindSpin(el){
   }
 }
 
+/* ---------- Social-ready poses (Plus: 3, Pro: all) ---------- */
+// Keys match SOCIAL_POSES in app/tryon.py.
+const SOCIAL_POSES = [
+  {key:'street-walk', label:'Street walk', plan:'plus'},
+  {key:'pockets', label:'Hands in pockets', plan:'plus'},
+  {key:'over-shoulder', label:'Over the shoulder', plan:'plus'},
+  {key:'wall-lean', label:'Wall lean', plan:'pro'},
+  {key:'seated', label:'Seated', plan:'pro'},
+  {key:'candid-laugh', label:'Candid laugh', plan:'pro'},
+  {key:'power-stance', label:'Power stance', plan:'pro'},
+  {key:'mirror-selfie', label:'Mirror selfie', plan:'pro'},
+];
+function hasPlus(){ return hasPro() || state.balance?.plan === 'plus'; }
+function poseAllowed(p){ return p.plan === 'pro' ? hasPro() : hasPlus(); }
+function posesCard(look){
+  if (!look.id) return '';
+  const made = look.poses || [];
+  const busy = state.posing?.lookId === look.id ? state.posing.pose : null;
+  const plus = hasPlus();
+  const shots = made.length ? `<div class="pose-shots">${made.map(m => `<figure class="pose-shot">
+      <img src="${esc(m.url)}" alt="${esc(m.label)} pose" loading="lazy">
+      <figcaption><span>${esc(m.label)}</span><span class="pose-shot-actions">
+        <button class="icon-btn" data-act="pose-download" data-pose="${esc(m.pose)}" aria-label="Download ${esc(m.label)} photo">${icon('download','s')}</button>
+        <button class="icon-btn" data-act="pose-share" data-pose="${esc(m.pose)}" aria-label="Share ${esc(m.label)} photo">${icon('share','s')}</button>
+      </span></figcaption></figure>`).join('')}</div>` : '';
+  const chips = SOCIAL_POSES.filter(p => !made.some(m => m.pose === p.key)).map(p => {
+    const allowed = poseAllowed(p);
+    const isBusy = busy === p.key;
+    return `<button class="pose-chip${allowed ? '' : ' locked'}" data-act="make-pose" data-pose="${p.key}" ${busy ? 'disabled' : ''} ${isBusy ? 'aria-busy="true"' : ''}>
+      ${isBusy ? '<span class="spin-loader"></span>' : allowed ? icon('spark','s') : icon('lock','s')}<span>${esc(p.label)}</span>${!allowed && p.plan === 'pro' && plus ? '<span class="tag pro">Pro</span>' : ''}</button>`;
+  }).join('');
+  const hint = busy ? `Posing you for “${esc(SOCIAL_POSES.find(p => p.key === busy)?.label || '')}”. About 30–60 seconds.`
+    : plus ? `Ready-to-post 4:5 photos of this look. Each new pose uses 1 look.${hasPro() ? '' : ' Pro unlocks all 8.'}`
+    : 'Turn this look into ready-to-post photos. Plus has 3 poses, Pro has 8.';
+  return `<div class="card poses-card">
+    <div><p style="font-weight:700">Social-ready poses ${plus ? '' : '<span class="tag pro">Plus</span>'}</p><p class="small muted">${hint}</p></div>
+    ${shots}
+    ${chips ? `<div class="pose-chips">${chips}</div>` : ''}
+    ${plus ? '' : `<button class="btn small ghost" data-act="go" data-view="pricing">See Plus and Pro</button>`}
+  </div>`;
+}
+async function makePose(key){
+  const look = state.current;
+  const pose = SOCIAL_POSES.find(p => p.key === key);
+  if (!look?.id || !pose || state.posing) return;
+  if (!poseAllowed(pose)){
+    go('pricing');
+    toast(pose.plan === 'pro' && hasPlus() ? `The ${pose.label} pose is part of Pro.` : 'Social poses are part of Plus and Pro.', {kind:'info'});
+    return;
+  }
+  state.posing = {lookId:look.id, pose:key}; render();
+  try {
+    const item = await api(`/v1/try-ons/${encodeURIComponent(look.id)}/poses`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({pose:key})});
+    look.poses = item.pose_images || [];
+    state.gallery = null;
+    if (Number.isFinite(state.balance?.remaining)) state.balance.remaining = Math.max(0, state.balance.remaining - 1);
+    loadBalance();
+    toast(`Your ${pose.label} photo is ready to post.`);
+  } catch (err){
+    if (err.code === 'pro_required' || err.code === 'plan_required'){ go('pricing'); toast(err.message, {kind:'info'}); }
+    else if (err.code === 'no_looks_left'){ loadBalance(); outOfLooks(); }
+    else toast(err.message, {kind:'error'});
+  } finally {
+    state.posing = null;
+    if (state.view === 'result'){
+      render();
+      document.querySelector('.pose-shot:last-child')?.scrollIntoView({behavior: REDUCED.matches ? 'auto' : 'smooth', block:'nearest', inline:'end'});
+    }
+  }
+}
+async function poseFile(key){
+  const shot = (state.current?.poses || []).find(m => m.pose === key);
+  if (!shot) return null;
+  const res = await fetch(shot.url);
+  if (!res.ok) throw Error('Could not load the photo.');
+  const blob = await res.blob();
+  const ext = (blob.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+  return {shot, file:new File([blob], `mydripcheck-${key}.${ext}`, {type:blob.type || 'image/jpeg'})};
+}
+async function downloadPose(key){
+  try {
+    const got = await poseFile(key); if (!got) return;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(got.file); a.download = got.file.name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  } catch {
+    // The image host may refuse a direct download; opening it still lets people save it.
+    const shot = (state.current?.poses || []).find(m => m.pose === key);
+    if (shot) window.open(shot.url, '_blank', 'noopener');
+  }
+}
+async function sharePose(key){
+  try {
+    const got = await poseFile(key); if (!got) return;
+    if (navigator.canShare?.({files:[got.file]})){ await navigator.share({files:[got.file], title:'My Mydripcheck look'}); return; }
+    await downloadPose(key);
+    toast('Saved to your device. Post it from your gallery.', {kind:'info'});
+  } catch (err){
+    if (err.name !== 'AbortError') downloadPose(key);
+  }
+}
+
 /* ---------- Wardrobe ---------- */
 const OCCASIONS = ['Office', 'Weekend', 'Date night', 'Wedding guest', 'Festive'];
 async function loadWardrobe(force = false){
@@ -907,7 +1011,7 @@ function lookFromGallery(g){
     item:{id:'g-' + i, slot:it.slot || 'top', name:it.name || it.category || 'Item', store:it.store || (it.product_url ? storeName((() => { try { return new URL(it.product_url).hostname; } catch { return ''; } })()) : ''), price:it.price ?? null, url:it.product_url || null, img:i === 0 ? g.product_image_url : '', source:it.collection === 'home' ? 'owned' : 'store'},
     size:it.size || null,
   }));
-  return {id:g.id, img:g.result_image_url, before:g.person_image_url, title:galleryTitle(g), items, pose:'standard', editable:false, spin:g.spin_image_urls || []};
+  return {id:g.id, img:g.result_image_url, before:g.person_image_url, title:galleryTitle(g), items, pose:'standard', editable:false, spin:g.spin_image_urls || [], poses:g.pose_images || []};
 }
 
 /* ---------- Account ---------- */
@@ -1387,6 +1491,9 @@ document.addEventListener('click', e => {
     case 'delete-item': deleteItem(t.dataset.id); break;
     case 'open-look': { const g = state.gallery.find(x => x.id === t.dataset.id); state.current = lookFromGallery(g); state.resultMode = state.current.spin.length ? 'spin' : 'compare'; state.spinIndex = 0; go('result'); break; }
     case 'make-spin': makeSpin(); break;
+    case 'make-pose': makePose(t.dataset.pose); break;
+    case 'pose-download': downloadPose(t.dataset.pose); break;
+    case 'pose-share': sharePose(t.dataset.pose); break;
     case 'result-mode': state.resultMode = t.dataset.mode; if (t.dataset.mode === 'spin') state.spinIndex = 0; render(); document.querySelector(`[data-act="result-mode"][data-mode="${t.dataset.mode}"]`)?.focus(); break;
     case 'spin-to': { const el = t.closest('.spin360'); el?.classList.add('used'); el?._show?.(Number(t.dataset.index)); break; }
     case 'billing': state.billing = t.dataset.billing; render(); document.querySelector(`[data-act="billing"][data-billing="${state.billing}"]`)?.focus(); break;

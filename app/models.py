@@ -122,6 +122,16 @@ class BillingConfigResponse(BaseModel):
     provider: Literal["razorpay"] = "razorpay"
 
 
+class PoseImage(BaseModel):
+    pose: str
+    label: str
+    url: str
+
+
+class SocialPoseRequest(BaseModel):
+    pose: str = Field(max_length=40)
+
+
 class GalleryItem(BaseModel):
     id: str
     anonymous_user_id: str
@@ -134,6 +144,7 @@ class GalleryItem(BaseModel):
     model: str
     items: list[dict] = Field(default_factory=list, description="Wardrobe items worn in an outfit try-on")
     spin_image_urls: list[str] = Field(default_factory=list, description="360° view (Pro): front, right side, back, left side; empty until created")
+    pose_images: list[PoseImage] = Field(default_factory=list, description="Social-ready poses made from this look (Plus and Pro)")
     created_at: datetime
 
 

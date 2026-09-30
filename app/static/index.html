@@ -663,6 +663,25 @@ h1,h2,h3{font-synthesis-weight:none}
 @media (min-width:900px){.result-visual .spin360{height:min(calc(100vh - 230px),760px);min-height:520px;width:auto;max-width:100%;margin-inline:auto}}
 @media (max-width:380px){.spin-dots button{min-width:40px;padding:0 7px;font-size:11px}}
 @media (prefers-reduced-motion:reduce){.spin360 img{transition:none}}
+
+/* Social-ready poses (Plus and Pro) */
+.poses-card{display:grid;gap:12px;padding:16px 18px}
+.pose-chips{display:flex;flex-wrap:wrap;gap:8px}
+.pose-chip{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 14px;border-radius:999px;border:1px solid var(--line-strong);background:var(--surface);font-weight:700;font-size:14px;color:var(--ink-2);transition:background-color .2s var(--ease),border-color .2s var(--ease),transform .15s var(--ease)}
+.pose-chip:hover:not(:disabled){border-color:var(--accent);color:var(--accent-text)}
+.pose-chip:active:not(:disabled){transform:scale(.97)}
+.pose-chip:disabled{opacity:.55}
+.pose-chip[aria-busy="true"]{opacity:1;border-color:var(--accent);color:var(--accent-text)}
+.pose-chip.locked{color:var(--muted);background:var(--surface-2);border-style:dashed}
+.pose-chip .tag.pro{margin-left:2px;vertical-align:0}
+.pose-shots{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(150px,46%);gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;padding-bottom:4px;margin-inline:-4px;padding-inline:4px}
+.pose-shot{display:grid;gap:6px;margin:0;scroll-snap-align:start}
+.pose-shot img{width:100%;aspect-ratio:4/5;object-fit:cover;border-radius:var(--r-m);background:var(--photo)}
+.pose-shot figcaption{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:13px;font-weight:700}
+.pose-shot figcaption>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pose-shot-actions{display:flex;gap:2px;flex-shrink:0}
+.icon-btn{width:40px;height:40px;display:grid;place-items:center;border-radius:12px;color:var(--ink-2);transition:background-color .2s var(--ease)}
+.icon-btn:hover{background:var(--surface-2)}
 </style>
 </head>
 <body>

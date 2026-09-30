@@ -226,6 +226,23 @@ class TryOnService:
             self._pool = (loop, httpx.AsyncClient(timeout=60, limits=httpx.Limits(max_connections=20, max_keepalive_connections=10)))
         yield self._pool[1]
 
+    async def _sb(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        """A Supabase request on the pooled client. A pooled connection the server already closed fails
+        with a transport error on first use, so that is retried once on a fresh client."""
+        for attempt in range(2):
+            try:
+                async with self._supabase() as client:
+                    return await client.request(method, url, **kwargs)
+            except httpx.TransportError as exc:
+                if attempt:
+                    log.warning("Supabase %s failed twice: %r", method, exc)
+                    raise TryOnError("Could not reach the storage service. Please try again.", 502) from exc
+                log.info("Supabase %s failed (%r), retrying on a new connection", method, exc)
+                if self._pool:
+                    await self._pool[1].aclose()
+                self._pool = None
+        raise AssertionError("unreachable")
+
     def ensure_configured(self) -> None:
         missing = []
         if not self.settings.gemini_api_key.get_secret_value(): missing.append("GEMINI_API_KEY")
@@ -236,9 +253,13 @@ class TryOnService:
             raise TryOnError(f"Try-on service is not configured: {', '.join(missing)}", 503)
 
     async def fetch_image(self, url: str) -> tuple[bytes, str, str]:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
-            response = await client.get(url, headers={"User-Agent": "FitCart/1.0"})
-            response.raise_for_status()
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
+                response = await client.get(url, headers={"User-Agent": "FitCart/1.0"})
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            log.warning("Product image download failed for %s: %r", url[:200], exc)
+            raise TryOnError("Could not download the product image. Try another photo of it, or upload it.", 502) from exc
         from app.security import validate_public_url
         validate_public_url(str(response.url))
         return validate_image(response.content, response.headers.get("content-type", "").split(";")[0], self.settings.max_image_bytes)
@@ -371,11 +392,25 @@ class TryOnService:
         async with httpx.AsyncClient(timeout=180) as client:
             for attempt in range(2):
                 self.usage.requests += 1
-                response = await client.post(
-                    f"{self._model_url(model)}:generateContent",
-                    headers={"x-goog-api-key": self.settings.gemini_api_key.get_secret_value()},
-                    json=payload,
-                )
+                try:
+                    response = await client.post(
+                        f"{self._model_url(model)}:generateContent",
+                        headers={"x-goog-api-key": self.settings.gemini_api_key.get_secret_value()},
+                        json=payload,
+                    )
+                except httpx.TimeoutException as exc:
+                    self.usage.failed += 1
+                    self.usage.last_error = f"timeout: {exc!r}"
+                    log.warning("%s: Gemini timed out", failure)
+                    raise TryOnError("The image model took too long to answer. Please try again.", 504) from exc
+                except httpx.HTTPError as exc:
+                    self.usage.failed += 1
+                    self.usage.last_error = f"network: {exc!r}"
+                    if attempt:
+                        log.warning("%s: Gemini unreachable: %r", failure, exc)
+                        raise TryOnError("Could not reach the image model. Please try again.", 502) from exc
+                    log.info("%s: Gemini connection failed (%r), retrying", failure, exc)
+                    continue
                 if response.status_code != 429:
                     break
                 quota = _quota_details(response)
@@ -513,15 +548,14 @@ class TryOnService:
 
     async def _upload(self, path: str, image: tuple[bytes, str, str]) -> None:
         url = f"{self.settings.supabase_url.rstrip('/')}/storage/v1/object/{self.settings.supabase_storage_bucket}/{quote(path)}"
-        async with self._supabase() as client:
-            response = await client.post(url, headers={**self._headers, "Content-Type": image[1], "x-upsert": "false"}, content=image[0])
+        # Paths are unique, so upsert only matters when a retried upload had in fact already landed.
+        response = await self._sb("POST", url, headers={**self._headers, "Content-Type": image[1], "x-upsert": "true"}, content=image[0])
         if response.status_code >= 400:
             raise TryOnError("Could not save image to the private gallery")
 
     async def download(self, path: str) -> tuple[bytes, str, str]:
         url = f"{self.settings.supabase_url.rstrip('/')}/storage/v1/object/{self.settings.supabase_storage_bucket}/{quote(path)}"
-        async with self._supabase() as client:
-            response = await client.get(url, headers=self._headers)
+        response = await self._sb("GET", url, headers=self._headers)
         if response.status_code >= 400:
             raise TryOnError("Could not read a saved wardrobe image")
         return validate_image(response.content, response.headers.get("content-type", "").split(";")[0], 20_000_000)
@@ -530,20 +564,18 @@ class TryOnService:
         if not paths:
             return
         url = f"{self.settings.supabase_url.rstrip('/')}/storage/v1/object/{self.settings.supabase_storage_bucket}"
-        async with self._supabase() as client:
-            await client.request("DELETE", url, headers={**self._headers, "Content-Type": "application/json"}, json={"prefixes": paths})
+        await self._sb("DELETE", url, headers={**self._headers, "Content-Type": "application/json"}, json={"prefixes": paths})
 
     async def signed_urls(self, paths: list[str]) -> dict[str, str]:
         """Sign many private objects in one request."""
         if not paths:
             return {}
         base = self.settings.supabase_url.rstrip("/")
-        async with self._supabase() as client:
-            response = await client.post(
-                f"{base}/storage/v1/object/sign/{self.settings.supabase_storage_bucket}",
-                headers={**self._headers, "Content-Type": "application/json"},
-                json={"expiresIn": self.settings.gallery_signed_url_seconds, "paths": paths},
-            )
+        response = await self._sb(
+            "POST", f"{base}/storage/v1/object/sign/{self.settings.supabase_storage_bucket}",
+            headers={**self._headers, "Content-Type": "application/json"},
+            json={"expiresIn": self.settings.gallery_signed_url_seconds, "paths": paths},
+        )
         if response.status_code >= 400:
             raise TryOnError("Could not create private wardrobe URLs")
         signed: dict[str, str] = {}
@@ -557,8 +589,7 @@ class TryOnService:
         headers = {**self._headers, "Content-Type": "application/json"}
         if prefer:
             headers["Prefer"] = prefer
-        async with self._supabase() as client:
-            return await client.request(method, f"{self.settings.supabase_url.rstrip('/')}/rest/v1/{table}", headers=headers, params=params, json=json_body)
+        return await self._sb(method, f"{self.settings.supabase_url.rstrip('/')}/rest/v1/{table}", headers=headers, params=params, json=json_body)
 
     async def upload(self, path: str, image: tuple[bytes, str, str]) -> None:
         await self._upload(path, image)
@@ -571,16 +602,14 @@ class TryOnService:
         row = {"id": item_id, "anonymous_user_id": user_id, "category": category, "product_source": product_source, "product_url": product_url, "person_path": paths["person"], "product_path": paths["product"], "result_path": paths["result"], "model": self.settings.gemini_image_model}
         if items:
             row["items"] = items
-        async with self._supabase() as client:
-            response = await client.post(f"{self.settings.supabase_url.rstrip('/')}/rest/v1/try_on_gallery", headers={**self._headers, "Content-Type": "application/json", "Prefer": "return=representation"}, json=row)
+        response = await self._sb("POST", f"{self.settings.supabase_url.rstrip('/')}/rest/v1/try_on_gallery", headers={**self._headers, "Content-Type": "application/json", "Prefer": "return=representation"}, json=row)
         if response.status_code >= 400: raise TryOnError("Could not save the gallery record")
         created = response.json()[0]
         return await self._to_item(created)
 
     async def list_gallery(self, user_id: str) -> list[GalleryItem]:
         params = {"anonymous_user_id": f"eq.{user_id}", "select": "*", "order": "created_at.desc"}
-        async with self._supabase() as client:
-            response = await client.get(f"{self.settings.supabase_url.rstrip('/')}/rest/v1/try_on_gallery", headers=self._headers, params=params)
+        response = await self._sb("GET", f"{self.settings.supabase_url.rstrip('/')}/rest/v1/try_on_gallery", headers=self._headers, params=params)
         if response.status_code >= 400: raise TryOnError("Could not load the gallery")
         rows = response.json()
         signed = await self.signed_urls([path for row in rows for path in _row_paths(row)])

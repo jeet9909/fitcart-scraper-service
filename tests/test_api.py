@@ -1745,3 +1745,77 @@ def test_network_errors_get_their_own_message_and_supabase_retries(monkeypatch) 
         assert exc.status_code == 504 and "took too long" in str(exc)
     rows = _asyncio.run(service.rest("GET", "look_grants"))
     assert rows.status_code == 200 and attempts["supabase"] == 2
+
+
+PASS_GRANT = {"kind": "pass", "looks": 10, "used": 0, "expires_at": "2099-01-01T00:00:00+00:00"}
+
+
+def _pose(client, row, pose):
+    return client.post(f"/v1/try-ons/{row['id']}/poses", json={"pose": pose}, headers={"Authorization": f"Bearer {_email_token('buyer@example.com')}"})
+
+
+def test_plus_gets_three_social_poses_and_pro_gets_all(monkeypatch) -> None:
+    from app.tryon import SOCIAL_POSES
+
+    assert [p.key for p in SOCIAL_POSES.values() if p.plan == "plus"] == ["street-walk", "pockets", "over-shoulder"]
+    assert len(SOCIAL_POSES) == 8
+
+    row, calls, handler = _spin_backend([PLUS_GRANT])
+    try:
+        with _spin_client(monkeypatch, handler) as client:
+            walk = _pose(client, row, "street-walk")
+            locked = _pose(client, row, "seated")
+            unknown = _pose(client, row, "handstand")
+    finally:
+        app.dependency_overrides.clear()
+    assert walk.status_code == 200, walk.text
+    assert [(p["pose"], p["label"]) for p in walk.json()["pose_images"]] == [("street-walk", "Street walk")]
+    prompt = next(c[2]["contents"][0]["parts"][0]["text"] for c in calls if c[2] and "contents" in c[2])
+    assert "walking towards the camera" in prompt and "4:5" in prompt and "one single pair" in prompt
+    gemini = [c[2] for c in calls if c[2] and "contents" in c[2]]
+    assert all(g["generationConfig"]["imageConfig"]["aspectRatio"] == "4:5" for g in gemini)
+    patch = next(c for c in calls if c[0] == "PATCH")
+    assert patch[2]["pose_shots"][0]["pose"] == "street-walk" and "pose_street-walk_" in patch[2]["pose_shots"][0]["path"]
+    assert locked.status_code == 403 and locked.json()["detail"]["code"] == "pro_required"
+    assert unknown.status_code == 422
+    assert [c[1] for c in calls].count("/rest/v1/rpc/consume_look") == 1
+
+    row, calls, handler = _spin_backend([PRO_GRANT])
+    try:
+        with _spin_client(monkeypatch, handler) as client:
+            seated = _pose(client, row, "seated")
+    finally:
+        app.dependency_overrides.clear()
+    assert seated.status_code == 200 and seated.json()["pose_images"][0]["pose"] == "seated"
+
+
+def test_social_poses_need_plus_and_are_free_once_made(monkeypatch) -> None:
+    row, calls, handler = _spin_backend([PASS_GRANT])
+    try:
+        with _spin_client(monkeypatch, handler) as client:
+            pass_user = _pose(client, row, "pockets")
+    finally:
+        app.dependency_overrides.clear()
+    assert pass_user.status_code == 403 and pass_user.json()["detail"]["code"] == "plan_required"
+    assert "/rest/v1/rpc/consume_look" not in [c[1] for c in calls]
+
+    row, calls, handler = _spin_backend([PASS_GRANT])
+    row["pose_shots"] = [{"pose": "pockets", "path": "u/l/pose_pockets.jpg"}]
+    try:
+        with _spin_client(monkeypatch, handler) as client:
+            again = _pose(client, row, "pockets")
+    finally:
+        app.dependency_overrides.clear()
+    assert again.status_code == 200 and again.json()["pose_images"][0]["label"] == "Hands in pockets"
+    assert "/rest/v1/rpc/consume_look" not in [c[1] for c in calls]
+
+
+def test_web_app_pose_list_matches_the_server() -> None:
+    import re
+    from app.tryon import SOCIAL_POSES
+
+    source = open("app/static/app.js", encoding="utf-8").read()
+    block = source[source.index("const SOCIAL_POSES = ["):]
+    block = block[:block.index("];")]
+    web = re.findall(r"\{key:'([^']+)', label:'([^']+)', plan:'([^']+)'\}", block)
+    assert web == [(p.key, p.label, p.plan) for p in SOCIAL_POSES.values()]

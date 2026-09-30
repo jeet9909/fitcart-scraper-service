@@ -9,6 +9,7 @@ Standalone product scraping and Gemini virtual try-on API for FitCart. Product p
 - `POST /v1/try-ons` with a full-body photo plus a product upload, image URL, or scraped product-page URL
 - `GET /v1/gallery` for that anonymous user's private gallery
 - `POST /v1/try-ons/{id}/spin` (Pro) to turn a saved look into a 360° view: Gemini draws the right side, back and left side, stored next to the look as `spin_paths` and returned as `spin_image_urls` (front first). It uses one look; a look that already has one is returned free
+- `POST /v1/try-ons/{id}/poses` `{"pose": "street-walk"}` (Plus and Pro) to redraw a saved look in a social-ready 4:5 pose. Plus has street-walk, pockets and over-shoulder; Pro has all 8 (see `SOCIAL_POSES` in `app/tryon.py`). One look per new pose; stored as `pose_shots` and returned as `pose_images`
 - Direct Bright Data MCP integration without OpenAI credits
 - Gemini multi-reference image editing and private Supabase Storage
 - Normalized price, inventory, images, variants, rating, seller, and product metadata

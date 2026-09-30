@@ -19,6 +19,9 @@ import numpy as np
 log = logging.getLogger(__name__)
 
 MODEL_PATH = Path(__file__).parent / "assets" / "face_detection_yunet_2023mar.onnx"
+# SFace (Apache 2.0, OpenCV Zoo): turns an aligned face into a 128-number signature; the cosine of two
+# signatures says how alike two faces are (same person is roughly above 0.36; our results sit 0.5-0.9).
+RECOGNIZER_PATH = Path(__file__).parent / "assets" / "face_recognition_sface_2021dec_int8.onnx"
 MIN_SCORE = 0.8
 MIN_EYE_DISTANCE_PX = 18  # smaller faces are too low resolution to improve
 MAX_TURN_DIFFERENCE = 0.14  # difference in head turn (nose offset / eye distance) we still accept
@@ -49,6 +52,7 @@ class Face:
 
 
 _detector = None
+_recognizer = None
 
 
 def _detect(image: np.ndarray) -> Face | None:
@@ -186,3 +190,32 @@ def face_reference(original: bytes, max_side: int = 768) -> tuple[bytes, str] | 
     except cv2.error:
         log.exception("Face reference failed")
         return None
+
+
+def face_signature(image_bytes: bytes) -> np.ndarray | None:
+    """The identity signature of the main face in a photo, or None when no clear face is found."""
+    global _recognizer
+    try:
+        image = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+        if image is None:
+            return None
+        face = _detect(image)
+        if face is None or face.eye_distance < MIN_EYE_DISTANCE_PX:
+            return None
+        if _recognizer is None:
+            _recognizer = cv2.FaceRecognizerSF.create(str(RECOGNIZER_PATH), "")
+        row = np.concatenate([face.box, face.points.reshape(-1), [face.score]]).astype(np.float32)
+        return _recognizer.feature(_recognizer.alignCrop(image, row)).copy()
+    except cv2.error:
+        log.exception("Face signature failed")
+        return None
+
+
+def face_match(real: np.ndarray | None, image_bytes: bytes) -> float | None:
+    """How much the face in image_bytes looks like the real signature (cosine, higher is closer)."""
+    if real is None:
+        return None
+    other = face_signature(image_bytes)
+    if other is None or _recognizer is None:
+        return None
+    return float(_recognizer.match(real, other, cv2.FaceRecognizerSF_FR_COSINE))

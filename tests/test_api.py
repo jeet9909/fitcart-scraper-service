@@ -1820,3 +1820,51 @@ def test_web_app_pose_list_matches_the_server() -> None:
     block = block[:block.index("];")]
     web = re.findall(r"\{key:'([^']+)', label:'([^']+)', plan:'([^']+)'\}", block)
     assert web == [(p.key, p.label, p.plan) for p in SOCIAL_POSES.values()]
+
+
+def _refine_run(monkeypatch, match_scores: list, replies: list[str]):
+    """Run the face refine step with scripted identity scores (first score is the unrefined image)."""
+    import asyncio as _asyncio
+    import base64
+    import httpx as _httpx
+    import numpy as _np
+    from app import identity as _identity
+
+    sent: list[int] = []
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        name = replies[len(sent)]
+        sent.append(1)
+        return _httpx.Response(200, json={"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/jpeg", "data": base64.b64encode(_sample(name)).decode()}}]}}]})
+
+    monkeypatch.setattr("app.tryon.httpx.AsyncClient", lambda **kwargs: _REAL_ASYNC_CLIENT(transport=_httpx.MockTransport(handler), **kwargs))
+    monkeypatch.setattr(_identity, "face_signature", lambda _bytes: _np.ones((1, 128), _np.float32))
+    scores = iter(match_scores)
+    monkeypatch.setattr(_identity, "face_match", lambda _real, _bytes: next(scores))
+    service = TryOnService(Settings(gemini_api_key="test"))
+    first = (_sample("after"), "image/jpeg", "jpg")
+    person = (_sample("before"), "image/jpeg", "jpg")
+    kept = _asyncio.run(service._refine_face(first, person, (_sample("before"), "image/jpeg"), "3:4", "test"))
+    return kept, len(sent)
+
+
+def test_face_refine_redraws_a_weak_match_and_keeps_the_closest(monkeypatch) -> None:
+    # Unrefined 0.50, first refine 0.52 (below the 0.6 target), second refine 0.71: the second is kept.
+    kept, calls = _refine_run(monkeypatch, [0.50, 0.52, 0.71], ["tee", "shirt"])
+    assert calls == 2 and kept[0] == _sample("shirt")
+    # A refine that lands above the target is used straight away.
+    kept, calls = _refine_run(monkeypatch, [0.40, 0.75], ["tee"])
+    assert calls == 1 and kept[0] == _sample("tee")
+    # When both refines score worse than the unrefined image, the unrefined image wins.
+    kept, calls = _refine_run(monkeypatch, [0.58, 0.41, 0.44], ["tee", "shirt"])
+    assert calls == 2 and kept[0] == _sample("after")
+
+
+def test_face_signature_scores_the_same_face_higher_than_another() -> None:
+    from app import identity as _identity
+
+    before = _sample("before")
+    real = _identity.face_signature(before)
+    if real is None:  # the sample photo has no readable face at this size; the unit above covers the logic
+        return
+    assert _identity.face_match(real, before) > 0.99

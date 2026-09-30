@@ -128,6 +128,13 @@ class Billing:
         if plan.once:
             order = await self._razorpay("POST", "/orders", {"amount": plan.once, "currency": "INR", "receipt": f"pass-{user_id[:8]}", "notes": notes})
             return {**options, "order_id": order["id"], "amount": plan.once, "description": f"{plan.name} · {plan.looks} looks for {plan.days} days"}
+        if not self.settings.razorpay_autopay:
+            # Prepaid: one payment for a month or a year, no mandate. Works on every Razorpay account,
+            # including test mode without Subscriptions enabled.
+            amount = plan.yearly if billing == "yearly" else plan.monthly
+            order = await self._razorpay("POST", "/orders", {"amount": amount, "currency": "INR", "receipt": f"{plan_key}-{user_id[:8]}", "notes": notes})
+            period = "1 year" if billing == "yearly" else "1 month"
+            return {**options, "order_id": order["id"], "amount": amount, "description": f"{plan.name} · {plan.looks} looks every month for {period}"}
         subscription = await self._razorpay("POST", "/subscriptions", {
             "plan_id": await self._plan_id(plan_key, billing), "total_count": TOTAL_CYCLES[billing],
             "quantity": 1, "customer_notify": 1, "notes": notes,
@@ -152,8 +159,8 @@ class Billing:
             if not await self._settle(payment):
                 log.info("Pass payment %s for order %s is %s, not captured yet", payment_id, order_id, payment.get("status"))
                 return False
-            await self._grant_pass(order)
-            log.info("Pass granted for order %s", order_id)
+            await self._grant_order(order)
+            log.info("Looks granted for order %s", order_id)
             return True
         subscription = await self._razorpay("GET", f"/subscriptions/{subscription_id}")
         self._check_owner(subscription, user_id)
@@ -170,11 +177,11 @@ class Billing:
         return payment.get("status") == "captured"
 
     async def sync_order(self, user_id: str, order_id: str) -> bool:
-        """Add the pass for an order that was paid but never confirmed, for example when the checkout
+        """Add the looks for an order that was paid but never confirmed, for example when the checkout
         window closed before its success callback ran. Razorpay is asked directly, so no signature is needed."""
         order = await self._razorpay("GET", f"/orders/{order_id}")
         self._check_owner(order, user_id)
-        if (order.get("notes") or {}).get("plan") != "pass":
+        if (order.get("notes") or {}).get("plan") not in PLANS:
             return False
         paid = order.get("status") == "paid"
         if not paid:
@@ -184,8 +191,8 @@ class Billing:
                     paid = True
                     break
         if paid:
-            await self._grant_pass(order)
-            log.info("Pass granted for order %s by sync", order_id)
+            await self._grant_order(order)
+            log.info("Looks granted for order %s by sync", order_id)
         return paid
 
     @staticmethod
@@ -202,19 +209,32 @@ class Billing:
         event = json.loads(payload)
         body = event.get("payload") or {}
         entity = lambda name: (body.get(name) or {}).get("entity") or {}
-        if event.get("event") == "order.paid" and (entity("order").get("notes") or {}).get("plan") == "pass":
-            await self._grant_pass(entity("order"))
+        if event.get("event") == "order.paid" and (entity("order").get("notes") or {}).get("plan") in PLANS:
+            await self._grant_order(entity("order"))
         elif event.get("event") == "subscription.charged":
             await self._grant_subscription(entity("subscription"))
 
-    async def _grant_pass(self, order: dict) -> None:
+    async def _grant_order(self, order: dict) -> None:
+        """Looks for a one-time order: the pass for its days, or a prepaid Plus/Pro month or year."""
         notes = order.get("notes") or {}
-        plan = PLANS["pass"]
+        plan_key = notes.get("plan")
+        plan = PLANS[plan_key]
         start = _stamp(order.get("created_at") or int(datetime.now(UTC).timestamp()))
-        await self.ledger.add_grants([{
-            "user_id": notes["user_id"], "kind": "pass", "looks": plan.looks, "payment_ref": order["id"],
-            "starts_at": start.isoformat(), "expires_at": (start + timedelta(days=plan.days)).isoformat(),
-        }])
+        if plan.once:
+            await self.ledger.add_grants([{
+                "user_id": notes["user_id"], "kind": plan_key, "looks": plan.looks, "payment_ref": order["id"],
+                "starts_at": start.isoformat(), "expires_at": (start + timedelta(days=plan.days)).isoformat(),
+            }])
+            return
+        # A prepaid plan starts when the current one of the same kind ends, so buying early adds time
+        # instead of overlapping it.
+        start = max(start, await self.ledger.paid_until(notes["user_id"], plan_key) or start)
+        months = 12 if notes.get("billing") == "yearly" else 1
+        await self.ledger.add_grants([
+            {"user_id": notes["user_id"], "kind": plan_key, "looks": plan.looks, "payment_ref": f"{order['id']}:{i}",
+             "starts_at": _add_months(start, i).isoformat(), "expires_at": _add_months(start, i + 1).isoformat()}
+            for i in range(months)
+        ])
 
     async def _grant_subscription(self, subscription: dict) -> bool:
         notes = subscription.get("notes") or {}

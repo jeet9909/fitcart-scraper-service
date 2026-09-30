@@ -220,7 +220,7 @@ async def look_balance(claims: dict = Depends(get_session_claims), ledger: LookL
 
 @app.get("/v1/billing/config", response_model=BillingConfigResponse, tags=["looks and billing"])
 async def billing_config(billing: Billing = Depends(get_billing)) -> BillingConfigResponse:
-    return BillingConfigResponse(enabled=billing.enabled, test_mode=billing.test_mode)
+    return BillingConfigResponse(enabled=billing.enabled, test_mode=billing.test_mode, autopay=billing.settings.razorpay_autopay)
 
 
 @app.post("/v1/billing/checkout", response_model=CheckoutResponse, tags=["looks and billing"])

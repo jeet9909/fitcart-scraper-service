@@ -118,6 +118,7 @@ class OrderSyncRequest(BaseModel):
 class BillingConfigResponse(BaseModel):
     enabled: bool
     test_mode: bool
+    autopay: bool = False
     provider: Literal["razorpay"] = "razorpay"
 
 

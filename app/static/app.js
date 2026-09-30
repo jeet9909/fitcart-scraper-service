@@ -275,11 +275,15 @@ function pricingHtml(){
   const tiers = PLANS.map(p => {
     const pr = planPrice(p);
     const current = Boolean(state.account) && !unlimited() && (state.balance?.plan || 'free') === p.key;
+    // Without autopay, Plus and Pro are prepaid, so a current member can buy more time.
+    const prepaid = !state.billingCfg?.autopay;
+    const locked = current && p.key !== 'pass' && !prepaid;
+    const cta = current && p.key !== 'pass' ? (prepaid ? `Add another ${state.billing === 'yearly' ? 'year' : 'month'}` : 'Your current plan') : p.cta;
     return `<article class="tier${p.popular ? ' pop' : ''} reveal">${p.popular ? '<span class="ribbon">Most popular</span>' : ''}
       <div><h3>${p.name}</h3><p class="for">${p.for}</p></div>
       <div><div class="amt">${pr.was ? `<s class="was num" aria-label="Was ₹${pr.was.toLocaleString('en-IN')}">₹${pr.was.toLocaleString('en-IN')}</s>` : ''}<b>₹${pr.amt.toLocaleString('en-IN')}</b><span>${pr.unit}</span></div>
         <p style="display:flex;gap:8px;flex-wrap:wrap;min-height:24px">${pr.off ? `<span class="save-badge num">${pr.off}% off</span>` : '<span class="per">No card needed</span>'}</p></div>
-      <button class="btn ${p.popular ? 'brand' : p.key === 'free' ? 'glassy' : ''} wide" data-act="choose-plan" data-plan="${p.key}" ${(current && p.key !== 'pass') || state.checkingOut ? 'disabled' : ''}>${state.checkingOut === p.key ? '<span class="spin" aria-hidden="true"></span> Opening checkout…' : current && p.key !== 'pass' ? 'Your current plan' : p.cta}</button>
+      <button class="btn ${p.popular ? 'brand' : p.key === 'free' ? 'glassy' : ''} wide" data-act="choose-plan" data-plan="${p.key}" ${locked || state.checkingOut ? 'disabled' : ''}>${state.checkingOut === p.key ? '<span class="spin" aria-hidden="true"></span> Opening checkout…' : cta}</button>
       <ul>${p.perks.map(x => `<li>${icon('check','s')}${esc(x)}</li>`).join('')}${p.missing.map(x => `<li class="no">${icon('x','s')}${esc(x)}</li>`).join('')}</ul>
     </article>`;
   }).join('');
@@ -299,7 +303,7 @@ function pricingHtml(){
     <div class="tiers">${tiers}</div>
     <div class="plan-table reveal"><table><caption class="sr">Compare plans</caption><thead><tr><th scope="col">Compare plans</th>${PLANS.map(p => `<th scope="col">${p.name}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr><th scope="row">${r[0]}</th>${r.slice(1).map((c, i) => `<td class="${PLANS[i].popular ? 'hi' : ''}">${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
     ${state.billingCfg?.test_mode ? `<div class="notice test-mode" role="note">${icon('info')}<span><strong>Test mode.</strong> No real money moves. Pay with UPI ID <b>success@razorpay</b>, or pick Netbanking, any bank, then Success.</span></div>` : ''}
-    <div class="plan-notes"><p>${icon('lock','s')} Prices include 18% GST. Secure checkout by Razorpay: UPI, cards and netbanking. Plans renew with UPI AutoPay or card until cancelled.</p><p>A look that fails is never counted. Unused looks don't carry over to the next month.</p></div>
+    <div class="plan-notes"><p>${icon('lock','s')} Prices include 18% GST. Secure checkout by Razorpay: UPI, cards and netbanking. ${state.billingCfg?.autopay ? 'Plans renew with UPI AutoPay or card until cancelled.' : 'Plus and Pro are paid for a month or a year at a time, with no autopay. Buy again to extend; new time starts when your current plan ends.'}</p><p>A look that fails is never counted. Unused looks don't carry over to the next month.</p></div>
   </div>`;
 }
 function pricingPage(){

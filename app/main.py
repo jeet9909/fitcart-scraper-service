@@ -4,6 +4,7 @@ from typing import Literal
 
 import hmac
 import logging
+from uuid import UUID
 
 import httpx
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile, status
@@ -384,6 +385,34 @@ async def create_outfit_tryon(
         category = " + ".join(item["slot"] for item in summary)[:80]
         product_url = next((item["product_url"] for item in summary if item.get("product_url")), None)
         return await service.save(user_id, person, pieces[0].image, result, category, "wardrobe", product_url, items=summary)
+    except TryOnError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Could not reach the image or storage service") from exc
+
+
+@app.post("/v1/try-ons/{item_id}/spin", response_model=GalleryItem, tags=["virtual try-on"])
+async def create_spin(
+    item_id: UUID,
+    claims: dict = Depends(get_session_claims),
+    service: TryOnService = Depends(get_tryon_service),
+    ledger: LookLedger = Depends(get_ledger),
+) -> GalleryItem:
+    """Pro: turn a saved look into a 360° view (front, right side, back, left side). Uses one look; a look
+    that already has its 360° view is returned as it is, for free."""
+    try:
+        service.ensure_configured()
+        row = await service.get_gallery_row(claims["sub"], str(item_id))
+        if row.get("spin_paths"):
+            return await service._to_item(row)
+        if not await ledger.has_plan(claims, "pro"):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "pro_required", "message": "The 360° view is part of Pro."})
+        reservation = await ledger.reserve(claims)
+        try:
+            return await service.create_spin(claims["sub"], row)
+        except BaseException:
+            await ledger.refund(reservation)
+            raise
     except TryOnError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except httpx.HTTPError as exc:

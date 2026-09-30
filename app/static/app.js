@@ -156,7 +156,7 @@ const ic = {
   face:'<circle cx="12" cy="12" r="9"/><path d="M9 10h.01M15 10h.01M8.5 15a4.5 4.5 0 0 0 7 0"/>', body:'<circle cx="12" cy="4.5" r="2"/><path d="M12 7v8M8 10h8M12 15l-3 6M12 15l3 6"/>',
   info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>', alert:'<path d="M12 4 2.5 20h19z"/><path d="M12 10v4M12 17h.01"/>',
   user:'<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>', mail:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 7 8.5-7"/>',
-  swap:'<path d="m9 6-6 6 6 6M15 6l6 6-6 6"/>', hanger:'<path d="M12 6a2 2 0 1 1 2 2c-1 0-2 .8-2 2v1"/><path d="M12 11 3 17.5a1 1 0 0 0 .6 1.8h16.8a1 1 0 0 0 .6-1.8z"/>',
+  swap:'<path d="m9 6-6 6 6 6M15 6l6 6-6 6"/>', spin:'<circle cx="12" cy="5" r="2"/><path d="M12 8v6"/><path d="M16.5 11.4c2.7.6 4.5 1.6 4.5 2.8 0 1.9-4 3.4-9 3.4s-9-1.5-9-3.4c0-1.2 1.8-2.2 4.5-2.8"/><path d="m14 15.6 2.4 2-2.4 2"/>', hanger:'<path d="M12 6a2 2 0 1 1 2 2c-1 0-2 .8-2 2v1"/><path d="M12 11 3 17.5a1 1 0 0 0 .6 1.8h16.8a1 1 0 0 0 .6-1.8z"/>',
 };
 const icon = (n, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ic[n]}</svg>`;
 const privatePill = (text = 'Private to you') => `<span class="private">${icon('lock','s')}${text}</span>`;
@@ -251,13 +251,13 @@ function bindCompare(el){
 /* ---------- Plans (prices include 18% GST) ---------- */
 const PLANS = [
   {key:'free', name:'Free', for:'Try Mydripcheck on your next outfit.', monthly:0, yearly:0, looks:3, quality:'Standard', imports:15, stylist:1, wardrobe:25, cta:'Start free',
-   perks:['3 looks a month, any mix of stores','Standard quality','Wardrobe up to 25 items','1 AI stylist idea'], missing:['HD looks','Full Looks history']},
+   perks:['3 looks a month, any mix of stores','Standard quality','Wardrobe up to 25 items','1 AI stylist idea'], missing:['HD looks','Full Looks history','360° view']},
   {key:'pass', name:'Occasion Pass', for:'One-time pack for a wedding, festival or trip.', once:129, listOnce:149, days:7, looks:10, quality:'HD', imports:30, stylist:5, wardrobe:25, cta:'Buy the pass',
-   perks:['10 HD looks for 7 days','No autopay, pay once with UPI','5 AI stylist ideas','Stacks on any plan'], missing:[]},
+   perks:['10 HD looks for 7 days','No autopay, pay once with UPI','5 AI stylist ideas','Stacks on any plan'], missing:['360° view']},
   {key:'plus', name:'Plus', for:'For people who shop online every month.', monthly:349, listMonthly:399, yearly:3299, looks:25, quality:'HD', imports:150, stylist:20, wardrobe:200, cta:'Get Plus', popular:true,
-   perks:['25 HD looks every month','Standard pose, head to toe','Wardrobe up to 200 items','20 AI stylist ideas','Full Looks history and HD downloads'], missing:[]},
+   perks:['25 HD looks every month','Standard pose, head to toe','Wardrobe up to 200 items','20 AI stylist ideas','Full Looks history and HD downloads'], missing:['360° view']},
   {key:'pro', name:'Pro', for:'For stylists, creators and big wardrobes.', monthly:799, listMonthly:999, yearly:7499, looks:60, quality:'HD', imports:300, stylist:40, wardrobe:1000, cta:'Get Pro',
-   perks:['60 HD looks every month','Priority generation','Wardrobe up to 1,000 items','40 AI stylist ideas','Early access to Fit score'], missing:[]},
+   perks:['360° view: spin your look to see the side and back','60 HD looks every month','Priority generation','Wardrobe up to 1,000 items','40 AI stylist ideas'], missing:[]},
 ];
 // Shown price, crossed-out list price and the discount between them. Yearly plans compare the
 // monthly equivalent with the monthly list price.
@@ -674,8 +674,8 @@ function finishGeneration(){
   later(() => {
     const item = g.result;
     const look = {id:item.id, img:item.result_image_url, before:state.photo, title:orderedLook().map(p => short(p.item)).join(', '),
-      items:orderedLook().map(p => ({item:{...p.item}, size:p.size})), pose:state.pose, editable:true};
-    state.current = look; state.justGenerated = true;
+      items:orderedLook().map(p => ({item:{...p.item}, size:p.size})), pose:state.pose, editable:true, spin:item.spin_image_urls || []};
+    state.current = look; state.justGenerated = true; state.resultMode = 'compare'; state.spinIndex = 0;
     if (Number.isFinite(state.balance?.remaining)) state.balance.remaining = Math.max(0, state.balance.remaining - 1);
     loadBalance();
     state.gallery = null;
@@ -702,7 +702,7 @@ function result(){
     : p.item.url ? `<a class="btn small" href="${esc(p.item.url)}" target="_blank" rel="noopener noreferrer" aria-label="Buy ${esc(p.item.name)} at ${esc(p.item.store)}">Buy ${icon('arrow','s')}</a>` : '';
   return `<section class="result">
     <div class="result-head"><div><p class="eyebrow">Saved to Looks</p><h1 style="margin-top:4px">Here's your look</h1></div><div style="display:flex;flex-wrap:wrap;gap:8px">${privatePill()}<span class="tag ai">${icon('spark','s')} ${look.pose === 'keep' ? 'Your pose' : 'Standard pose'}</span></div></div>
-    <div class="result-visual${celebrate ? ' celebrate' : ''}">${compareHtml(look.before, look.img, 'You', 'New look', !celebrate)}<a class="link small" href="${esc(look.img)}" target="_blank" rel="noopener">Open full image</a></div>
+    <div class="result-visual${celebrate ? ' celebrate' : ''}">${spinTabs(look)}${state.resultMode === 'spin' && look.spin?.length ? spinHtml(look.spin) : compareHtml(look.before, look.img, 'You', 'New look', !celebrate)}<a class="link small" href="${esc(state.resultMode === 'spin' && look.spin?.length ? look.spin[state.spinIndex || 0] : look.img)}" target="_blank" rel="noopener">Open full image</a></div>
     <div style="display:grid;gap:14px;align-content:start">
       <div class="card shop">
         <h2>Shop this look</h2>
@@ -716,10 +716,110 @@ function result(){
         <button class="action" data-act="edit-look" ${look.editable ? '' : 'disabled'}>${icon('edit')}Edit look</button>
         <button class="action" data-act="toggle-pose" ${look.editable ? '' : 'disabled'}>${icon('body')}${look.pose === 'keep' ? 'Standard pose' : 'My pose'}</button>
       </div>
+      ${spinCard(look)}
       <div class="card feedback"><span style="font-weight:700">Does this look like you?</span><div class="thumbs"><button class="btn ghost small" data-act="feedback">${icon('up','s')} Yes</button><button class="btn ghost small" data-act="feedback-no">${icon('down','s')} Not quite</button></div></div>
       <p class="tiny muted">AI preview of appearance only. Check each store's size chart before buying.</p>
     </div>
   </section>`;
+}
+
+/* ---------- 360° view (Pro) ---------- */
+// The saved look is the front view; the API draws the right side, back and left side, and the viewer
+// spins through them by dragging, with arrow keys, or with the angle buttons.
+const SPIN_LABELS = ['Front', 'Right side', 'Back', 'Left side'];
+function hasPro(){ return unlimited() || state.balance?.plan === 'pro' || state.balance?.enforced === false; }
+function spinTabs(look){
+  if (!look.spin?.length) return '';
+  const mode = state.resultMode === 'spin' ? 'spin' : 'compare';
+  return `<div class="seg" role="tablist" aria-label="Result view">
+    <button role="tab" data-act="result-mode" data-mode="compare" aria-selected="${mode === 'compare'}">${icon('swap','s')} Compare</button>
+    <button role="tab" data-act="result-mode" data-mode="spin" aria-selected="${mode === 'spin'}">${icon('spin','s')} 360° view</button>
+  </div>`;
+}
+function spinHtml(urls){
+  const i = state.spinIndex || 0;
+  return `<div class="spin360" tabindex="0" role="img" aria-roledescription="360 degree view" aria-label="${SPIN_LABELS[i]} view. Drag or use the arrow keys to turn." data-count="${urls.length}">
+    ${urls.map((u, n) => `<img src="${esc(u)}" alt="" draggable="false" class="${n === i ? 'on' : ''}"${n ? ' loading="eager"' : ''}>`).join('')}
+    <span class="spin-hint" aria-hidden="true">${icon('swap','s')} Drag to turn</span>
+    <div class="spin-dots">${urls.map((_, n) => `<button data-act="spin-to" data-index="${n}" aria-label="${SPIN_LABELS[n] || 'View ' + (n + 1)}" aria-pressed="${n === i}"><span>${SPIN_LABELS[n] || ''}</span></button>`).join('')}</div>
+  </div>`;
+}
+function spinCard(look){
+  if (look.spin?.length) return '';
+  const busy = state.spinning === look.id;
+  const pro = hasPro();
+  return `<div class="card spin-card">
+    <div class="spin-card-art" aria-hidden="true">${icon('spin')}</div>
+    <div><p style="font-weight:700">See it from every side <span class="tag pro">Pro</span></p>
+    <p class="small muted">${busy ? 'Drawing the side and back views. This takes about a minute.' : pro ? 'Turn this look into a 360° view you can spin. Uses 1 look.' : 'Spin your look to see the side and back before you buy. Part of Pro.'}</p></div>
+    <button class="btn small ${pro ? 'brand' : 'ghost'}" data-act="make-spin" ${busy ? 'disabled aria-busy="true"' : ''}>${busy ? '<span class="spin-loader"></span> Creating…' : pro ? 'Create 360° view' : 'See Pro'}</button>
+  </div>`;
+}
+async function makeSpin(){
+  const look = state.current;
+  if (!look?.id || state.spinning) return;
+  if (!hasPro()){ go('pricing'); toast('The 360° view is part of Pro.', {kind:'info'}); return; }
+  state.spinning = look.id; render();
+  try {
+    const item = await api(`/v1/try-ons/${encodeURIComponent(look.id)}/spin`, {method:'POST'});
+    look.spin = item.spin_image_urls || [];
+    state.gallery = null;
+    if (Number.isFinite(state.balance?.remaining)) state.balance.remaining = Math.max(0, state.balance.remaining - 1);
+    loadBalance();
+    if (state.current === look){ state.resultMode = 'spin'; state.spinIndex = 0; state.spinIntro = true; }
+    toast('Your 360° view is ready. Drag to turn.');
+  } catch (err){
+    if (err.code === 'pro_required'){ go('pricing'); toast('The 360° view is part of Pro.', {kind:'info'}); }
+    else if (err.code === 'no_looks_left'){ loadBalance(); outOfLooks(); }
+    else toast(err.message, {kind:'error'});
+  } finally {
+    state.spinning = null;
+    if (state.view === 'result'){
+      render();
+      // The button sits below the picture on phones, so bring the new viewer into sight.
+      if (state.resultMode === 'spin') document.querySelector('.spin360')?.scrollIntoView({behavior: REDUCED.matches ? 'auto' : 'smooth', block:'center'});
+    }
+  }
+}
+function bindSpin(el){
+  const imgs = [...el.querySelectorAll('img')];
+  const n = imgs.length;
+  const show = i => {
+    i = ((i % n) + n) % n;
+    if (i === state.spinIndex && imgs[i].classList.contains('on')) return;
+    state.spinIndex = i;
+    imgs.forEach((im, k) => im.classList.toggle('on', k === i));
+    el.querySelectorAll('.spin-dots button').forEach((b, k) => b.setAttribute('aria-pressed', String(k === i)));
+    el.setAttribute('aria-label', `${SPIN_LABELS[i] || 'View ' + (i + 1)} view. Drag or use the arrow keys to turn.`);
+    const open = el.parentElement.querySelector('.link'); if (open) open.href = imgs[i].src;
+  };
+  let startX = null, startIndex = 0, moved = false;
+  const STEP = Math.max(40, el.clientWidth / (n * 1.5));  // one full turn is about 1.5 widths of drag
+  el.addEventListener('pointerdown', e => {
+    if (e.target.closest('button')) return;
+    startX = e.clientX; startIndex = state.spinIndex || 0; moved = false;
+    el.setPointerCapture(e.pointerId); el.classList.add('dragging'); stopIntro();
+  });
+  el.addEventListener('pointermove', e => {
+    if (startX === null) return;
+    const dx = e.clientX - startX;
+    if (Math.abs(dx) > 4) moved = true;
+    show(startIndex - Math.round(dx / STEP));  // drag left turns the person to their right, like a turntable
+  });
+  const end = () => { startX = null; el.classList.remove('dragging'); if (moved) el.classList.add('used'); };
+  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+  el.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft'){ e.preventDefault(); stopIntro(); el.classList.add('used'); show((state.spinIndex || 0) + (e.key === 'ArrowRight' ? 1 : -1)); }
+  });
+  el._show = show;
+  // First open: one slow turn so people see it spins.
+  let introTimer = null;
+  function stopIntro(){ clearInterval(introTimer); introTimer = null; }
+  if (state.spinIntro && !REDUCED.matches){
+    state.spinIntro = false;
+    let step = 0;
+    introTimer = setInterval(() => { step += 1; show(step); if (step >= n){ stopIntro(); } }, 650);
+  }
 }
 
 /* ---------- Wardrobe ---------- */
@@ -793,7 +893,7 @@ function looks(){
   if (!state.gallery && !state.galleryError) body = `<div class="looks">${'<div class="look"><div class="sk" style="aspect-ratio:3/4;border-radius:14px"></div><div class="sk" style="height:14px;width:70%"></div></div>'.repeat(4)}</div>`;
   else if (state.galleryError) body = `<div class="notice" role="alert">${icon('alert')}<span>${esc(state.galleryError)}</span></div><button class="btn ghost small" data-act="gallery-retry" style="justify-self:start">${icon('redo','s')} Try again</button>`;
   else if (!state.gallery.length) body = `<div class="empty">${EMPTY_ART}<h2>No looks yet</h2><p class="muted">Every look you create is saved here, privately.</p><button class="btn brand" data-act="go" data-view="home">${icon('spark','s')} Create my first look</button></div>`;
-  else body = `<div class="looks">${state.gallery.map(g => `<button class="look" data-act="open-look" data-id="${esc(g.id)}"><img src="${esc(g.result_image_url)}" alt="" loading="lazy"><span style="font-weight:700;line-height:1.3">${esc(galleryTitle(g))}</span><span class="tiny muted">${new Date(g.created_at).toLocaleDateString('en-IN', {day:'numeric', month:'short'})} · ${Math.max(1, (g.items || []).length)} ${Math.max(1, (g.items || []).length) === 1 ? 'piece' : 'pieces'}</span></button>`).join('')}</div>`;
+  else body = `<div class="looks">${state.gallery.map(g => `<button class="look" data-act="open-look" data-id="${esc(g.id)}">${(g.spin_image_urls || []).length ? `<span class="spin-badge">${icon('spin','s')} 360°</span>` : ''}<img src="${esc(g.result_image_url)}" alt="" loading="lazy"><span style="font-weight:700;line-height:1.3">${esc(galleryTitle(g))}</span><span class="tiny muted">${new Date(g.created_at).toLocaleDateString('en-IN', {day:'numeric', month:'short'})} · ${Math.max(1, (g.items || []).length)} ${Math.max(1, (g.items || []).length) === 1 ? 'piece' : 'pieces'}</span></button>`).join('')}</div>`;
   return `<section style="display:grid;gap:18px;padding-top:8px">
     <div class="page-head" style="padding-top:0"><div><p class="eyebrow">Private gallery</p><h1>Your looks</h1></div>${privatePill()}</div>
     ${body}
@@ -804,7 +904,7 @@ function lookFromGallery(g){
     item:{id:'g-' + i, slot:it.slot || 'top', name:it.name || it.category || 'Item', store:it.store || (it.product_url ? storeName((() => { try { return new URL(it.product_url).hostname; } catch { return ''; } })()) : ''), price:it.price ?? null, url:it.product_url || null, img:i === 0 ? g.product_image_url : '', source:it.collection === 'home' ? 'owned' : 'store'},
     size:it.size || null,
   }));
-  return {id:g.id, img:g.result_image_url, before:g.person_image_url, title:galleryTitle(g), items, pose:'standard', editable:false};
+  return {id:g.id, img:g.result_image_url, before:g.person_image_url, title:galleryTitle(g), items, pose:'standard', editable:false, spin:g.spin_image_urls || []};
 }
 
 /* ---------- Account ---------- */
@@ -1192,6 +1292,7 @@ async function readPhoto(file, maxSide = 1600){
 /* ---------- Events ---------- */
 function bindView(){
   document.querySelectorAll('.compare').forEach(bindCompare);
+  document.querySelectorAll('.spin360').forEach(bindSpin);
   const form = $('#linkForm');
   if (form) form.onsubmit = e => { e.preventDefault(); $('#homeError').textContent = ''; importLink($('#homeLink').value, false); };
 }
@@ -1281,7 +1382,10 @@ document.addEventListener('click', e => {
       render(); break;
     }
     case 'delete-item': deleteItem(t.dataset.id); break;
-    case 'open-look': { const g = state.gallery.find(x => x.id === t.dataset.id); state.current = lookFromGallery(g); go('result'); break; }
+    case 'open-look': { const g = state.gallery.find(x => x.id === t.dataset.id); state.current = lookFromGallery(g); state.resultMode = state.current.spin.length ? 'spin' : 'compare'; state.spinIndex = 0; go('result'); break; }
+    case 'make-spin': makeSpin(); break;
+    case 'result-mode': state.resultMode = t.dataset.mode; if (t.dataset.mode === 'spin') state.spinIndex = 0; render(); document.querySelector(`[data-act="result-mode"][data-mode="${t.dataset.mode}"]`)?.focus(); break;
+    case 'spin-to': { const el = t.closest('.spin360'); el?.classList.add('used'); el?._show?.(Number(t.dataset.index)); break; }
     case 'billing': state.billing = t.dataset.billing; render(); document.querySelector(`[data-act="billing"][data-billing="${state.billing}"]`)?.focus(); break;
     case 'scroll': document.getElementById(t.dataset.target)?.scrollIntoView({behavior: REDUCED.matches ? 'auto' : 'smooth', block:'start'}); break;
     case 'choose-plan': {

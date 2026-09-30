@@ -1570,3 +1570,110 @@ def test_capture_race_with_auto_capture_still_grants(monkeypatch) -> None:
     finally:
         app.dependency_overrides.clear()
     assert ok.status_code == 200 and ok.json()["remaining"] == 10
+
+
+def _spin_backend(rows_by_plan: list[dict], spin_paths: list[str] | None = None, patch_status: int = 200):
+    """One fake for Supabase REST and storage plus Gemini, for the 360° view endpoint."""
+    import base64
+    import json as _json
+    import httpx as _httpx
+
+    calls: list[tuple[str, str, object]] = []
+    row = {"id": "5b1f7c3e-9a4d-4e2b-8f6a-0c1d2e3f4a5b", "anonymous_user_id": AUTH_USER_ID, "category": "top", "product_source": "upload",
+           "product_url": None, "person_path": "u/l/person.jpg", "product_path": "u/l/product.jpg", "result_path": "u/l/result.jpg",
+           "model": "m", "items": [], "spin_paths": spin_paths or [], "created_at": "2026-09-30T10:00:00+00:00"}
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        path, method = request.url.path, request.method
+        body = _json.loads(request.content) if request.content and "json" in request.headers.get("content-type", "") else None
+        calls.append((method, path, body))
+        if "generativelanguage" in request.url.host:
+            return _httpx.Response(200, json={"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/jpeg", "data": base64.b64encode(_sample("after")).decode()}}]}}]})
+        if path.startswith("/storage/v1/object/sign/"):
+            return _httpx.Response(200, json=[{"path": p, "signedURL": f"/object/sign/{p}?token=t"} for p in body["paths"]])
+        if path.startswith("/storage/v1/object/") and method == "GET":
+            return _httpx.Response(200, content=_sample("before"), headers={"content-type": "image/jpeg"})
+        if path.startswith("/storage/v1/object/") and method == "POST":
+            return _httpx.Response(200, json={"Key": path})
+        if path == "/rest/v1/try_on_gallery" and method == "GET":
+            return _httpx.Response(200, json=[row] if request.url.params.get("id") == f"eq.{row['id']}" else [])
+        if path == "/rest/v1/try_on_gallery" and method == "PATCH":
+            if patch_status >= 400:
+                return _httpx.Response(patch_status, json={"message": "column spin_paths does not exist"})
+            return _httpx.Response(200, json=[{**row, **body}])
+        if path == "/rest/v1/rpc/consume_look":
+            return _httpx.Response(200, content=b'"g-1"', headers={"content-type": "application/json"})
+        if path in ("/rest/v1/rpc/refund_look", "/rest/v1/rpc/ensure_free_looks"):
+            return _httpx.Response(204)
+        if path == "/rest/v1/look_grants":
+            return _httpx.Response(200, json=rows_by_plan)
+        return _httpx.Response(404)
+
+    return row, calls, handler
+
+
+def _spin_client(monkeypatch, handler):
+    _install_fakes(monkeypatch, supabase=handler)
+    app.dependency_overrides[get_runtime_settings] = lambda: LIMIT_SETTINGS
+    service = TryOnService(LIMIT_SETTINGS)
+    app.dependency_overrides[get_tryon_service] = lambda: service
+    return TestClient(app)
+
+
+PRO_GRANT = {"kind": "pro", "looks": 60, "used": 2, "expires_at": "2099-01-01T00:00:00+00:00"}
+PLUS_GRANT = {"kind": "plus", "looks": 25, "used": 0, "expires_at": "2099-01-01T00:00:00+00:00"}
+
+
+def test_pro_look_gets_a_360_view_for_one_look(monkeypatch) -> None:
+    from app.tryon import SPIN_ANGLES
+
+    row, calls, handler = _spin_backend([PRO_GRANT])
+    try:
+        with _spin_client(monkeypatch, handler) as client:
+            response = client.post(f"/v1/try-ons/{row['id']}/spin", headers={"Authorization": f"Bearer {_email_token('buyer@example.com')}"})
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 200, response.text
+    urls = response.json()["spin_image_urls"]
+    assert len(urls) == 4 and "result.jpg" in urls[0]  # the saved front view comes first
+    prompts = [c[2]["contents"][0]["parts"][0]["text"] for c in calls if c[2] and "contents" in c[2]]
+    assert len(prompts) == len(SPIN_ANGLES) == 3
+    assert any("directly from behind" in p for p in prompts) and sum("full profile" in p for p in prompts) == 2
+    patch = next(c for c in calls if c[0] == "PATCH")
+    assert patch[2]["spin_paths"][0] == "u/l/result.jpg" and len(patch[2]["spin_paths"]) == 4
+    assert [c[1] for c in calls].count("/rest/v1/rpc/consume_look") == 1
+    assert "/rest/v1/rpc/refund_look" not in [c[1] for c in calls]
+
+
+def test_360_view_needs_pro_and_is_free_once_made(monkeypatch) -> None:
+    row, calls, handler = _spin_backend([PLUS_GRANT])
+    headers = {"Authorization": f"Bearer {_email_token('buyer@example.com')}"}
+    try:
+        with _spin_client(monkeypatch, handler) as client:
+            plus = client.post(f"/v1/try-ons/{row['id']}/spin", headers=headers)
+            missing = client.post("/v1/try-ons/00000000-0000-4000-8000-000000000000/spin", headers=headers)
+    finally:
+        app.dependency_overrides.clear()
+    assert plus.status_code == 403 and plus.json()["detail"]["code"] == "pro_required"
+    assert missing.status_code == 404
+    assert not any(c[2] and "contents" in c[2] for c in calls) and "/rest/v1/rpc/consume_look" not in [c[1] for c in calls]
+
+    row, calls, handler = _spin_backend([PLUS_GRANT], spin_paths=["u/l/result.jpg", "u/l/a.jpg", "u/l/b.jpg", "u/l/c.jpg"])
+    try:
+        with _spin_client(monkeypatch, handler) as client:
+            again = client.post(f"/v1/try-ons/{row['id']}/spin", headers=headers)
+    finally:
+        app.dependency_overrides.clear()
+    assert again.status_code == 200 and len(again.json()["spin_image_urls"]) == 4
+    assert "/rest/v1/rpc/consume_look" not in [c[1] for c in calls]
+
+
+def test_failed_360_view_gives_the_look_back(monkeypatch) -> None:
+    row, calls, handler = _spin_backend([PRO_GRANT], patch_status=400)
+    try:
+        with _spin_client(monkeypatch, handler) as client:
+            response = client.post(f"/v1/try-ons/{row['id']}/spin", headers={"Authorization": f"Bearer {_email_token('buyer@example.com')}"})
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 503 and "spin_paths" in response.json()["detail"]
+    assert "/rest/v1/rpc/refund_look" in [c[1] for c in calls]

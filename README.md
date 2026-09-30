@@ -117,7 +117,7 @@ Both try-on endpoints take `pose`: `standard` (default) re-poses the person upri
 Image models redraw the face whenever they re-pose a person, and tend to slim it. Each try-on sends a close-up of the person's face (cut from the full-resolution upload) as an extra identity reference, with the identity and body-proportion rules first in the prompt.
 
 - **Standard pose:** a second, edit-only Gemini pass (`FACE_REFINE_PROMPT` in `app/tryon.py`) takes the first result plus the face close-up and the original photo and changes only the head: face shape and width, jaw, beard, glasses, hairline and head size relative to the shoulders. Pose, body, clothes and background stay. This is two Gemini calls, so roughly double the cost and 10-15 s more; if the second pass fails the first image is kept. `FACE_REFINE_ENABLED=false` turns it off.
-- **Keep pose:** the head barely moves, so face lock pastes the real eyebrows, eyes, nose and mouth onto the result with Poisson blending (OpenCV YuNet landmarks, `app/identity.py`). It skips itself when the faces do not line up.
+- **Keep pose:** the head does not move, so face lock fades the whole real head back in (hair, glasses, eyes, nose, mouth, beard and face shape, down to just under the chin), aligned with OpenCV YuNet landmarks (`app/identity.py`). No seam runs through the glasses; the collar and clothes stay as generated. It skips itself when the faces do not line up.
 
 Pixel pasting is not used for standard pose: onto a head the model drew slimmer, real features look mismatched at the edges. `FACE_LOCK_ENABLED=false` turns off the face close-up and face lock.
 

@@ -1,12 +1,13 @@
-"""Face lock: put the person's real features back onto a generated try-on.
+"""Face lock: put the person's real head back onto a try-on made in their own pose ("keep" pose).
 
-Image models redraw the face on every generation, so a re-posed catalogue photo can look like a
-different person. After generation we find the face in the user's photo and in the result
-(YuNet, MIT licensed, runs on CPU), align the real face to where the model drew the head, and
-Poisson-blend only the inner face (eyebrows, eyes, nose, mouth) into it. The face outline, jaw,
-beard edge, ears, hair and background stay as generated, so the photo's surroundings never leak
-in. When the head angle or face shape differs too much, or a face cannot be found, the result is
-returned untouched rather than risking a bad paste.
+Image models redraw the face on every generation, so even in the person's own pose the face drifts. In
+that pose the head does not move, so we find the face in the user's photo and in the result (YuNet, MIT
+licensed, runs on CPU), align the real photo to where the model drew the head, and fade the whole real
+head in: hair, forehead, glasses, eyes, nose, mouth, beard and face shape, down to just under the chin.
+Blending the whole head (not only the eyes, nose and mouth) means no seam runs through the glasses or
+the beard, which is what made earlier results look doubled or smeared. The collar and clothes below the
+chin stay as generated. When the head angle or face shape differs too much, or a face cannot be found,
+the result is returned untouched rather than risking a bad paste.
 """
 
 import logging
@@ -70,30 +71,6 @@ def _detect(image: np.ndarray) -> Face | None:
     return Face(box=best[:4] / scale, points=best[4:14].reshape(5, 2) / scale, score=float(best[14]))
 
 
-def _inner_face_mask(face: Face, shape: tuple[int, int]) -> np.ndarray:
-    """Eyebrows, eyes, nose and mouth only. The face outline, jaw, beard edge, ears, hair and background
-    stay as generated, so nothing from the original photo's surroundings is pulled in."""
-    right_eye, left_eye, _nose, right_mouth, left_mouth = face.points
-    ed = face.eye_distance
-    across = (left_eye - right_eye) / max(ed, 1e-6)  # unit vector along the eye line (image left to right)
-    up = np.array([across[1], -across[0]])  # perpendicular, pointing to the forehead
-    outline = np.array([
-        right_eye - across * ed * 0.38 + up * ed * 0.36,  # outer end of one eyebrow
-        right_eye + up * ed * 0.46,
-        left_eye + up * ed * 0.46,
-        left_eye + across * ed * 0.38 + up * ed * 0.36,
-        left_eye + across * ed * 0.30 - up * ed * 0.30,  # below the eyes, inside the cheekbones
-        left_mouth + across * ed * 0.14,
-        left_mouth - up * ed * 0.28,  # under the lower lip, above the chin
-        right_mouth - up * ed * 0.28,
-        right_mouth - across * ed * 0.14,
-        right_eye - across * ed * 0.30 - up * ed * 0.30,
-    ], np.float32)
-    mask = np.zeros(shape, np.uint8)
-    cv2.fillConvexPoly(mask, np.round(outline).astype(np.int32), 255)
-    return mask
-
-
 def _similarity(source: np.ndarray, target: np.ndarray) -> np.ndarray:
     """Least-squares move + rotate + uniform scale mapping source points onto target points (Umeyama).
     Unlike a robust fit it uses all five landmarks, so a differently shaped face shows up as error."""
@@ -115,8 +92,22 @@ def _alignment_error(real: Face, drawn: Face, matrix: np.ndarray) -> float:
     return float(np.linalg.norm(moved - drawn.points, axis=1).mean() / max(drawn.eye_distance, 1e-6))
 
 
+def _head_mask(face: Face, shape: tuple[int, int]) -> np.ndarray:
+    """Soft mask (0-1) of the whole head: hair, ears, glasses and beard, ending just under the chin."""
+    x, y, w, h = face.box
+    height, width = shape
+    mask = np.zeros(shape, np.float32)
+    center = (int(round(x + w / 2)), int(round(y + h * 0.30)))
+    axes = (int(round(w * 0.66)), int(round(h * 0.80)))
+    cv2.ellipse(mask, center, axes, face.tilt, 0, 360, 1.0, -1)
+    chin = int(round(y + h * 1.06))
+    mask[min(max(chin, 0), height):, :] = 0  # the collar and clothes below the chin stay generated
+    feather = max(3, int(round(w * 0.07))) | 1
+    return cv2.GaussianBlur(mask, (feather * 4 + 1, feather * 4 + 1), feather)
+
+
 def lock_face(original: bytes, generated: bytes, output_mime: str = "image/png") -> bytes | None:
-    """Return the generated image with the real features blended in, or None when it is not safe to do."""
+    """Return the generated image with the real head faded in, or None when it is not safe to do."""
     try:
         person = cv2.imdecode(np.frombuffer(original, np.uint8), cv2.IMREAD_COLOR)
         result = cv2.imdecode(np.frombuffer(generated, np.uint8), cv2.IMREAD_COLOR)
@@ -137,25 +128,20 @@ def lock_face(original: bytes, generated: bytes, output_mime: str = "image/png")
         scale = float(np.hypot(matrix[0, 0], matrix[1, 0]))
         if not 0.2 < scale < 5:
             return None
-        if _alignment_error(real, drawn, matrix) > MAX_ALIGNMENT_ERROR:
+        error = _alignment_error(real, drawn, matrix)
+        if error > MAX_ALIGNMENT_ERROR:
             log.info("Face lock skipped: the generated face shape differs too much to blend cleanly")
             return None
         height, width = result.shape[:2]
         warped = cv2.warpAffine(person, matrix, (width, height), flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_REFLECT)
-        mask = _inner_face_mask(drawn, (height, width))
-        # Only paste where the real photo actually has pixels (not the reflected border).
-        coverage = cv2.warpAffine(np.full(person.shape[:2], 255, np.uint8), matrix, (width, height), flags=cv2.INTER_NEAREST)
-        mask = cv2.erode(cv2.bitwise_and(mask, coverage), np.ones((3, 3), np.uint8))
-        x, y, w, h = cv2.boundingRect(mask)
-        if w < 8 or h < 8 or x <= 1 or y <= 1 or x + w >= width - 1 or y + h >= height - 1:
+        # Only use pixels the real photo actually has (not the reflected border).
+        coverage = cv2.warpAffine(np.ones(person.shape[:2], np.float32), matrix, (width, height), flags=cv2.INTER_LINEAR)
+        alpha = (_head_mask(drawn, (height, width)) * coverage)[..., None]
+        if float(alpha.max()) < 0.5:
             return None
-        # Poisson blending keeps the real eyes, nose and mouth but takes light and colour at the seam
-        # from the generated image, so there is no visible edge or colour patch.
-        blended = cv2.seamlessClone(warped, result, mask, (x + w // 2, y + h // 2), cv2.NORMAL_CLONE)
-        log.info(
-            "Face lock applied: eye distance %.0f px (photo) -> %.0f px (result), alignment error %.3f",
-            real.eye_distance, drawn.eye_distance, _alignment_error(real, drawn, matrix),
-        )
+        blended = (warped.astype(np.float32) * alpha + result.astype(np.float32) * (1 - alpha)).round().clip(0, 255).astype(np.uint8)
+        log.info("Face lock applied (whole head): eye distance %.0f px (photo) -> %.0f px (result), alignment error %.3f",
+                 real.eye_distance, drawn.eye_distance, error)
         extension = ".jpg" if output_mime == "image/jpeg" else ".webp" if output_mime == "image/webp" else ".png"
         params = [cv2.IMWRITE_JPEG_QUALITY, 95] if extension == ".jpg" else []
         ok, encoded = cv2.imencode(extension, blended, params)

@@ -20,6 +20,8 @@ alter table public.try_on_gallery enable row level security;
 
 -- Upgrades for projects created before outfit try-ons. Safe to run more than once.
 alter table public.try_on_gallery add column if not exists items jsonb not null default '[]'::jsonb;
+-- 360° view (Pro): storage paths of the front, right, back and left views of a look.
+alter table public.try_on_gallery add column if not exists spin_paths jsonb not null default '[]'::jsonb;
 alter table public.try_on_gallery drop constraint if exists try_on_gallery_product_source_check;
 alter table public.try_on_gallery add constraint try_on_gallery_product_source_check
   check (product_source in ('upload', 'scraped_url', 'image_url', 'wardrobe'));

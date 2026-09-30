@@ -132,6 +132,7 @@ class GalleryItem(BaseModel):
     result_image_url: str
     model: str
     items: list[dict] = Field(default_factory=list, description="Wardrobe items worn in an outfit try-on")
+    spin_image_urls: list[str] = Field(default_factory=list, description="360° view (Pro): front, right side, back, left side; empty until created")
     created_at: datetime
 
 

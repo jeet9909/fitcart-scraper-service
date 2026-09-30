@@ -107,6 +107,16 @@ class LookLedger:
         plan = next((kind for kind in PAID_KINDS if kind in active_paid), "free")
         return LookBalanceResponse(**base, enforced=True, remaining=sum(g.remaining for g in grants), plan=plan, grants=grants)
 
+    async def has_plan(self, claims: dict, plan: str) -> bool:
+        """True when the account has an active grant of this plan. Unlimited accounts, and servers without
+        look limits (local development), have every plan."""
+        if self.settings.is_unlimited(claims.get("email")) or not self._limits_active():
+            return True
+        if not claims.get("email"):
+            return False
+        balance = await self.balance(claims)
+        return not balance.enforced or any(grant.kind == plan for grant in balance.grants)
+
     async def add_grants(self, rows: list[dict]) -> None:
         """Insert purchased grants; payment_ref is unique, so webhook retries and the checkout callback never double up."""
         if not rows:

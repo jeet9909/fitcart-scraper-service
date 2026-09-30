@@ -171,6 +171,30 @@ FACE_REFINE_PROMPT = (
 )
 
 
+# 360° view: the finished look is redrawn from these turns around the person (degrees, clockwise seen
+# from above; 0 is the saved front-facing image). The viewer spins through front, right, back, left.
+SPIN_ANGLES = (90, 180, 270)
+SPIN_VIEWS = {
+    90: "turned 90 degrees to their left, so the camera sees their right side in full profile",
+    180: "turned around 180 degrees, so the camera sees them directly from behind: the back of the head and hair, "
+         "the back of every garment and the heels of the shoes. The face is not visible",
+    270: "turned 90 degrees to their right, so the camera sees their left side in full profile",
+}
+
+
+def spin_prompt(angle: int) -> str:
+    return (
+        "Image 1 is a finished fashion photo of a person. Redraw the same photo with the person " + SPIN_VIEWS[angle] + ". "
+        "It is the same moment from a camera that walked around them: the same person, body size and proportions, height, "
+        "hairstyle, skin tone, glasses and accessories, and exactly the same outfit, colours, prints, fabric, fit, length and shoes. "
+        "Image 2 is the person's own photo and image 3 is a product reference; use them for details that image 1 does not show, "
+        "such as the back of a garment, but never change what image 1 already shows. "
+        "Keep the same plain studio background, the same soft even lighting, the same camera height and distance, and the same framing: "
+        "the whole body from the top of the head to the soles of the shoes, the same size in the frame as in image 1, standing upright "
+        "with arms relaxed at the sides. Photorealistic, one person, no text, no watermark, no collage."
+    )
+
+
 @dataclass
 class GeminiUsage:
     """Usage counted by this process. Resets when the server restarts."""
@@ -263,6 +287,50 @@ class TryOnService:
             if locked:
                 result = (locked, result[1], result[2])
         return result
+
+    async def generate_spin_view(self, look: tuple[bytes, str, str], person: tuple[bytes, str, str], product: tuple[bytes, str, str], angle: int) -> tuple[bytes, str, str]:
+        """Draw one side or back view of a finished look, for the 360° viewer. Retries once, since one bad view breaks the spin."""
+        payload = {
+            "contents": [{"role": "user", "parts": [
+                {"text": spin_prompt(angle)}, self._inline_part(look), self._inline_part(person), self._inline_part(product),
+            ]}],
+            "generationConfig": {"responseModalities": ["TEXT", "IMAGE"], "imageConfig": {"aspectRatio": "3:4"}},
+        }
+        try:
+            return await self._generated_image(payload, "Gemini 360 view failed")
+        except TryOnError as exc:
+            if exc.status_code == 429:
+                raise
+            log.warning("360 view %s failed once, retrying: %s", angle, exc)
+            return await self._generated_image(payload, "Gemini 360 view failed")
+
+    async def get_gallery_row(self, user_id: str, item_id: str) -> dict[str, Any]:
+        response = await self.rest("GET", "try_on_gallery", params={"id": f"eq.{item_id}", "anonymous_user_id": f"eq.{user_id}", "select": "*"})
+        if response.status_code >= 400:
+            raise TryOnError("Could not load this look")
+        rows = response.json()
+        if not rows:
+            raise TryOnError("This look was not found", 404)
+        return rows[0]
+
+    async def create_spin(self, user_id: str, row: dict[str, Any]) -> GalleryItem:
+        """Draw the right, back and left views of a saved look and store them next to it."""
+        look, person, product = await asyncio.gather(
+            self.download(row["result_path"]), self.download(row["person_path"]), self.download(row["product_path"]))
+        views = await asyncio.gather(*(self.generate_spin_view(look, person, product, angle) for angle in SPIN_ANGLES))
+        prefix = f"{user_id}/{row['id']}"
+        paths = [f"{prefix}/spin_{angle}_{uuid4().hex[:8]}.{view[2]}" for angle, view in zip(SPIN_ANGLES, views)]
+        await asyncio.gather(*(self._upload(path, view) for path, view in zip(paths, views)))
+        spin = [row["result_path"], *paths]
+        response = await self.rest(
+            "PATCH", "try_on_gallery", params={"id": f"eq.{row['id']}", "anonymous_user_id": f"eq.{user_id}"},
+            json_body={"spin_paths": spin}, prefer="return=representation")
+        if response.status_code >= 400:
+            await self.delete_objects(paths)
+            log.error("Could not save the 360 view: %s %s", response.status_code, response.text[:300])
+            raise TryOnError("Could not save the 360° view. Run supabase/schema.sql to add the spin_paths column.", 503)
+        log.info("360 view created for look %s", row["id"])
+        return await self._to_item(response.json()[0])
 
     async def _generated_image(self, payload: dict[str, Any], failure: str) -> tuple[bytes, str, str]:
         body = await self._call_gemini(self.settings.gemini_image_model, payload, failure)
@@ -515,13 +583,18 @@ class TryOnService:
             response = await client.get(f"{self.settings.supabase_url.rstrip('/')}/rest/v1/try_on_gallery", headers=self._headers, params=params)
         if response.status_code >= 400: raise TryOnError("Could not load the gallery")
         rows = response.json()
-        signed = await self.signed_urls([row[key] for row in rows for key in ("person_path", "product_path", "result_path")])
+        signed = await self.signed_urls([path for row in rows for path in _row_paths(row)])
         return [await self._to_item(row, signed) for row in rows]
 
     async def _to_item(self, row: dict[str, Any], signed: dict[str, str] | None = None) -> GalleryItem:
         if signed is None:
-            signed = await self.signed_urls([row["person_path"], row["product_path"], row["result_path"]])
-        missing = [path for path in (row["person_path"], row["product_path"], row["result_path"]) if path not in signed]
+            signed = await self.signed_urls(_row_paths(row))
+        missing = [path for path in _row_paths(row) if path not in signed]
         if missing:
             raise TryOnError("Could not create a private gallery URL")
-        return GalleryItem(id=row["id"], anonymous_user_id=row["anonymous_user_id"], category=row["category"], product_source=row["product_source"], product_url=row.get("product_url"), person_image_url=signed[row["person_path"]], product_image_url=signed[row["product_path"]], result_image_url=signed[row["result_path"]], model=row["model"], items=row.get("items") or [], created_at=datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")))
+        spin = [signed[path] for path in row.get("spin_paths") or []]
+        return GalleryItem(id=row["id"], anonymous_user_id=row["anonymous_user_id"], category=row["category"], product_source=row["product_source"], product_url=row.get("product_url"), person_image_url=signed[row["person_path"]], product_image_url=signed[row["product_path"]], result_image_url=signed[row["result_path"]], model=row["model"], items=row.get("items") or [], spin_image_urls=spin, created_at=datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")))
+
+
+def _row_paths(row: dict[str, Any]) -> list[str]:
+    return [row["person_path"], row["product_path"], row["result_path"], *(row.get("spin_paths") or [])]

@@ -112,7 +112,8 @@ def _describe_pieces(pieces: list["OutfitPiece"], first: int = 2) -> str:
 # Glasses drawn twice (one pair on top of another) were the most visible glitch in re-posed results.
 FACE_ACCESSORIES = (
     "Keep every accessory on their face and head exactly as in their photo, and add none they do not wear: "
-    "glasses or sunglasses with the same frame shape, colour, thickness and lens tint, sitting on the nose and ears in the same place, "
+    "glasses or sunglasses with the same frame style (thick or thin, full-rim or metal), shape, colour, thickness and lens tint, "
+    "sitting on the nose and ears in the same place, "
     "and earrings, nose pins, piercings, bindi, caps or headwear the same way. "
     "Glasses appear as one single pair with clean, sharp frames: no double, overlapping, ghosted or broken frames or lenses. "
 )
@@ -162,8 +163,10 @@ def tryon_prompt(pieces: list["OutfitPiece"], pose: str = "standard", face_refer
 FACE_REFINE_PROMPT = (
     "Edit image 1. Images 2 and 3 show the real person: image 2 is a close-up of their face, image 3 is their own photo. "
     "Replace the whole head in image 1 so it is exactly this real person, copied from images 2 and 3: the same face shape and width, cheeks, jawline and chin, "
-    "beard and moustache shape, eyes, eyebrows, nose, lips, skin tone and texture, ears, hairline and hairstyle, "
-    "and the same head size relative to the shoulders as in image 3. Do not slim, smooth, beautify or idealise the face. "
+    "beard and moustache shape, density and length (not trimmed, thinned or filled in), eyes, eyebrows, nose, lips, skin tone and texture, "
+    "ears, hairline, and hairstyle with the same volume and height. The head must be the same size relative to the shoulders and body "
+    "as in image 3: a real person's head is about one seventh of their height, so never shrink it to fashion-model proportions. "
+    "Do not slim, smooth, beautify or idealise the face. "
     + FACE_ACCESSORIES
     + "First remove any glasses or face accessories already drawn in image 1, then draw only the ones from images 2 and 3, once, in their real position. "
     "Keep everything else in image 1 exactly as it is: the pose, body, clothes, hands, background, lighting, camera framing and image size. "
@@ -345,24 +348,39 @@ class TryOnService:
         if pose == "standard" and face and self.settings.face_refine_enabled:
             # Re-posing redraws the whole person, so faces drift (often slimmer, a smaller head). A second,
             # edit-only pass fixes just the head against the real references; everything else stays.
-            try:
-                refine = {
-                    "contents": [{"role": "user", "parts": [
-                        {"text": FACE_REFINE_PROMPT},
-                        self._inline_part(result), self._inline_part((face[0], face[1], "jpg")), self._inline_part(person),
-                    ]}],
-                    "generationConfig": {"responseModalities": ["TEXT", "IMAGE"], "imageConfig": {"aspectRatio": "3:4"}},
-                }
-                result = await self._generated_image(refine, "Gemini face refinement failed")
-                log.info("Face refinement applied")
-            except TryOnError as exc:
-                log.warning("Face refinement skipped, keeping the first image: %s", exc)
+            result = await self._refine_face(result, person, face, "3:4", "standard pose")
         elif pose == "keep" and self.settings.face_lock_enabled:
             # In the person's own pose the head barely moves, so pasting their real features is safe.
             locked = await asyncio.to_thread(identity.lock_face, person[0], result[0], result[1])
             if locked:
                 result = (locked, result[1], result[2])
         return result
+
+    async def _refine_face(self, image: tuple[bytes, str, str], person: tuple[bytes, str, str], face: tuple[bytes, str], aspect: str, label: str) -> tuple[bytes, str, str]:
+        """Edit-only pass that redraws the head from the real references, checked with a face-recognition
+        score against the real photo. Below the target it is redrawn again, and the closest version wins
+        (the unrefined image included). Without a readable face the refined image is used as before."""
+        real = await asyncio.to_thread(identity.face_signature, person[0])
+        refine = {"contents": [{"role": "user", "parts": [
+            {"text": FACE_REFINE_PROMPT}, self._inline_part(image), self._inline_part((face[0], face[1], "jpg")), self._inline_part(person),
+        ]}], "generationConfig": {"responseModalities": ["TEXT", "IMAGE"], "imageConfig": {"aspectRatio": aspect}}}
+        before = await asyncio.to_thread(identity.face_match, real, image[0])
+        best, best_score, scores = image, before, [before]
+        for attempt in range(1 + self.settings.face_refine_retries):
+            try:
+                refined = await self._generated_image(refine, "Gemini face refinement failed")
+            except TryOnError as exc:
+                log.warning("Face refinement attempt %d skipped for %s: %s", attempt + 1, label, exc)
+                break
+            score = await asyncio.to_thread(identity.face_match, real, refined[0])
+            scores.append(score)
+            if score is None or best_score is None or score >= best_score:
+                best, best_score = refined, score
+            if score is None or score >= self.settings.face_match_target:
+                break
+        log.info("Face refinement for %s: scores %s, kept %s", label,
+                 ", ".join("n/a" if x is None else f"{x:.3f}" for x in scores), "n/a" if best_score is None else f"{best_score:.3f}")
+        return best
 
     async def generate_spin_view(self, look: tuple[bytes, str, str], person: tuple[bytes, str, str], product: tuple[bytes, str, str], angle: int) -> tuple[bytes, str, str]:
         """Draw one side or back view of a finished look, for the 360° viewer. Retries once, since one bad view breaks the spin."""
@@ -392,13 +410,7 @@ class TryOnService:
         face = await asyncio.to_thread(identity.face_reference, person[0]) if self.settings.face_lock_enabled else None
         if face and self.settings.face_refine_enabled:
             # A new pose redraws the whole person, so the face drifts the same way as in the standard pose.
-            try:
-                refine = {"contents": [{"role": "user", "parts": [
-                    {"text": FACE_REFINE_PROMPT}, self._inline_part(image), self._inline_part((face[0], face[1], "jpg")), self._inline_part(person),
-                ]}], "generationConfig": config}
-                image = await self._generated_image(refine, "Gemini face refinement failed")
-            except TryOnError as exc:
-                log.warning("Face refinement skipped for pose %s: %s", pose.key, exc)
+            image = await self._refine_face(image, person, face, "4:5", f"pose {pose.key}")
         path = f"{user_id}/{row['id']}/pose_{pose.key}_{uuid4().hex[:8]}.{image[2]}"
         await self._upload(path, image)
         shots = [shot for shot in row.get("pose_shots") or [] if shot.get("pose") != pose.key] + [{"pose": pose.key, "path": path}]

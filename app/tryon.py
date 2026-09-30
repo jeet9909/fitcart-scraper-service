@@ -322,11 +322,12 @@ class TryOnService:
         validate_public_url(str(response.url))
         return validate_image(response.content, response.headers.get("content-type", "").split(";")[0], self.settings.max_image_bytes)
 
-    async def generate(self, person: tuple[bytes, str, str], product: tuple[bytes, str, str], category: str, product_name: str | None = None, pose: str = "standard") -> tuple[bytes, str, str]:
-        return await self.generate_outfit(person, [OutfitPiece(image=product, category=category, label=product_name)], pose=pose)
+    async def generate(self, person: tuple[bytes, str, str], product: tuple[bytes, str, str], category: str, product_name: str | None = None, pose: str = "standard", face_check: bool = False) -> tuple[bytes, str, str]:
+        return await self.generate_outfit(person, [OutfitPiece(image=product, category=category, label=product_name)], pose=pose, face_check=face_check)
 
-    async def generate_outfit(self, person: tuple[bytes, str, str], pieces: list["OutfitPiece"], pose: str = "standard") -> tuple[bytes, str, str]:
-        """Dress the person in one or more products (top, bottom, footwear, jewelry...) in a single image."""
+    async def generate_outfit(self, person: tuple[bytes, str, str], pieces: list["OutfitPiece"], pose: str = "standard", face_check: bool = False) -> tuple[bytes, str, str]:
+        """Dress the person in one or more products (top, bottom, footwear, jewelry...) in a single image.
+        face_check (Plus and Pro) scores the refined face against the real photo and redraws weak matches."""
         if not 1 <= len(pieces) <= MAX_OUTFIT_PIECES:
             raise TryOnError(f"Choose between 1 and {MAX_OUTFIT_PIECES} items to try on", 400)
         if pose not in POSES:
@@ -348,7 +349,7 @@ class TryOnService:
         if pose == "standard" and face and self.settings.face_refine_enabled:
             # Re-posing redraws the whole person, so faces drift (often slimmer, a smaller head). A second,
             # edit-only pass fixes just the head against the real references; everything else stays.
-            result = await self._refine_face(result, person, face, "3:4", "standard pose")
+            result = await self._refine_face(result, person, face, "3:4", "standard pose", check=face_check)
         elif pose == "keep" and self.settings.face_lock_enabled:
             # In the person's own pose the head barely moves, so pasting their real features is safe.
             locked = await asyncio.to_thread(identity.lock_face, person[0], result[0], result[1])
@@ -356,14 +357,23 @@ class TryOnService:
                 result = (locked, result[1], result[2])
         return result
 
-    async def _refine_face(self, image: tuple[bytes, str, str], person: tuple[bytes, str, str], face: tuple[bytes, str], aspect: str, label: str) -> tuple[bytes, str, str]:
-        """Edit-only pass that redraws the head from the real references, checked with a face-recognition
-        score against the real photo. Below the target it is redrawn again, and the closest version wins
-        (the unrefined image included). Without a readable face the refined image is used as before."""
-        real = await asyncio.to_thread(identity.face_signature, person[0])
+    async def _refine_face(self, image: tuple[bytes, str, str], person: tuple[bytes, str, str], face: tuple[bytes, str], aspect: str, label: str, check: bool = True) -> tuple[bytes, str, str]:
+        """Edit-only pass that redraws the head from the real references. With check (Plus and Pro), the
+        result is scored with face recognition against the real photo; below the target it is redrawn again
+        and the closest version wins (the unrefined image included). Without check, or without a readable
+        face, the refined image is used as it is."""
         refine = {"contents": [{"role": "user", "parts": [
             {"text": FACE_REFINE_PROMPT}, self._inline_part(image), self._inline_part((face[0], face[1], "jpg")), self._inline_part(person),
         ]}], "generationConfig": {"responseModalities": ["TEXT", "IMAGE"], "imageConfig": {"aspectRatio": aspect}}}
+        if not check:
+            try:
+                refined = await self._generated_image(refine, "Gemini face refinement failed")
+                log.info("Face refinement for %s applied (no identity check on this plan)", label)
+                return refined
+            except TryOnError as exc:
+                log.warning("Face refinement skipped for %s: %s", label, exc)
+                return image
+        real = await asyncio.to_thread(identity.face_signature, person[0])
         before = await asyncio.to_thread(identity.face_match, real, image[0])
         best, best_score, scores = image, before, [before]
         for attempt in range(1 + self.settings.face_refine_retries):
@@ -410,7 +420,7 @@ class TryOnService:
         face = await asyncio.to_thread(identity.face_reference, person[0]) if self.settings.face_lock_enabled else None
         if face and self.settings.face_refine_enabled:
             # A new pose redraws the whole person, so the face drifts the same way as in the standard pose.
-            image = await self._refine_face(image, person, face, "4:5", f"pose {pose.key}")
+            image = await self._refine_face(image, person, face, "4:5", f"pose {pose.key}", check=True)
         path = f"{user_id}/{row['id']}/pose_{pose.key}_{uuid4().hex[:8]}.{image[2]}"
         await self._upload(path, image)
         shots = [shot for shot in row.get("pose_shots") or [] if shot.get("pose") != pose.key] + [{"pose": pose.key, "path": path}]

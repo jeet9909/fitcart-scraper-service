@@ -31,9 +31,9 @@ class Plan:
 
 # Prices include GST, in paise. Plus and Pro looks refresh every month, also on yearly billing.
 PLANS: dict[str, Plan] = {
-    "pass": Plan(name="Mydripcheck Occasion Pass", looks=10, once=12_900, days=7),
-    "plus": Plan(name="Mydripcheck Plus", looks=25, monthly=34_900, yearly=329_900),
-    "pro": Plan(name="Mydripcheck Pro", looks=60, monthly=79_900, yearly=749_900),
+    "pass": Plan(name="Mydripcheck Occasion Pass", looks=7, once=12_900, days=7),
+    "plus": Plan(name="Mydripcheck Plus", looks=18, monthly=34_900, yearly=329_900),
+    "pro": Plan(name="Mydripcheck Pro", looks=40, monthly=79_900, yearly=749_900),
 }
 # Razorpay needs an end for subscriptions: renew for up to 10 years.
 TOTAL_CYCLES = {"monthly": 120, "yearly": 10}

@@ -249,14 +249,14 @@ function bindCompare(el){
 
 /* ---------- Plans (prices include 18% GST) ---------- */
 const PLANS = [
-  {key:'free', name:'Free', for:'Try Mydripcheck on your next outfit.', monthly:0, yearly:0, looks:3, quality:'Standard', imports:15, stylist:1, wardrobe:25, cta:'Start free',
-   perks:['3 looks a month, any mix of stores','Standard quality','Wardrobe up to 25 items','1 AI stylist idea'], missing:['HD looks','Full Looks history','Social-ready poses','360° view']},
-  {key:'pass', name:'Occasion Pass', for:'One-time pack for a wedding, festival or trip.', once:129, listOnce:149, days:7, looks:10, quality:'HD', imports:30, stylist:5, wardrobe:25, cta:'Buy the pass',
-   perks:['10 HD looks for 7 days','No autopay, pay once with UPI','5 AI stylist ideas','Stacks on any plan'], missing:['Social-ready poses','360° view']},
-  {key:'plus', name:'Plus', for:'For people who shop online every month.', monthly:349, listMonthly:399, yearly:3299, looks:25, quality:'HD', imports:150, stylist:20, wardrobe:200, cta:'Get Plus', popular:true,
-   perks:['25 HD looks every month','3 social-ready poses for your posts','Standard pose, head to toe','Wardrobe up to 200 items','20 AI stylist ideas','Full Looks history and HD downloads'], missing:['360° view']},
-  {key:'pro', name:'Pro', for:'For stylists, creators and big wardrobes.', monthly:799, listMonthly:999, yearly:7499, looks:60, quality:'HD', imports:300, stylist:40, wardrobe:1000, cta:'Get Pro',
-   perks:['360° view: spin your look to see the side and back','All 8 social-ready poses','60 HD looks every month','Priority generation','Wardrobe up to 1,000 items','40 AI stylist ideas'], missing:[]},
+  {key:'free', name:'Free', for:'Try Mydripcheck on your next outfit.', monthly:0, yearly:0, looks:2, quality:'Standard', imports:15, stylist:1, wardrobe:25, cta:'Start free',
+   perks:['2 looks a month, any mix of stores','Standard quality','Wardrobe up to 25 items','1 AI stylist idea'], missing:['HD looks','Full Looks history','Social-ready poses','360° view']},
+  {key:'pass', name:'Occasion Pass', for:'One-time pack for a wedding, festival or trip.', once:129, listOnce:149, days:7, looks:7, quality:'HD', imports:30, stylist:5, wardrobe:25, cta:'Buy the pass',
+   perks:['7 HD looks for 7 days','No autopay, pay once with UPI','5 AI stylist ideas','Stacks on any plan'], missing:['Social-ready poses','360° view']},
+  {key:'plus', name:'Plus', for:'For people who shop online every month.', monthly:349, listMonthly:399, yearly:3299, looks:18, quality:'HD', imports:150, stylist:20, wardrobe:200, cta:'Get Plus', popular:true,
+   perks:['18 HD looks every month','3 social-ready poses for your posts','Standard pose, head to toe','Wardrobe up to 200 items','20 AI stylist ideas','Full Looks history and HD downloads'], missing:['360° view']},
+  {key:'pro', name:'Pro', for:'For stylists, creators and big wardrobes.', monthly:799, listMonthly:999, yearly:7499, looks:40, quality:'HD', imports:300, stylist:40, wardrobe:1000, cta:'Get Pro',
+   perks:['360° view: spin your look to see the side and back','All 8 social-ready poses','40 HD looks every month','Priority generation','Wardrobe up to 1,000 items','40 AI stylist ideas'], missing:[]},
 ];
 // Shown price, crossed-out list price and the discount between them. Yearly plans compare the
 // monthly equivalent with the monthly list price.
@@ -324,7 +324,7 @@ function landing(){
         <h1>Wear it<br><span class="grad-text">before you buy it.</span></h1>
         <p class="lede">Paste links from Myntra, Amazon, AJIO and more. Mydripcheck puts the whole outfit on you in seconds, then sends you to each store to buy.</p>
         <div class="lp-ctas"><button class="btn brand big" data-act="go" data-view="home">${icon('spark')} Try it free</button><button class="btn glassy big" data-act="scroll" data-target="lpPricing">See plans</button></div>
-        <div class="lp-trust"><span>${icon('check','s')} 3 free looks a month</span><span>${icon('lock','s')} Your photo stays private</span><span>${icon('body','s')} Head-to-toe standard pose</span></div>
+        <div class="lp-trust"><span>${icon('check','s')} 2 free looks a month</span><span>${icon('lock','s')} Your photo stays private</span><span>${icon('body','s')} Head-to-toe standard pose</span></div>
       </div>
       <div class="stage">
         <div class="device glass">${compareHtml('before','after','You','New look', true)}</div>
@@ -371,7 +371,7 @@ function landing(){
       <details class="glass reveal"><summary>Can I cancel anytime?</summary><p>Yes. Cancel from your account and you keep your plan until the end of the period. The Occasion Pass never renews.</p></details>
     </div>
   </section>
-  <section class="cta-band reveal"><h2>Your next outfit is three links away.</h2><p style="opacity:.92;max-width:44ch">Try Mydripcheck free. No card needed. Sign in with your email for 3 free looks every month.</p><button class="btn big" data-act="go" data-view="home">${icon('spark')} Try it free</button></section>
+  <section class="cta-band reveal"><h2>Your next outfit is three links away.</h2><p style="opacity:.92;max-width:44ch">Try Mydripcheck free. No card needed. Sign in with your email for 2 free looks every month.</p><button class="btn big" data-act="go" data-view="home">${icon('spark')} Try it free</button></section>
   <footer class="lp-foot"><span>© 2026 Mydripcheck · See the look. Choose the fit.</span><span>Prices include GST · Made in India</span></footer>
 </div>`;
 }
@@ -417,7 +417,7 @@ function home(){
         <button class="chip" data-act="demo">${icon('spark','s')} Try a 3-store sample look</button>
         <button class="chip" data-act="go" data-view="wardrobe">${icon('hanger','s')} Start from my wardrobe</button>
       </div>
-      <div class="trust"><span>${icon('lock','s')} Your look is private</span><span>${icon('shield','s')} 3 free looks a month</span><span>${icon('store','s')} Live prices from each store</span></div>
+      <div class="trust"><span>${icon('lock','s')} Your look is private</span><span>${icon('shield','s')} 2 free looks a month</span><span>${icon('store','s')} Live prices from each store</span></div>
     </div>
     <div class="hero-visual">${compareHtml('before','after','Before','After', true)}<p class="tiny muted" style="margin-top:8px">Drag the handle to compare. Sample result.</p></div>
   </section>
@@ -755,7 +755,7 @@ function spinCard(look){
   return `<div class="card spin-card">
     <div class="spin-card-art" aria-hidden="true">${icon('spin')}</div>
     <div><p style="font-weight:700">See it from every side <span class="tag pro">Pro</span></p>
-    <p class="small muted">${busy ? 'Drawing the side and back views. This takes about a minute.' : pro ? 'Turn this look into a 360° view you can spin. Uses 1 look.' : 'Spin your look to see the side and back before you buy. Part of Pro.'}</p></div>
+    <p class="small muted">${busy ? 'Drawing the side and back views. This takes about a minute.' : pro ? 'Turn this look into a 360° view you can spin. Uses 2 looks.' : 'Spin your look to see the side and back before you buy. Part of Pro.'}</p></div>
     <button class="btn small ${pro ? 'brand' : 'ghost'}" data-act="make-spin" ${busy ? 'disabled aria-busy="true"' : ''}>${busy ? '<span class="spin-loader"></span> Creating…' : pro ? 'Create 360° view' : 'See Pro'}</button>
   </div>`;
 }
@@ -768,7 +768,7 @@ async function makeSpin(){
     const item = await api(`/v1/try-ons/${encodeURIComponent(look.id)}/spin`, {method:'POST'});
     look.spin = item.spin_image_urls || [];
     state.gallery = null;
-    if (Number.isFinite(state.balance?.remaining)) state.balance.remaining = Math.max(0, state.balance.remaining - 1);
+    if (Number.isFinite(state.balance?.remaining)) state.balance.remaining = Math.max(0, state.balance.remaining - 2);
     loadBalance();
     if (state.current === look){ state.resultMode = 'spin'; state.spinIndex = 0; state.spinIntro = true; }
     toast('Your 360° view is ready. Drag to turn.');

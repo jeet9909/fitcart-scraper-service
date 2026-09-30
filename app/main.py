@@ -147,6 +147,12 @@ async def spend_look(claims: dict = Depends(get_session_claims), ledger: LookLed
         raise
 
 
+async def face_check_for(claims: dict, ledger: LookLedger) -> bool:
+    """Plus and Pro (and unlimited accounts) get the identity check and extra face redraw on try-ons.
+    Asked only right before drawing, so rejected requests cost no extra database calls."""
+    return await ledger.has_plan(claims, "plus", "pro")
+
+
 def require_email(claims: dict = Depends(get_session_claims)) -> dict:
     if not claims.get("email"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "sign_in_required", "message": "Sign in with your email first."})
@@ -286,6 +292,8 @@ async def create_tryon(
     ),
     outfit_images: list[UploadFile] | None = File(None, description="Photos for extra pieces that have no image URL"),
     look: Reservation = Depends(spend_look),
+    claims: dict = Depends(get_session_claims),
+    ledger: LookLedger = Depends(get_ledger),
     user_id: str = Depends(get_anonymous_user),
     settings: Settings = Depends(get_runtime_settings),
     scraper: BrightDataScraper = Depends(get_scraper),
@@ -319,7 +327,7 @@ async def create_tryon(
         name = product_name.strip()[:200] if product_name and product_name.strip() else None
         category = category.strip()[:80] or "clothing"
         if not extras:
-            result = await service.generate(person, product, category, product_name=name, pose=pose)
+            result = await service.generate(person, product, category, product_name=name, pose=pose, face_check=await face_check_for(claims, ledger))
             return await service.save(user_id, person, product, result, category, product_source, source_url)
 
         async def extra_image(item: OutfitExtraItem) -> tuple[bytes, str, str]:
@@ -331,7 +339,7 @@ async def create_tryon(
         images = await asyncio.gather(*(extra_image(item) for item in extras))
         pieces = [OutfitPiece(image=product, category=category, label=name)]
         pieces += [OutfitPiece(image=image, category=SLOT_LABELS[item.slot], label=item.name.strip() or None) for item, image in zip(extras, images)]
-        result = await service.generate_outfit(person, pieces, pose=pose)
+        result = await service.generate_outfit(person, pieces, pose=pose, face_check=await face_check_for(claims, ledger))
         summary = [{"slot": None, "category": category, "name": name, "product_url": source_url}]
         summary += [
             {"slot": item.slot, "name": item.name, "store": item.store, "price": item.price, "size": item.size,
@@ -375,6 +383,8 @@ async def create_outfit_tryon(
     item_ids: str = Form(..., description="Comma-separated wardrobe item ids (1 to 5), e.g. a top, a bottom and shoes"),
     pose: Literal["standard", "keep"] = Form("standard", description="standard: upright front-facing catalogue pose with the whole outfit visible; keep: the pose from the photo"),
     look: Reservation = Depends(spend_look),
+    claims: dict = Depends(get_session_claims),
+    ledger: LookLedger = Depends(get_ledger),
     user_id: str = Depends(get_anonymous_user),
     settings: Settings = Depends(get_runtime_settings),
     service: TryOnService = Depends(get_tryon_service),
@@ -385,7 +395,7 @@ async def create_outfit_tryon(
         service.ensure_configured()
         person = validate_image(await person_image.read(), person_image.content_type, settings.max_image_bytes)
         pieces, summary = await wardrobe.outfit_pieces(user_id, [item.strip() for item in item_ids.split(",") if item.strip()])
-        result = await service.generate_outfit(person, pieces, pose=pose)
+        result = await service.generate_outfit(person, pieces, pose=pose, face_check=await face_check_for(claims, ledger))
         category = " + ".join(item["slot"] for item in summary)[:80]
         product_url = next((item["product_url"] for item in summary if item.get("product_url")), None)
         return await service.save(user_id, person, pieces[0].image, result, category, "wardrobe", product_url, items=summary)
@@ -397,6 +407,9 @@ async def create_outfit_tryon(
         raise HTTPException(status_code=502, detail="Could not reach the image or storage service. Please try again.") from exc
 
 
+SPIN_LOOKS = 2  # a 360° view draws three images, about 1.3x the cost of one look
+
+
 @app.post("/v1/try-ons/{item_id}/spin", response_model=GalleryItem, tags=["virtual try-on"])
 async def create_spin(
     item_id: UUID,
@@ -404,8 +417,8 @@ async def create_spin(
     service: TryOnService = Depends(get_tryon_service),
     ledger: LookLedger = Depends(get_ledger),
 ) -> GalleryItem:
-    """Pro: turn a saved look into a 360° view (front, right side, back, left side). Uses one look; a look
-    that already has its 360° view is returned as it is, for free."""
+    """Pro: turn a saved look into a 360° view (front, right side, back, left side). Uses two looks, since it
+    draws three images; a look that already has its 360° view is returned as it is, for free."""
     try:
         service.ensure_configured()
         row = await service.get_gallery_row(claims["sub"], str(item_id))
@@ -413,11 +426,22 @@ async def create_spin(
             return await service._to_item(row)
         if not await ledger.has_plan(claims, "pro"):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "pro_required", "message": "The 360° view is part of Pro."})
-        reservation = await ledger.reserve(claims)
+        reservations = []
+        try:
+            for _ in range(SPIN_LOOKS):
+                reservations.append(await ledger.reserve(claims))
+        except HTTPException as exc:
+            for reservation in reservations:
+                await ledger.refund(reservation)
+            if exc.status_code == status.HTTP_402_PAYMENT_REQUIRED:
+                raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail={
+                    "code": "no_looks_left", "message": f"The 360° view uses {SPIN_LOOKS} looks and you do not have enough left."}) from exc
+            raise
         try:
             return await service.create_spin(claims["sub"], row)
         except BaseException:
-            await ledger.refund(reservation)
+            for reservation in reservations:
+                await ledger.refund(reservation)
             raise
     except TryOnError as exc:
         log.warning("Try-on failed (%s): %s", exc.status_code, exc)

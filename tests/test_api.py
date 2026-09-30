@@ -1369,37 +1369,41 @@ def test_face_lock_restores_the_real_face_and_leaves_the_body() -> None:
     assert xs.min() > before.shape[1] * 0.3 and xs.max() < before.shape[1] * 0.7
 
 
-def test_face_lock_never_pulls_in_the_photo_background_or_jaw() -> None:
-    """A real photo with a wider jaw, darker room and different framing must only change the inner face."""
+def test_face_lock_brings_back_the_whole_head_but_not_the_clothes() -> None:
+    """Keep pose: the real head (glasses, beard, hair) replaces the drawn one as a whole, so no seam runs
+    through the glasses; the collar and clothes below the chin and the far background stay as generated."""
     import cv2
     import numpy as np
     from app.identity import _detect, lock_face
 
-    generated = cv2.imread("app/static/img/after.jpg")
-    h, w = generated.shape[:2]
-    face = _detect(generated)
-    cx, cy = face.box[0] + face.box[2] / 2, face.box[1] + face.box[3] * 0.75
-    ys, xs = np.mgrid[0:h, 0:w].astype(np.float32)
-    bump = np.exp(-(((xs - cx) / (face.box[2] * 0.9)) ** 2 + ((ys - cy) / (face.box[3] * 0.6)) ** 2))
-    real = cv2.remap(generated, xs - (xs - cx) * 0.10 * bump, ys, cv2.INTER_LINEAR)  # wider jaw
-    wall = np.all(np.abs(real.astype(int) - real[20, 20].astype(int)) < 18, axis=2)
-    real[wall] = (real[wall] * 0.55).astype(np.uint8)  # darker room
-    real = cv2.warpAffine(real, cv2.getRotationMatrix2D((cx, cy), 4, 0.9), (w, h), borderMode=cv2.BORDER_REPLICATE)
+    real = cv2.imread("app/static/img/after.jpg")
+    h, w = real.shape[:2]
+    face = _detect(real)
+    x, y, fw, fh = face.box
+    generated = real.copy()
+    # The model redrew the head: warmer from the forehead to below the chin.
+    top, bottom, left, right = int(max(0, y - fh * 0.2)), int(min(h, y + fh * 1.6)), int(max(0, x - fw * 0.3)), int(min(w, x + fw * 1.3))
+    patch = generated[top:bottom, left:right].astype(int)
+    patch[..., 2] += 30
+    patch[..., 0] -= 20
+    generated[top:bottom, left:right] = patch.clip(0, 255).astype(np.uint8)
 
     locked = lock_face(cv2.imencode(".png", real)[1].tobytes(), cv2.imencode(".png", generated)[1].tobytes())
     assert locked is not None
-    out = cv2.imdecode(np.frombuffer(locked, np.uint8), cv2.IMREAD_COLOR)
-    changed = np.abs(out.astype(int) - generated.astype(int)).max(axis=2) > 12
-    rows, cols = np.nonzero(changed)
-    assert changed.sum() > 300
-    # Changes stay inside the inner face (eyebrow ends to under the lower lip): not the cheek
-    # outline, jaw, beard edge, ears or the wall.
-    right_eye, left_eye, _, right_mouth, left_mouth = face.points
-    ed = face.eye_distance
-    assert cols.min() > right_eye[0] - ed * 0.5 and cols.max() < left_eye[0] + ed * 0.5
-    assert rows.max() < max(right_mouth[1], left_mouth[1]) + ed * 0.4
-    wall_after = out[20:120, 20:120].astype(int).mean()
-    assert abs(wall_after - generated[20:120, 20:120].astype(int).mean()) < 1
+    out = cv2.imdecode(np.frombuffer(locked, np.uint8), cv2.IMREAD_COLOR).astype(int)
+    eyes = slice(int(face.points[0][1] - fh * 0.08), int(face.points[0][1] + fh * 0.08))
+    across = slice(int(x + fw * 0.1), int(x + fw * 0.9))
+    # The eye line (where glasses sit) is the real photo again, edge to edge of the face: much closer to the
+    # real photo than the drawn head was (a pixel or two of alignment on this small sample face remains).
+    colour = lambda image: image[eyes, across].reshape(-1, 3).astype(float).mean(axis=0)
+    before = np.abs(colour(generated) - colour(real)).max()
+    after = np.abs(colour(out) - colour(real)).max()
+    assert before > 15 and after < 3
+    # Below the chin (collar) the generated image is untouched.
+    collar = slice(int(y + fh * 1.25), int(y + fh * 1.6))
+    assert np.abs(out[collar, across] - generated[collar, across].astype(int)).max() < 2
+    # Far from the head nothing changes.
+    assert np.abs(out[h - 40:h, 0:40] - generated[h - 40:h, 0:40].astype(int)).max() == 0
 
 
 def test_face_lock_shape_check_uses_all_landmarks() -> None:

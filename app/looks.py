@@ -117,6 +117,19 @@ class LookLedger:
         balance = await self.balance(claims)
         return not balance.enforced or any(grant.kind == plan for grant in balance.grants)
 
+    async def paid_until(self, user_id: str, kind: str) -> datetime | None:
+        """When the user's current grants of this plan run out, or None when they have none."""
+        now = datetime.now(UTC)
+        response = await self.service.rest("GET", "look_grants", params={
+            "select": "expires_at", "user_id": f"eq.{user_id}", "kind": f"eq.{kind}",
+            "expires_at": f"gt.{now.isoformat()}", "order": "expires_at.desc", "limit": "1",
+        })
+        if response.status_code >= 400:
+            return None
+        ends = [datetime.fromisoformat(str(row["expires_at"]).replace("Z", "+00:00")) for row in response.json() if row.get("expires_at")]
+        latest = max(ends, default=None)
+        return latest if latest and latest > now else None
+
     async def add_grants(self, rows: list[dict]) -> None:
         """Insert purchased grants; payment_ref is unique, so webhook retries and the checkout callback never double up."""
         if not rows:

@@ -1086,7 +1086,8 @@ class FakeSupabase:
             if path in ("rpc/refund_look", "rpc/ensure_free_looks"):
                 return _httpx.Response(204)
             if path == "look_grants" and request.method == "GET":
-                return _httpx.Response(200, json=self.rows)
+                kind = request.url.params.get("kind", "").removeprefix("eq.")
+                return _httpx.Response(200, json=[row for row in self.rows if not kind or row["kind"] == kind])
             if path == "look_grants" and request.method == "POST":
                 return _httpx.Response(201)
             return _httpx.Response(404)
@@ -1116,10 +1117,10 @@ def _tryon_with_bad_photo(client: TestClient, token: str | None):
     )
 
 
-def _limit_client(fake: FakeSupabase, monkeypatch):
+def _limit_client(fake: FakeSupabase, monkeypatch, settings: Settings = LIMIT_SETTINGS):
     fake.install(monkeypatch)
-    app.dependency_overrides[get_runtime_settings] = lambda: LIMIT_SETTINGS
-    service = TryOnService(LIMIT_SETTINGS)
+    app.dependency_overrides[get_runtime_settings] = lambda: settings
+    service = TryOnService(settings)
     app.dependency_overrides[get_tryon_service] = lambda: service
     return TestClient(app)
 
@@ -1243,7 +1244,7 @@ def test_checkout_creates_orders_and_subscriptions(monkeypatch) -> None:
     razorpay = FakeRazorpay()
     razorpay.install(monkeypatch)
     try:
-        with _limit_client(FakeSupabase(), monkeypatch) as client:
+        with _limit_client(FakeSupabase(), monkeypatch, LIMIT_SETTINGS.model_copy(update={"razorpay_autopay": True})) as client:
             headers = {"Authorization": f"Bearer {_email_token('buyer@example.com')}"}
             pass_ = client.post("/v1/billing/checkout", json={"plan": "pass"}, headers=headers).json()
             plus = client.post("/v1/billing/checkout", json={"plan": "plus", "billing": "yearly"}, headers=headers).json()
@@ -1264,7 +1265,7 @@ def test_checkout_creates_orders_and_subscriptions(monkeypatch) -> None:
     assert subscriptions[0]["plan_id"] == "plan_1" and subscriptions[0]["total_count"] == 10 and subscriptions[0]["notes"]["plan"] == "plus"
     assert again["subscription_id"] == "sub_New1"
     assert guest.status_code == 403
-    assert config == {"enabled": True, "test_mode": True, "provider": "razorpay"}
+    assert config == {"enabled": True, "test_mode": True, "autopay": True, "provider": "razorpay"}
 
 
 def test_live_razorpay_keys_are_refused_unless_allowed() -> None:
@@ -1677,3 +1678,40 @@ def test_failed_360_view_gives_the_look_back(monkeypatch) -> None:
         app.dependency_overrides.clear()
     assert response.status_code == 503 and "spin_paths" in response.json()["detail"]
     assert "/rest/v1/rpc/refund_look" in [c[1] for c in calls]
+
+
+def test_plans_are_prepaid_orders_without_autopay(monkeypatch) -> None:
+    """Razorpay Subscriptions needs approval, so by default Plus and Pro are one-time payments."""
+    from datetime import datetime as _dt
+
+    razorpay = FakeRazorpay({
+        "/orders/order_Year": {"id": "order_Year", "amount": 329900, "created_at": 1_790_000_000, "notes": {"user_id": AUTH_USER_ID, "plan": "plus", "billing": "yearly"}},
+        "/payments/pay_Year": {"id": "pay_Year", "order_id": "order_Year", "amount": 329900, "currency": "INR", "status": "captured"},
+        "/orders/order_Pro": {"id": "order_Pro", "amount": 79900, "created_at": 1_790_000_000, "notes": {"user_id": AUTH_USER_ID, "plan": "pro", "billing": "monthly"}},
+        "/payments/pay_Pro": {"id": "pay_Pro", "order_id": "order_Pro", "amount": 79900, "currency": "INR", "status": "captured"},
+    })
+    razorpay.install(monkeypatch)
+    # An active Pro month already runs until 2099: a new Pro month is added after it, not on top of it.
+    fake = FakeSupabase(rows=[{"kind": "pro", "looks": 60, "used": 0, "expires_at": "2099-01-01T00:00:00+00:00"}])
+    try:
+        with _limit_client(fake, monkeypatch) as client:
+            headers = {"Authorization": f"Bearer {_email_token('buyer@example.com')}"}
+            plus = client.post("/v1/billing/checkout", json={"plan": "plus", "billing": "yearly"}, headers=headers).json()
+            year = client.post("/v1/billing/confirm", headers=headers, json={
+                "razorpay_payment_id": "pay_Year", "razorpay_order_id": "order_Year", "razorpay_signature": _rzp_signature("order_Year|pay_Year")})
+            pro = client.post("/v1/billing/confirm", headers=headers, json={
+                "razorpay_payment_id": "pay_Pro", "razorpay_order_id": "order_Pro", "razorpay_signature": _rzp_signature("order_Pro|pay_Pro")})
+            config = client.get("/v1/billing/config").json()
+    finally:
+        app.dependency_overrides.clear()
+    assert plus["order_id"] == "order_New1" and plus["amount"] == 329900 and plus.get("subscription_id") is None
+    assert not any(path in ("/plans", "/subscriptions") for _, path, _ in razorpay.requests)
+    assert year.status_code == 200 and pro.status_code == 200 and config["autopay"] is False
+    grants = [call[2] for call in fake.calls if call[:2] == ("POST", "look_grants")]
+    yearly = next(rows for rows in grants if rows[0]["kind"] == "plus")
+    assert len(yearly) == 12 and yearly[0]["payment_ref"] == "order_Year:0" and yearly[11]["payment_ref"] == "order_Year:11"
+    assert all(row["looks"] == 25 for row in yearly)
+    assert yearly[0]["starts_at"].startswith("2026-09-21") and yearly[11]["expires_at"].startswith("2027-09-21")
+    monthly = next(rows for rows in grants if rows[0]["kind"] == "pro")
+    assert len(monthly) == 1 and monthly[0]["looks"] == 60
+    assert monthly[0]["starts_at"].startswith("2099-01-01") and monthly[0]["expires_at"].startswith("2099-02-01")

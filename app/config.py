@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     razorpay_key_id: str = ""
     razorpay_key_secret: SecretStr = SecretStr("")
     razorpay_webhook_secret: SecretStr = SecretStr("")
+    razorpay_autopay: bool = Field(default=False, description="Bill Plus and Pro as Razorpay subscriptions (UPI AutoPay / card mandates). Needs Subscriptions enabled on the Razorpay account; when off they are one-time prepaid payments for a month or a year")
     razorpay_allow_live: bool = Field(default=False, description="Refuse rzp_live_ keys unless this is set, so test mode cannot turn into real charges by accident")
 
     def is_unlimited(self, email: str | None) -> bool:

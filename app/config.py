@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     gemini_image_model: str = "gemini-3.1-flash-image-preview"  # gemini-2.5-flash-image shuts down on 2 Oct 2026
     gemini_text_model: str = "gemini-2.5-flash"
     face_refine_enabled: bool = Field(default=True, description="Standard pose: a second, edit-only Gemini pass that makes the head match the real person")
+    vertex_tryon_enabled: bool = Field(default=True, description="Use Google Vertex AI Virtual Try-On for looks in the person's own pose when a service account is set")
+    vertex_tryon_model: str = "virtual-try-on-001"
+    vertex_location: str = "us-central1"
+    vertex_project_id: str = Field(default="", description="Google Cloud project; defaults to the project in the service account key")
+    google_service_account_json: SecretStr = Field(default=SecretStr(""), description="Whole JSON key of a service account with the Vertex AI User role")
     face_match_target: float = Field(default=0.6, description="Identity score (SFace cosine, 0-1) a refined face should reach against the real photo; below it the face is redrawn once more and the closest version is kept")
     face_refine_retries: int = Field(default=1, ge=0, le=3, description="Extra face-refine attempts when the identity score is below face_match_target")
     face_lock_enabled: bool = Field(default=True, description="Blend the person's real face back onto generated try-ons and send a face close-up as an identity reference")

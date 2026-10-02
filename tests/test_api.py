@@ -1971,3 +1971,87 @@ def test_watermark_badge_sits_top_right_and_keeps_the_image() -> None:
     assert max(abs(a - b) for a, b in zip(top_left.resize((1, 1)).getpixel((0, 0)), (200, 180, 160))) < 4
     broken = (b"not an image", "image/png", "png")
     assert watermark(broken) == broken  # never loses the look
+
+
+VERTEX_KEY = '{"type": "service_account", "project_id": "dripcheck-prod", "private_key": "unused-in-tests", "client_email": "tryon@dripcheck-prod.iam.gserviceaccount.com"}'
+
+
+def _vertex_service(monkeypatch, vertex_status: int = 200):
+    """A TryOnService whose Vertex and Gemini calls are faked; returns the service and the calls made."""
+    import base64
+    import json as _json
+    import httpx as _httpx
+
+    calls: list[tuple[str, dict]] = []
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        body = _json.loads(request.content)
+        if "aiplatform.googleapis.com" in request.url.host:
+            calls.append(("vertex", {"url": str(request.url), "body": body, "auth": request.headers.get("authorization")}))
+            if vertex_status >= 400:
+                return _httpx.Response(vertex_status, json={"error": {"message": "boom"}})
+            dressed = base64.b64encode(_sample("tee" if len([c for c in calls if c[0] == "vertex"]) == 1 else "after")).decode()
+            return _httpx.Response(200, json={"predictions": [{"bytesBase64Encoded": dressed, "mimeType": "image/jpeg"}]})
+        calls.append(("gemini", body))
+        return _httpx.Response(200, json={"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/jpeg", "data": base64.b64encode(_sample("shirt")).decode()}}]}}]})
+
+    monkeypatch.setattr("app.tryon.httpx.AsyncClient", lambda **kwargs: _REAL_ASYNC_CLIENT(transport=_httpx.MockTransport(handler), **kwargs))
+    monkeypatch.setattr("app.vertex_tryon.httpx.AsyncClient", lambda **kwargs: _REAL_ASYNC_CLIENT(transport=_httpx.MockTransport(handler), **kwargs))
+    service = TryOnService(Settings(gemini_api_key="test", google_service_account_json=VERTEX_KEY, face_lock_enabled=False))
+    monkeypatch.setattr(service.vertex, "_token", lambda: "test-token")
+    return service, calls
+
+
+def test_own_pose_uses_google_try_on_piece_by_piece(monkeypatch) -> None:
+    import asyncio as _asyncio
+    import base64
+    from app.tryon import OutfitPiece
+
+    service, calls = _vertex_service(monkeypatch)
+    person = (_sample("before"), "image/jpeg", "jpg")
+    top, jeans = (_sample("shirt"), "image/jpeg", "jpg"), (_sample("jeans"), "image/jpeg", "jpg")
+    result = _asyncio.run(service.generate_outfit(person, [OutfitPiece(top, "top"), OutfitPiece(jeans, "bottom wear")], pose="keep"))
+    assert [kind for kind, _ in calls] == ["vertex", "vertex"]  # no Gemini drawing at all
+    first, second = calls[0][1], calls[1][1]
+    assert first["url"] == ("https://us-central1-aiplatform.googleapis.com/v1/projects/dripcheck-prod/locations/us-central1"
+                            "/publishers/google/models/virtual-try-on-001:predict")
+    assert first["auth"] == "Bearer test-token"
+    instance = lambda call: call["body"]["instances"][0]
+    # Bottoms go on first, then the top is put on the already-dressed photo.
+    assert base64.b64decode(instance(first)["productImages"][0]["image"]["bytesBase64Encoded"]) == _sample("jeans")
+    assert base64.b64decode(instance(first)["personImage"]["image"]["bytesBase64Encoded"]) == _sample("before")
+    assert base64.b64decode(instance(second)["productImages"][0]["image"]["bytesBase64Encoded"]) == _sample("shirt")
+    assert base64.b64decode(instance(second)["personImage"]["image"]["bytesBase64Encoded"]) == _sample("tee")
+    assert result[0] == _sample("after") and result[1] == "image/jpeg"
+
+
+def test_google_try_on_falls_back_to_gemini_when_it_cannot_help(monkeypatch) -> None:
+    import asyncio as _asyncio
+    from app.tryon import OutfitPiece
+
+    person = (_sample("before"), "image/jpeg", "jpg")
+    top = (_sample("shirt"), "image/jpeg", "jpg")
+    # Jewelry is not supported by the try-on model: the whole look is drawn by Gemini.
+    service, calls = _vertex_service(monkeypatch)
+    _asyncio.run(service.generate_outfit(person, [OutfitPiece(top, "top"), OutfitPiece(top, "jewelry")], pose="keep"))
+    assert [kind for kind, _ in calls] == ["gemini"]
+    # The standard pose changes the pose, which only Gemini can do.
+    service, calls = _vertex_service(monkeypatch)
+    _asyncio.run(service.generate_outfit(person, [OutfitPiece(top, "top")], pose="standard"))
+    assert "vertex" not in [kind for kind, _ in calls]
+    # A Google error never fails the look: Gemini takes over.
+    service, calls = _vertex_service(monkeypatch, vertex_status=500)
+    result = _asyncio.run(service.generate_outfit(person, [OutfitPiece(top, "top")], pose="keep"))
+    assert [kind for kind, _ in calls] == ["vertex", "gemini"] and result[0] == _sample("shirt")
+
+
+def test_google_try_on_is_off_without_a_valid_service_account() -> None:
+    from app.vertex_tryon import VertexTryOn
+
+    assert VertexTryOn(Settings(gemini_api_key="test")).configured is False
+    assert VertexTryOn(Settings(gemini_api_key="test", google_service_account_json="not json")).configured is False
+    assert VertexTryOn(Settings(gemini_api_key="test", google_service_account_json='{"type": "authorized_user"}')).configured is False
+    assert VertexTryOn(Settings(gemini_api_key="test", google_service_account_json=VERTEX_KEY, vertex_tryon_enabled=False)).configured is False
+    on = VertexTryOn(Settings(gemini_api_key="test", google_service_account_json=VERTEX_KEY))
+    assert on.configured and on.project == "dripcheck-prod"
+    assert VertexTryOn(Settings(gemini_api_key="test", google_service_account_json=VERTEX_KEY, vertex_project_id="other")).project == "other"

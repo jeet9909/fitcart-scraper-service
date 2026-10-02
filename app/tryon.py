@@ -17,6 +17,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from app import identity
 from app.config import Settings
 from app.models import GalleryItem, GeminiUsageResponse, GeminiUsageSinceStart, PoseImage
+from app.vertex_tryon import VertexTryOn, VertexTryOnError
 
 log = logging.getLogger(__name__)
 
@@ -274,6 +275,7 @@ class TryOnService:
             "Authorization": f"Bearer {settings.supabase_service_role_key.get_secret_value()}",
         }
         self.usage = GeminiUsage()
+        self.vertex = VertexTryOn(settings)
         self._pool: tuple[asyncio.AbstractEventLoop, httpx.AsyncClient] | None = None
 
     @asynccontextmanager
@@ -332,6 +334,12 @@ class TryOnService:
             raise TryOnError(f"Choose between 1 and {MAX_OUTFIT_PIECES} items to try on", 400)
         if pose not in POSES:
             raise TryOnError(f"pose must be one of: {', '.join(POSES)}", 400)
+        if pose == "keep" and self.vertex.configured and self.vertex.supports([piece.category for piece in pieces]):
+            # Own pose: Google's try-on model repaints only the clothes, so body and head size stay exact.
+            try:
+                return await self.vertex.dress_outfit(person, [(piece.image, piece.category) for piece in pieces])
+            except (VertexTryOnError, httpx.HTTPError) as exc:
+                log.warning("Vertex try-on failed, using Gemini instead: %s", exc)
         face = await asyncio.to_thread(identity.face_reference, person[0]) if self.settings.face_lock_enabled else None
         prompt = tryon_prompt(pieces, pose, face_reference=face is not None)
         face_part = [self._inline_part((face[0], face[1], "jpg"))] if face else []

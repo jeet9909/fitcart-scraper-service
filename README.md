@@ -179,3 +179,19 @@ Tests use fakes and do not spend OpenAI tokens or Bright Data credits.
 - [Bright Data MCP overview](https://docs.brightdata.com/products/mcp-server/overview.md)
 - [Bright Data MCP tools](https://docs.brightdata.com/products/mcp-server/tools.md)
 - [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses)
+
+
+## Google Virtual Try-On for "My pose"
+
+Looks in the person's own pose use Google Vertex AI Virtual Try-On (`virtual-try-on-001`) when a service
+account is set. It repaints only the clothes on the person's photo, so body size, head size, face and glasses
+stay exactly as photographed. It dresses one product per request (about $0.06 each), bottoms first and shoes
+last. Looks with accessories or jewelry, the standard pose, social poses and the 360° view still use Gemini, and
+any Google error falls back to Gemini so the look is never lost.
+
+| Variable | Value |
+|---|---|
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | The whole JSON key of a service account with the **Vertex AI User** role |
+| `VERTEX_PROJECT_ID` | Optional; defaults to the project in the key |
+| `VERTEX_LOCATION` | Optional; default `us-central1` |
+| `VERTEX_TRYON_ENABLED` | Optional; `false` turns it off without removing the key |

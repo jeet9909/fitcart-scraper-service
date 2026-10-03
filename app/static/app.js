@@ -289,13 +289,13 @@ function pricingHtml(){
   const rows = [
     ['Looks (1 look = whole outfit, up to 5 pieces)', ...PLANS.map(p => p.once ? `${p.looks} in 7 days` : `${p.looks} / month`)],
     ['Quality', ...PLANS.map(p => p.quality)],
-    ['Automatic face check', 'Coming soon', 'Coming soon', 'Coming soon', 'Coming soon'],
+    ['Face check against your photo', 'Basic', 'Basic', 'Included', 'Included'],
     ['Product imports from store links', ...PLANS.map(p => p.imports)],
     ['AI stylist ideas', ...PLANS.map(p => p.stylist)],
     ['Wardrobe items', ...PLANS.map(p => p.wardrobe.toLocaleString('en-IN'))],
     ['Looks history', 'Last 5', 'Last 5', 'Unlimited', 'Unlimited'],
-    ['Priority generation', '—', '—', '—', '✓'],
-    ['Fit score (coming soon)', '—', '—', 'Included', 'Early access'],
+    ['Priority generation', 'No', 'No', 'No', '✓'],
+    ['Fit score (coming soon)', 'No', 'No', 'Included', 'Early access'],
   ];
   return `<div class="pricing">
     <div class="billing glass" role="group" aria-label="Billing period"><button data-act="billing" data-billing="monthly" aria-pressed="${state.billing === 'monthly'}">Monthly</button><button data-act="billing" data-billing="yearly" aria-pressed="${state.billing === 'yearly'}">Yearly <span class="save">Save 21%</span></button></div>
@@ -315,16 +315,16 @@ function pricingPage(){
 /* ---------- Marketing page ---------- */
 function landing(){
   const fl = (cls, key, store, price) => { const i = CATALOG[key]; return `<div class="floater glass ${cls}"><img src="${img(i.img)}" alt=""><div><small>${store}</small>${esc(short(i))}<br><span class="p num">${inr(price)}</span></div></div>`; };
-  return `<div class="landing">
+  const contact = window.MDC_CONTACT_EMAIL || '';
+  return `<div class="landing md">
   <section class="lp-hero">
-    <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
     <div class="lp-grid">
       <div class="lp-copy">
-        <span class="pill-new glass"><b>New</b> Multi-store outfit try-on</span>
-        <h1>Wear it<br><span class="grad-text">before you buy it.</span></h1>
-        <p class="lede">Paste links from Myntra, Amazon, AJIO and more. MyDripCheck puts the whole outfit on you in seconds, then sends you to each store to buy.</p>
-        <div class="lp-ctas"><button class="btn brand big" data-act="go" data-view="home">${icon('spark')} Try it free</button><button class="btn glassy big" data-act="scroll" data-target="lpPricing">See plans</button></div>
-        <div class="lp-trust"><span>${icon('check','s')} 2 free looks a month</span><span>${icon('lock','s')} Your photo stays private</span><span>${icon('body','s')} Head-to-toe standard pose</span></div>
+        <p class="eyebrow wine">A fitting room for the whole internet</p>
+        <h1>Wear it <em>before</em><br>you buy it.</h1>
+        <p class="lede">Paste pieces from Myntra, Amazon, AJIO and more. See the full outfit on you, then buy only what feels right.</p>
+        <div class="lp-ctas"><button class="btn brand big" data-act="go" data-view="home">Try it free ${icon('arrow','s')}</button><button class="btn ghost big" data-act="scroll" data-target="lpPricing">See plans</button></div>
+        <div class="lp-trust"><span>${icon('check','s')} 2 free looks a month</span><span>${icon('lock','s')} Your photo stays private</span><span>${icon('check','s')} Real store prices</span></div>
       </div>
       <div class="stage">
         <div class="device glass">${compareHtml('before','after','You','New look', true)}</div>
@@ -333,46 +333,65 @@ function landing(){
       </div>
     </div>
   </section>
-  <section class="marquee" aria-label="Works with these stores"><div class="marquee-track" aria-hidden="true">${Array(2).fill(['Myntra','Amazon','AJIO','Flipkart','Nike','Tata CLiQ','Nykaa Fashion','Meesho'].map(s => `<span>${s}</span>`).join('')).join('')}</div><p class="sr">Works with Myntra, Amazon, AJIO, Flipkart, Nike and more.</p></section>
+  <section class="md-brands" aria-label="Works with these stores"><small>Works with the stores you already use</small>${['Myntra','Amazon','AJIO','Flipkart','Nike','Meesho','Nykaa Fashion'].map(x => `<span>${x}</span>`).join('')}</section>
   <section class="lp-section">
-    <div class="lp-head reveal"><p class="eyebrow">How it works</p><h2>From three tabs to <span class="grad-text">one outfit.</span></h2></div>
-    <ol class="flow">
-      <li class="glass reveal"><h3>Paste your finds</h3><p class="muted">A shirt from Myntra, jeans from Amazon, shoes from AJIO. We fetch the real price, sizes and photos.</p></li>
-      <li class="glass reveal"><h3>Add one photo</h3><p class="muted">Any pose. We show you standing straight, head to toe, and check the face is still yours.</p></li>
-      <li class="glass reveal"><h3>See it, then buy</h3><p class="muted">Compare before and after, save the look, and open each piece at its own store.</p></li>
+    <div class="md-heading reveal"><div><p class="eyebrow">How it works</p><h2>From three tabs<br>to <em>one outfit.</em></h2></div><p>No more guessing how pieces from different stores will look together on you.</p></div>
+    <ol class="md-steps">
+      <li class="reveal"><div class="md-step-art pieces"><img src="${img('shirt')}" alt="Linen shirt from Myntra"><img src="${img('jeans')}" alt="Jeans from Amazon"><img src="${img('sneakers')}" alt="Sneakers from AJIO"></div><span class="num">01</span><h3>Paste your finds</h3><p>Drop product links or upload images. We pull the real price, sizes and photos.</p></li>
+      <li class="reveal"><div class="md-step-art"><img src="${img('before')}" alt="A clear full-body photo"><span class="tag-on">Your photo</span></div><span class="num">02</span><h3>Add one photo</h3><p>Any clear full-body shot. We keep your face, hair and skin tone exactly as they are.</p></li>
+      <li class="reveal"><div class="md-step-art"><img src="${img('after')}" alt="The full look on you"><span class="tag-on">Myntra · Amazon · AJIO</span></div><span class="num">03</span><h3>See it, then buy</h3><p>Preview the full look of your outfit, then jump to each store to buy.</p></li>
     </ol>
   </section>
   <section class="lp-section">
-    <div class="lp-head reveal"><p class="eyebrow">Why MyDripCheck</p><h2>A fitting room for <span class="grad-text">the whole internet.</span></h2></div>
-    <div class="bento">
-      <article class="hero-card wide reveal"><span class="ico">${icon('bag')}</span><h3>One outfit, many stores</h3><p>Mix up to five pieces from different shops and see them together in one image, priced as one look.</p><div class="stack"><img src="${img('shirt')}" alt=""><img src="${img('jeans')}" alt=""><img src="${img('sneakers')}" alt=""></div></article>
-      <article class="glass reveal"><span class="ico t">${icon('face')}</span><h3>Built to keep you, you</h3><p>The AI is told to keep your face, hair, skin tone and body exactly as they are. Automatic face checks are coming next.</p></article>
-      <article class="glass reveal"><span class="ico">${icon('body')}</span><h3>Standard pose</h3><p>Upload any photo. See yourself upright, arms relaxed, the whole outfit clearly visible.</p></article>
-      <article class="glass reveal"><span class="ico g">${icon('spark')}</span><h3>AI stylist</h3><p>Office, wedding, weekend. Get outfits built from clothes you own and pieces you saved.</p></article>
-      <article class="glass reveal"><span class="ico t">${icon('hanger')}</span><h3>Your wardrobe, online</h3><p>Snap what's in your cupboard once. Mix it with new finds before you spend.</p></article>
-      <article class="glass wide reveal"><span class="soon">Coming soon</span><span class="ico g">${icon('check')}</span><h3>Fit score</h3><p>Your measurements against each store's real size chart, with a plain answer: which size, and where it might feel tight or long.</p></article>
+    <div class="md-heading reveal"><div><p class="eyebrow">Why MyDripCheck</p><h2>A fitting room<br>built for <em>real shopping.</em></h2></div></div>
+    <div class="md-features">
+      <article class="wide reveal"><span class="ico">${icon('bag')}</span><h3>One outfit, many stores</h3><p>Mix up to five pieces from different shops and see them together as one look, priced as one total.</p><div class="thumbs"><img src="${img('shirt')}" alt=""><img src="${img('jeans')}" alt=""><img src="${img('sneakers')}" alt=""></div></article>
+      <article class="reveal"><span class="ico">${icon('face')}</span><h3>Built to keep you, you</h3><p>Face, hair, glasses and skin tone stay true to your photo. No generic models.</p></article>
+      <article class="reveal"><span class="ico">${icon('hanger')}</span><h3>Your wardrobe, online</h3><p>Save looks, mix new finds with clothes you own, and build a collection that travels with you across stores.</p></article>
     </div>
   </section>
-  <section class="lp-section showcase">
-    <div class="reveal">${compareHtml('before','after','Before','After')}</div>
-    <div class="lp-head reveal" style="gap:16px"><p class="eyebrow">See the difference</p><h2>Drag. <span class="grad-text">Decide.</span> Done.</h2><ul class="checks"><li>${icon('check')}Real product photos from the store, not lookalikes</li><li>${icon('check')}Sizes in stock, crossed out when sold out</li><li>${icon('check')}Saved privately to your Looks</li></ul><button class="btn brand" data-act="go" data-view="home" style="justify-self:start">${icon('spark','s')} Build my look</button></div>
+  <section class="lp-section">
+    <div class="md-heading reveal"><div><p class="eyebrow">The inspiration edit</p><h2>A mood for every day.<br><em>A look for every you.</em></h2></div><p>Start with a little inspiration. Make every piece feel like your own.</p></div>
+    <div class="md-edit">
+      <article class="reveal"><p class="eyebrow">01 / Effortlessly everyday</p><div class="photo"><img src="${img('after')}" alt="Sage linen shirt with straight jeans and white sneakers"><button class="btn small light" data-act="demo">Try this look ${icon('arrow','s')}</button></div><h3>Everyday ease</h3><p>A soft linen shirt, straight jeans, clean sneakers.</p></article>
+      <article class="reveal"><p class="eyebrow">02 / Simple and sharp</p><div class="photo"><img src="${img('before')}" alt="White tee with straight jeans and white sneakers"><button class="btn small light" data-act="go" data-view="home">Start yours ${icon('arrow','s')}</button></div><h3>The white tee edit</h3><p>A crisp tee and good denim. Never out of style.</p></article>
+      <article class="reveal"><p class="eyebrow">03 / Mix your own</p><div class="photo collage"><img src="${img('shirt')}" alt="Linen shirt"><img src="${img('jeans')}" alt="Jeans"><img src="${img('sneakers')}" alt="Sneakers"><button class="btn small light" data-act="go" data-view="home">Paste a link ${icon('arrow','s')}</button></div><h3>Three stores, one outfit</h3><p>Pick each piece wherever it is cheapest.</p></article>
+    </div>
+  </section>
+  <section class="md-dark reveal">
+    <p class="eyebrow">Style has no single definition</p>
+    <h2>Not a different you.<br>Just more room to explore<br><em>every version of you.</em></h2>
+    <p class="sub">Mix a new find with an old favourite. Try something unexpected. Your wardrobe should start with you.</p>
+    <div class="md-collage"><img src="${img('sneakers')}" alt=""><img src="${img('after')}" alt=""><img src="${img('tee')}" alt=""></div>
+    <button class="btn light" data-act="go" data-view="home">Make it yours ${icon('arrow','s')}</button>
   </section>
   <section class="lp-section" id="lpPricing">
-    <div class="lp-head reveal"><p class="eyebrow">Pricing</p><h2>Premium looks. <span class="grad-text">Fair price.</span></h2><p>Start free. Buy a pass for a big occasion, or subscribe if you shop every month.</p></div>
+    <div class="md-heading center reveal"><div><p class="eyebrow">Membership</p><h2>Room to <em>explore.</em></h2></div><p>Start free. Upgrade when you want more looks, poses and wardrobe space.</p></div>
     ${pricingHtml()}
   </section>
   <section class="lp-section">
-    <div class="lp-head reveal"><p class="eyebrow">Questions</p><h2>Good to know</h2></div>
+    <div class="md-heading reveal"><div><p class="eyebrow">Questions</p><h2>Good to know</h2></div></div>
     <div class="faq">
       <details class="glass reveal"><summary>Is my photo private?</summary><p>Yes. Your photo and looks are saved only to your private gallery and are never shown publicly. Links to your images expire after an hour.</p></details>
       <details class="glass reveal"><summary>What counts as one look?</summary><p>One generated image of you. It can include up to five pieces from any mix of stores, and it still counts as one look.</p></details>
-      <details class="glass reveal"><summary>Will my face change?</summary><p>The AI is instructed to keep your face and body exactly as they are. For the closest likeness, use a clear, front-facing photo in good light, or choose Keep my pose. A look that fails is never counted.</p></details>
+      <details class="glass reveal"><summary>Will my face change?</summary><p>Your face, hair, glasses and skin tone are kept from your photo and checked after every look. For the closest likeness, use a clear, front-facing photo in good light, or choose My pose. A look that fails is never counted.</p></details>
       <details class="glass reveal"><summary>Which stores work?</summary><p>Myntra, Amazon, AJIO, Flipkart and Nike links work today. For any other store, add the item with a photo.</p></details>
-      <details class="glass reveal"><summary>Can I cancel anytime?</summary><p>Yes. Cancel from your account and you keep your plan until the end of the period. The Occasion Pass never renews.</p></details>
+      <details class="glass reveal"><summary>Can I cancel anytime?</summary><p>Plans are paid for a month or a year at a time, with no autopay, so there is nothing to cancel. The Occasion Pass never renews.</p></details>
     </div>
   </section>
-  <section class="cta-band reveal"><h2>Your next outfit is three links away.</h2><p style="opacity:.92;max-width:44ch">Try MyDripCheck free. No card needed. Sign in with your email for 2 free looks every month.</p><button class="btn big" data-act="go" data-view="home">${icon('spark')} Try it free</button></section>
-  <footer class="lp-foot"><span>© 2026 MyDripCheck · See the look. Choose the fit.</span><span>Prices include GST · Made in India</span></footer>
+  <section class="md-loop reveal" id="lpAgency">
+    <div><p class="eyebrow">Stay in the loop</p><h2>Agency plan.<br><em>Built for teams.</em></h2><p>For brands, stylists and agencies: custom pricing, bulk looks for your catalogue, team seats and early access to new features.</p></div>
+    <form class="md-agency" data-contact="${esc(contact)}">
+      <ul><li>${icon('check','s')} Bulk looks at a team rate</li><li>${icon('check','s')} Seats for your whole team</li><li>${icon('check','s')} Your brand on every look</li></ul>
+      <label class="sr" for="agencyEmail">Your work email</label>
+      <div class="md-agency-row"><input id="agencyEmail" type="email" required placeholder="Your work email" autocomplete="email"><button class="btn brand" type="submit">Talk to us ${icon('arrow','s')}</button></div>
+      <p class="tiny muted" id="agencyNote"></p>
+    </form>
+  </section>
+  <footer class="md-foot">
+    <div class="md-foot-panel reveal"><div><p class="eyebrow">Wear what feels like you</p><h2>Make your next<br>look a sure thing.</h2></div><button class="btn light big" data-act="go" data-view="home">Let's try it on ${icon('arrow','s')}</button></div>
+    <div class="md-foot-bottom"><span>© 2026 MyDripCheck · Wear it before you buy it.</span><span>Prices include GST · Made in India</span></div>
+  </footer>
 </div>`;
 }
 
@@ -561,7 +580,7 @@ function generating(){
       <ol class="stages" id="genStages">${g.steps.map((s, i) => `<li data-i="${i}"><span class="dot"></span><span>${esc(s.label)}</span></li>`).join('')}</ol>
       <div class="gen-foot">
         <div class="progress" role="progressbar" aria-label="Try-on progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="genBar"><i></i></div>
-        <div class="gen-foot-row"><span class="small muted">Usually 20–45 seconds</span><button class="btn ghost small" data-act="cancel">Cancel</button></div>
+        <div class="gen-foot-row"><span class="small muted">Usually 20 to 45 seconds</span><button class="btn ghost small" data-act="cancel">Cancel</button></div>
       </div>
     </div>
   </section>`;
@@ -863,7 +882,7 @@ function posesCard(look){
     return `<button class="pose-chip${allowed ? '' : ' locked'}" data-act="make-pose" data-pose="${p.key}" ${busy ? 'disabled' : ''} ${isBusy ? 'aria-busy="true"' : ''}>
       ${isBusy ? '<span class="spin-loader"></span>' : allowed ? icon('spark','s') : icon('lock','s')}<span>${esc(p.label)}</span>${!allowed && p.plan === 'pro' && plus ? '<span class="tag pro">Pro</span>' : ''}</button>`;
   }).join('');
-  const hint = busy ? `Posing you for “${esc(SOCIAL_POSES.find(p => p.key === busy)?.label || '')}”. About 30–60 seconds.`
+  const hint = busy ? `Posing you for “${esc(SOCIAL_POSES.find(p => p.key === busy)?.label || '')}”. About 30 to 60 seconds.`
     : plus ? `Ready-to-post 4:5 photos of this look. Each new pose uses 1 look.${hasPro() ? '' : ' Pro unlocks all 8.'}`
     : 'Turn this look into ready-to-post photos. Plus has 3 poses, Pro has 8.';
   return `<div class="card poses-card">
@@ -1406,6 +1425,15 @@ async function readPhoto(file, maxSide = 1600){
 function bindView(){
   document.querySelectorAll('.compare').forEach(bindCompare);
   document.querySelectorAll('.spin360').forEach(bindSpin);
+  const agency = document.querySelector('.md-agency');
+  if (agency) agency.onsubmit = e => {
+    e.preventDefault();
+    const to = agency.dataset.contact, from = $('#agencyEmail').value.trim();
+    if (!to){ $('#agencyNote').textContent = 'Agency sign-ups open soon. Leave your email in your account and we will reach out.'; return; }
+    const body = `Hi MyDripCheck team,\n\nWe would like to talk about the Agency plan.\n\nWork email: ${from}\nCompany:\nTeam size:\nLooks per month:\n`;
+    location.href = `mailto:${to}?subject=${encodeURIComponent('Agency plan enquiry')}&body=${encodeURIComponent(body)}`;
+    $('#agencyNote').textContent = 'Your email app should open with the details filled in.';
+  };
   const form = $('#linkForm');
   if (form) form.onsubmit = e => { e.preventDefault(); $('#homeError').textContent = ''; importLink($('#homeLink').value, false); };
 }

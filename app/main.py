@@ -4,6 +4,7 @@ from typing import Literal
 
 import hmac
 import logging
+import os
 from uuid import UUID
 
 import httpx
@@ -72,12 +73,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Sites allowed to call the API from a browser. Add your own domain with the CORS_ORIGINS variable,
+# e.g. CORS_ORIGINS=https://mydripcheck.com,https://www.mydripcheck.com
+EXTRA_ORIGINS = [origin.strip().rstrip("/") for origin in os.environ.get("CORS_ORIGINS", "").split(",") if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://jeet9909.github.io",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        *EXTRA_ORIGINS,
     ],
     allow_credentials=False,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],

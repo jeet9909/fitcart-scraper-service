@@ -23,6 +23,8 @@ jobs:
     env:
       # Public URL of the Render web service, e.g. https://fitcart-scraper-service.onrender.com
       FITCART_API_BASE: ${{ vars.FITCART_API_BASE }}
+      # Email the Agency plan "Talk to us" form writes to; optional.
+      MDC_CONTACT_EMAIL: ${{ vars.MDC_CONTACT_EMAIL }}
     steps:
       - uses: actions/checkout@v4
 
@@ -37,6 +39,7 @@ jobs:
           cp app/static/app.js _site/static/app.js
           cp -r app/static/img _site/static/img
           printf "window.FITCART_API_BASE = %s;\n" "$(jq -Rn --arg v "${FITCART_API_BASE%/}" '$v')" > _site/static/config.js
+          printf "window.MDC_CONTACT_EMAIL = %s;\n" "$(jq -Rn --arg v "$MDC_CONTACT_EMAIL" '$v')" >> _site/static/config.js
           touch _site/.nojekyll
           echo "UI will call: $FITCART_API_BASE"
 

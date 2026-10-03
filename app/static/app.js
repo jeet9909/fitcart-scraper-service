@@ -390,7 +390,7 @@ function landing(){
   </section>
   <footer class="md-foot">
     <div class="md-foot-panel reveal"><div><p class="eyebrow">Wear what feels like you</p><h2>Make your next<br>look a sure thing.</h2></div><button class="btn light big" data-act="go" data-view="home">Let's try it on ${icon('arrow','s')}</button></div>
-    <div class="md-foot-bottom"><span>© 2026 MyDripCheck · Wear it before you buy it.</span><span>Prices include GST · Made in India</span></div>
+    <div class="md-foot-bottom"><span>© 2026 MyDripCheck · Wear it before buy it.</span><span>Prices include GST · Made in India</span></div>
   </footer>
 </div>`;
 }

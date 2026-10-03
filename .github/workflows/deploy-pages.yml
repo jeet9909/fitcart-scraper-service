@@ -1,11 +1,8 @@
 name: Deploy UI to GitHub Pages
 
+# The live site (mydripcheck.com) deploys from the mydripcheck branch. From main this only runs when
+# started by hand, so a push here never replaces the live design.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "app/static/**"
-      - ".github/workflows/deploy-pages.yml"
   workflow_dispatch:
 
 permissions:

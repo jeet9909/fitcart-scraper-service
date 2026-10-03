@@ -104,85 +104,137 @@ POSES = ("standard", "keep")
 
 
 def _describe_pieces(pieces: list["OutfitPiece"], first: int = 2) -> str:
-    return "; ".join(
-        f"image {index} is the {piece.category}" + (f" ({piece.label})" if piece.label else "")
+    return "\n".join(
+        f"Image {index} = {piece.category}" + (f" ({piece.label})" if piece.label else "") + "."
         for index, piece in enumerate(pieces, start=first)
     )
 
 
-# Glasses drawn twice (one pair on top of another) were the most visible glitch in re-posed results.
-FACE_ACCESSORIES = (
-    "Keep every accessory on their face and head exactly as in their photo, and add none they do not wear: "
-    "glasses or sunglasses with the same frame style (thick or thin, full-rim or metal), shape, colour, thickness and lens tint, "
-    "sitting on the nose and ears in the same place, "
-    "and earrings, nose pins, piercings, bindi, caps or headwear the same way. "
-    "Glasses appear as one single pair with clean, sharp frames: no double, overlapping, ghosted or broken frames or lenses. "
+# Shared blocks from the "Elite image-generation prompts" brief. Keep them word for word: every prompt reuses them.
+IDENTITY_BLOCK = (
+    "This is the exact same real person from the reference photos, not a model, not a lookalike, not idealized. "
+    "Reproduce the face with zero deviation: exact eye shape, eye spacing, eyelid thickness, eyebrows, nose shape and size, lip shape, "
+    "jawline, chin, face width, cheekbones, skin texture, pores, moles, freckles, scars, facial hair density and shape, hairstyle, "
+    "hairline, hair volume, and exact age appearance. Do not smooth, slim, beautify, sharpen, or idealize any feature. "
+    "Head size relative to body must match a real human (approximately 1/7 of total height). "
+    "Keep every face and head accessory exactly as shown: glasses or sunglasses (identical frame style, thickness, colour, lens tint, "
+    "position on nose and ears — one single clean pair only, never double, overlapping, ghosted or broken frames), earrings, nose pins, "
+    "piercings, bindi, caps or headwear. Add nothing that is not present."
 )
+
+PRODUCT_FIDELITY_BLOCK = (
+    "Dress the person in all provided products simultaneously. Take only the exact listed garment from each product image and ignore "
+    "any model, other clothing, or accessories shown in those photos. Reproduce every product with zero change: exact colour, fabric "
+    "texture, weave, print, pattern, logo, embroidery, collar, sleeves, length, fit, seams, pockets, buttons, hems and all design details. "
+    "Do not invent, remove, or alter any garment detail."
+)
+
+QUALITY_BLOCK = (
+    "Photorealistic. Natural fabric folds, tension and drape. Anatomically correct hands with exactly five distinct fingers each, "
+    "natural proportions, no fusion, no extra digits, no deformation. Correct body proportions, natural skin texture under clothing, "
+    "realistic shadows and contact points. One single person only. No text, no watermark, no logo, no border, no collage, "
+    "no extra limbs or objects."
+)
+
+
+def _areas(pieces: list["OutfitPiece"]) -> str:
+    names = list(dict.fromkeys(piece.category for piece in pieces))
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
 
 def tryon_prompt(pieces: list["OutfitPiece"], pose: str = "standard", face_reference: bool = False) -> str:
     """Instruction for the image model. Image 1 is the person, then an optional face close-up, then the products in order."""
     first_product = 3 if face_reference else 2
-    areas = ", ".join(dict.fromkeys(piece.category for piece in pieces))
-    # Identity comes first: the model weighs early instructions most.
-    identity = (
-        "This is the same real person, not a model or a lookalike. "
-        + ("Image 2 is a close-up of their face: treat it as the identity reference and reproduce that exact face. " if face_reference else "")
-        + "Keep their exact face: eye shape and spacing, eyebrows, nose, lips, jawline, face width, skin texture, moles and marks, "
-        "hairstyle and hairline, facial hair, skin tone and age. Do not beautify, smooth, slim or idealise anything. "
-        + FACE_ACCESSORIES
-        + "Keep their real body: the same height, head size relative to the body, shoulder width, chest, waist, hips, arm and leg length and overall build. "
-    )
-    products = (
-        f"Image 1 shows the person. The other images are the exact product references: {_describe_pieces(pieces, first_product)}. "
-        "Product photos may show a model wearing other clothes or accessories; take only the listed product from each photo and ignore everything else. "
-        f"Dress the person in {'this product' if len(pieces) == 1 else 'all of these products at the same time'}, replacing what they wear in the {areas} area. "
-        "Reproduce each product exactly: same color, fabric texture, print, pattern, logo, collar, sleeves, length, fit and design details. "
-        "Do not add clothing, jewelry or accessories that were not provided; the person's own glasses and face accessories stay as they are. "
-    )
-    quality = "Photorealistic, natural fabric folds and fit, anatomically correct hands with five fingers each. One single person, no text, no watermark, no collage, no borders."
+    images = _describe_pieces(pieces, first_product)
+    areas = _areas(pieces)
     if pose == "keep":
-        return (
-            "Photorealistic virtual try-on of the person in image 1. " + identity + products
-            + "Keep the person's own pose, background, camera angle and lighting from image 1, and keep their own clothing in body areas the products do not cover. "
-            + "Show the full body from head to feet if image 1 does. " + quality
-        )
-    return (
-        "Photorealistic full-body fashion catalogue photo of the person in image 1 wearing the products. " + identity
-        + "Only the position of the arms, legs and head changes; body size, proportions and the face stay exactly as in image 1. " + products
-        + "Pose: ignore the pose in image 1 and stand the person upright, facing the camera straight on, weight evenly on both feet, feet slightly apart, "
-        + "arms relaxed and straight down at the sides and held slightly away from the torso so the arms and hands cover no part of the outfit, "
-        + "hands open and relaxed, shoulders level, head straight and facing the camera like in a passport photo, calm neutral expression, looking at the camera. "
-        + "Framing: vertical portrait with the entire body in frame from the top of the head to the soles of the shoes, a small margin above the head and below the feet, "
-        + "camera at chest height with no tilt, nothing cropped. "
-        + "Background and light: a plain, light neutral studio backdrop with soft, even front lighting so every garment is clearly visible. "
-        + "For body areas the products do not cover, keep the person's own clothing from image 1; if those areas are not visible in image 1, "
-        + "use simple plain neutral items that suit the outfit (for example plain trousers or plain shoes). " + quality
-    )
+        return "\n\n".join((
+            "Photorealistic virtual try-on.",
+            "Image 1 = person photo (pose, background, lighting, body, identity).\n"
+            + ("Image 2 = face close-up (primary identity reference).\n" if face_reference else "") + images,
+            IDENTITY_BLOCK,
+            "Keep the exact pose, camera angle, background, lighting, and body proportions from Image 1. "
+            "Do not change the person's stance, head tilt, or composition.",
+            PRODUCT_FIDELITY_BLOCK,
+            f"Replace only the {areas} clothing areas. Keep all other clothing and accessories from Image 1 exactly as they are.",
+            "Show the full body from head to feet if Image 1 shows it.",
+            QUALITY_BLOCK,
+        ))
+    if face_reference:
+        header = "Image 1 = person photo (body + overall identity).\nImage 2 = face close-up (primary identity reference).\n" + images
+        identity = IDENTITY_BLOCK
+    else:
+        header = "Image 1 = person photo (full identity + body).\n" + images
+        identity = "Use Image 1 as the sole identity source. " + IDENTITY_BLOCK
+    return "\n\n".join((
+        "Photorealistic full-body fashion catalogue photo.",
+        header,
+        identity,
+        "Keep the real body proportions from Image 1 exactly: height, shoulder width, chest, waist, hips, arm length, leg length, "
+        "overall build. Only change the pose. Body size and face stay identical to the references.",
+        PRODUCT_FIDELITY_BLOCK,
+        f"Replace only the {areas} clothing areas. For any body areas not covered by the provided products, keep the person's original "
+        "clothing from Image 1 if visible; otherwise use simple plain neutral items that match the outfit style.",
+        "Pose: standing upright, facing the camera straight on, weight evenly distributed on both feet, feet slightly apart, arms relaxed "
+        "straight down at the sides and held slightly away from the torso so nothing covers the outfit, hands open and relaxed, shoulders "
+        "level, head straight, calm neutral expression, looking directly at the camera (passport-style).",
+        "Framing: vertical portrait, entire body from top of head to soles of shoes visible with small margin above head and below feet. "
+        "Camera at chest height, no tilt, nothing cropped.",
+        "Background & light: plain light neutral studio backdrop, soft even front lighting so every garment detail is clearly visible.",
+        QUALITY_BLOCK,
+    ))
 
 
-FACE_REFINE_PROMPT = (
-    "Edit image 1. Images 2 and 3 show the real person: image 2 is a close-up of their face, image 3 is their own photo. "
-    "Replace the whole head in image 1 so it is exactly this real person, copied from images 2 and 3: the same face shape and width, cheeks, jawline and chin, "
-    "beard and moustache shape, density and length (not trimmed, thinned or filled in), eyes, eyebrows, nose, lips, skin tone and texture, "
-    "ears, hairline, and hairstyle with the same volume and height. The head must be the same size relative to the shoulders and body "
-    "as in image 3: a real person's head is about one seventh of their height, so never shrink it to fashion-model proportions. "
-    "Do not slim, smooth, beautify or idealise the face. "
-    + FACE_ACCESSORIES
-    + "First remove any glasses or face accessories already drawn in image 1, then draw only the ones from images 2 and 3, once, in their real position. "
-    "Keep everything else in image 1 exactly as it is: the pose, body, clothes, hands, background, lighting, camera framing and image size. "
-    "Photorealistic, one person, no text."
-)
+FACE_REFINE_PROMPT = "\n\n".join((
+    "Edit Image 1 only.",
+    "Image 1 = previously generated look.\nImage 2 = face close-up (primary identity).\n"
+    "Image 3 = original person photo (secondary identity + head-to-body scale).",
+    "Replace the entire head in Image 1 so it becomes the exact real person from Images 2 and 3. Match face shape, width, cheeks, "
+    "jawline, chin, beard/moustache shape density and length, eyes, eyebrows, nose, lips, skin tone, skin texture, ears, hairline, "
+    "hairstyle volume and height with zero deviation. Head size relative to shoulders and body must match Image 3 (real human "
+    "proportions, never fashion-model shrink).",
+    "First remove any glasses or face accessories currently present in Image 1, then place only the exact accessories from Images 2 "
+    "and 3, once, in their real positions.",
+    "Do not alter anything else in Image 1: pose, body, clothing, hands, background, lighting, camera framing, or image dimensions "
+    "must remain pixel-identical except for the head replacement.",
+    IDENTITY_BLOCK,
+    QUALITY_BLOCK,
+))
 
 
 # 360° view: the finished look is redrawn from these turns around the person (degrees, clockwise seen
 # from above; 0 is the saved front-facing image). The viewer spins through front, right, back, left.
 SPIN_ANGLES = (90, 180, 270)
-SPIN_VIEWS = {
-    90: "turned 90 degrees to their left, so the camera sees their right side in full profile",
-    180: "turned around 180 degrees, so the camera sees them directly from behind: the back of the head and hair, "
-         "the back of every garment and the heels of the shoes. The face is not visible",
-    270: "turned 90 degrees to their right, so the camera sees their left side in full profile",
+_SPIN_SOURCES = (
+    "Image 1 = finished fashion photo (source of truth).\nImage 2 = original person photo.\n"
+    "Image 3 = product reference (for occluded details only)."
+)
+_SPIN_SAME = (
+    "Same person, same body, same outfit, same everything as Image 1. Use Image 2/3 only for previously hidden details. "
+    "Never alter what Image 1 already shows."
+)
+_SPIN_KEEP = "Keep identical background, lighting, camera height, distance and framing. Standing upright, arms relaxed at sides."
+SPIN_PROMPTS = {
+    90: (
+        "Redraw Image 1 with the person turned exactly 90 degrees to their left so the camera sees a clean right-side full profile. "
+        "This is the same moment, same person, same body size and proportions, same height, same hairstyle, same skin tone, same glasses "
+        "and accessories, and exactly the same outfit (colours, prints, fabric, fit, length, shoes, drape and crease behaviour).",
+        "Use Image 2 and Image 3 only for details not visible in Image 1 (e.g. garment back or side). "
+        "Never change any detail already visible in Image 1.",
+        "Keep identical: plain studio background, soft even lighting, camera height, distance, and framing (full body from top of head "
+        "to soles of shoes, same scale as Image 1). Standing upright, arms relaxed at sides.",
+    ),
+    180: (
+        "Redraw Image 1 with the person turned exactly 180 degrees so the camera sees them directly from behind: back of head and hair, "
+        "back of every garment, heels of the shoes. Face is not visible.",
+        _SPIN_SAME,
+        _SPIN_KEEP,
+    ),
+    270: (
+        "Redraw Image 1 with the person turned exactly 90 degrees to their right so the camera sees a clean left-side full profile.",
+        _SPIN_SAME,
+        _SPIN_KEEP,
+    ),
 }
 
 
@@ -199,59 +251,53 @@ class SocialPose:
 
 SOCIAL_POSES: dict[str, SocialPose] = {pose.key: pose for pose in (
     SocialPose("street-walk", "Street walk", "plus",
-               "walking towards the camera mid-stride, one foot forward, arms swinging naturally, relaxed confident expression",
-               "a clean, softly lit city street with blurred shopfronts behind"),
+               "walking towards the camera mid-stride, one foot forward, arms swinging naturally, relaxed confident expression "
+               "matching the person's real face",
+               "clean softly lit city street with blurred shopfronts"),
     SocialPose("mirror-selfie", "Mirror selfie", "plus",
-               "taking a full-length mirror selfie holding a plain phone at chest height, the phone not covering the face",
-               "a tidy, bright bedroom or dressing area with a tall mirror"),
+               "taking a full-length mirror selfie, holding a plain phone at chest height, phone not covering the face",
+               "tidy bright bedroom or dressing area with a tall mirror"),
     SocialPose("over-shoulder", "Over the shoulder", "plus",
                "body turned three-quarters away, looking back over the shoulder at the camera",
-               "a bright minimal studio with a soft beige backdrop"),
+               "bright minimal studio with soft beige backdrop"),
     SocialPose("pockets", "Hands in pockets", "pro",
-               "standing relaxed with weight on one leg, hands in pockets or resting on the hips if the outfit has no pockets, slight smile",
-               "a plain warm-toned wall with soft daylight and a gentle shadow"),
+               "standing relaxed with weight on one leg, hands in pockets (or resting on hips if no pockets), slight natural smile",
+               "plain warm-toned wall with soft daylight and gentle shadow"),
     SocialPose("wall-lean", "Wall lean", "pro",
                "leaning one shoulder against a wall, legs crossed at the ankles, arms relaxed",
-               "a textured light concrete wall in late-afternoon sun"),
+               "textured light concrete wall in late-afternoon sun"),
     SocialPose("seated", "Seated", "pro",
-               "sitting on a simple stool or low steps with both feet near the body, hands resting naturally, the camera at eye level so the "
-               "legs and feet keep natural proportions",
-               "a calm, softly lit interior with neutral tones"),
+               "sitting on a simple stool or low steps, both feet near the body, hands resting naturally, camera at eye level so legs "
+               "and feet keep correct proportions",
+               "calm softly lit interior with neutral tones"),
     SocialPose("candid-laugh", "Candid laugh", "pro",
-               "a genuine candid laugh with a wide natural smile, glancing slightly away from the camera, relaxed shoulders, mid-movement",
-               "an outdoor terrace with soft golden-hour light and a blurred background"),
+               "genuine candid laugh with wide natural smile that matches the person's real mouth and eye shape, glancing slightly away, "
+               "relaxed shoulders, mid-movement",
+               "outdoor terrace with soft golden-hour light and blurred background"),
     SocialPose("power-stance", "Power stance", "pro",
-               "a bold editorial stance: feet planted wide, one hand on the hip, shoulders squared, chin slightly raised, a strong gaze into "
-               "the camera, photographed from a slightly low angle",
-               "a solid-colour studio backdrop that complements the outfit"),
+               "bold editorial stance: feet planted wide, one hand on the hip, shoulders squared, chin slightly raised, strong direct "
+               "gaze, slight low camera angle",
+               "solid-colour studio backdrop that complements the outfit"),
 )}
 
 
 def social_pose_prompt(pose: SocialPose) -> str:
-    return (
-        "Image 1 is a finished fashion photo of a person. Create a new photorealistic photo for a social media post of exactly this person "
-        "wearing exactly this outfit: the same face, hairstyle, skin tone, body size and proportions, and every garment, colour, print, fabric, "
-        "fit, length and the shoes unchanged. Do not add or remove any garment detail such as pockets, buttons, seams, logos or prints. "
-        "Image 2 is their own photo, for their real face and build; image 3 is a product reference. "
-        + FACE_ACCESSORIES
-        + f"Pose: {pose.pose}. Setting: {pose.setting}. "
-        "Vertical 4:5 framing like a fashion influencer post, showing the whole body from the top of the head to the shoes with a little space "
-        "around, so the complete outfit including the footwear is visible; nothing cropped. Natural flattering light, sharp focus on the person, "
-        "shallow depth of field. Anatomically correct hands with five fingers each. One person, no text, no logo, no watermark, no borders, no collage."
-    )
+    return "\n\n".join((
+        "Image 1 = finished fashion photo (source of truth for outfit and identity).\n"
+        "Image 2 = original person photo (face + body scale).\nImage 3 = product reference (detail backup only).",
+        "Create a new photorealistic social-media photo of exactly this person wearing exactly this outfit. Face, hairstyle, skin tone, "
+        "body size, proportions, and every garment detail (colour, print, fabric, fit, length, shoes, seams, logos, pockets) must remain "
+        "identical to Image 1. Do not add, remove or alter any garment detail.",
+        IDENTITY_BLOCK,
+        f"Pose: {pose.pose}\nSetting: {pose.setting}",
+        "Framing: vertical 4:5, full body from top of head to shoes with small margin, complete footwear visible, nothing cropped. "
+        "Natural flattering light, sharp focus on the person, shallow depth of field.",
+        QUALITY_BLOCK,
+    ))
 
 
 def spin_prompt(angle: int) -> str:
-    return (
-        "Image 1 is a finished fashion photo of a person. Redraw the same photo with the person " + SPIN_VIEWS[angle] + ". "
-        "It is the same moment from a camera that walked around them: the same person, body size and proportions, height, "
-        "hairstyle, skin tone, glasses and accessories, and exactly the same outfit, colours, prints, fabric, fit, length and shoes. "
-        "Image 2 is the person's own photo and image 3 is a product reference; use them for details that image 1 does not show, "
-        "such as the back of a garment, but never change what image 1 already shows. "
-        "Keep the same plain studio background, the same soft even lighting, the same camera height and distance, and the same framing: "
-        "the whole body from the top of the head to the soles of the shoes, the same size in the frame as in image 1, standing upright "
-        "with arms relaxed at the sides. Photorealistic, one person, no text, no watermark, no collage."
-    )
+    return "\n\n".join((_SPIN_SOURCES, *SPIN_PROMPTS[angle], QUALITY_BLOCK))
 
 
 @dataclass

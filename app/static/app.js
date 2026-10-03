@@ -321,7 +321,7 @@ function landing(){
     <div class="lp-grid">
       <div class="lp-copy">
         <p class="eyebrow wine">A fitting room for the whole internet</p>
-        <h1>Wear it <em>before</em><br>you buy it.</h1>
+        <h1>Wear it <em>before</em><br>buy it.</h1>
         <p class="lede">Paste pieces from Myntra, Amazon, AJIO and more. See the full outfit on you, then buy only what feels right.</p>
         <div class="lp-ctas"><button class="btn brand big" data-act="go" data-view="home">Try it free ${icon('arrow','s')}</button><button class="btn ghost big" data-act="scroll" data-target="lpPricing">See plans</button></div>
         <div class="lp-trust"><span>${icon('check','s')} 2 free looks a month</span><span>${icon('lock','s')} Your photo stays private</span><span>${icon('check','s')} Real store prices</span></div>
@@ -390,7 +390,7 @@ function landing(){
   </section>
   <footer class="md-foot">
     <div class="md-foot-panel reveal"><div><p class="eyebrow">Wear what feels like you</p><h2>Make your next<br>look a sure thing.</h2></div><button class="btn light big" data-act="go" data-view="home">Let's try it on ${icon('arrow','s')}</button></div>
-    <div class="md-foot-bottom"><span>© 2026 MyDripCheck · Wear it before buy it.</span><span>Prices include GST · Made in India</span></div>
+    <div class="md-foot-bottom"><span>© 2026 MyDripCheck · Wear it before you buy it.</span><span>Prices include GST · Made in India</span></div>
   </footer>
 </div>`;
 }

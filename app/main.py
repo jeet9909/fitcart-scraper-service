@@ -80,6 +80,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://jeet9909.github.io",
+        "https://mydripcheck.com",
+        "https://www.mydripcheck.com",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         *EXTRA_ORIGINS,

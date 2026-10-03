@@ -2055,3 +2055,12 @@ def test_google_try_on_is_off_without_a_valid_service_account() -> None:
     on = VertexTryOn(Settings(gemini_api_key="test", google_service_account_json=VERTEX_KEY))
     assert on.configured and on.project == "dripcheck-prod"
     assert VertexTryOn(Settings(gemini_api_key="test", google_service_account_json=VERTEX_KEY, vertex_project_id="other")).project == "other"
+
+
+def test_api_accepts_requests_from_mydripcheck_com() -> None:
+    with TestClient(app) as client:
+        for origin in ("https://mydripcheck.com", "https://www.mydripcheck.com", "https://jeet9909.github.io"):
+            response = client.options("/v1/looks/balance", headers={"Origin": origin, "Access-Control-Request-Method": "GET"})
+            assert response.headers.get("access-control-allow-origin") == origin
+        other = client.options("/v1/looks/balance", headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "GET"})
+        assert "access-control-allow-origin" not in other.headers

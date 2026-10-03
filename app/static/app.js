@@ -301,7 +301,6 @@ function pricingHtml(){
     <div class="billing glass" role="group" aria-label="Billing period"><button data-act="billing" data-billing="monthly" aria-pressed="${state.billing === 'monthly'}">Monthly</button><button data-act="billing" data-billing="yearly" aria-pressed="${state.billing === 'yearly'}">Yearly <span class="save">Save 21%</span></button></div>
     <div class="tiers">${tiers}</div>
     <div class="plan-table reveal"><table><caption class="sr">Compare plans</caption><thead><tr><th scope="col">Compare plans</th>${PLANS.map(p => `<th scope="col">${p.name}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr><th scope="row">${r[0]}</th>${r.slice(1).map((c, i) => `<td class="${PLANS[i].popular ? 'hi' : ''}">${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
-    ${state.billingCfg?.test_mode ? `<div class="notice test-mode" role="note">${icon('info')}<span><strong>Test mode.</strong> No real money moves. Pay with UPI ID <b>success@razorpay</b>, or pick Netbanking, any bank, then Success.</span></div>` : ''}
     <div class="plan-notes"><p>${icon('lock','s')} Prices include 18% GST. Secure checkout by Razorpay: UPI, cards and netbanking. ${state.billingCfg?.autopay ? 'Plans renew with UPI AutoPay or card until cancelled.' : 'Plus and Pro are paid for a month or a year at a time, with no autopay. Buy again to extend; new time starts when your current plan ends.'}</p><p>A look that fails is never counted. Unused looks don't carry over to the next month.</p></div>
   </div>`;
 }

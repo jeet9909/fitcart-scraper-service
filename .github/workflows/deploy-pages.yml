@@ -1,8 +1,9 @@
-name: Deploy UI to GitHub Pages
+name: Deploy UI to GitHub Pages (mydripcheck.com)
 
 on:
   push:
-    branches: [main]
+    # mydripcheck.com is served from the mydripcheck branch.
+    branches: [mydripcheck]
     paths:
       - "app/static/**"
       - ".github/workflows/deploy-pages.yml"
@@ -40,6 +41,7 @@ jobs:
           cp -r app/static/img _site/static/img
           printf "window.FITCART_API_BASE = %s;\n" "$(jq -Rn --arg v "${FITCART_API_BASE%/}" '$v')" > _site/static/config.js
           printf "window.MDC_CONTACT_EMAIL = %s;\n" "$(jq -Rn --arg v "$MDC_CONTACT_EMAIL" '$v')" >> _site/static/config.js
+          echo "mydripcheck.com" > _site/CNAME
           touch _site/.nojekyll
           echo "UI will call: $FITCART_API_BASE"
 

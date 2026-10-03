@@ -3,7 +3,6 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<link rel="icon" type="image/svg+xml" href="static/img/logo-mark.svg">
 <link rel="icon" type="image/png" href="static/img/favicon.png">
 <link rel="apple-touch-icon" href="static/img/apple-touch-icon.png">
 <title>MyDripCheck · Wear it before you buy it</title>
@@ -33,7 +32,7 @@
   --shadow-float:0 2px 6px rgba(31,28,26,.06),0 22px 48px -14px rgba(31,28,26,.22);
   --glow:0 10px 30px -12px rgba(107,45,60,.55);
   --scrim:rgba(31,28,26,.45);
-  --brand-navy:#1E5B94; --brand-teal:#12867B;
+  --brand-navy:#165C85; --brand-teal:#15A99F;
   --r-s:10px; --r-m:14px; --r-l:22px;
   --display:"DM Serif Display",Georgia,"Times New Roman",serif;
   --body:"Outfit",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
@@ -59,7 +58,7 @@
     --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px -8px rgba(0,0,0,.55);
     --shadow-float:0 2px 6px rgba(0,0,0,.4),0 22px 48px -14px rgba(0,0,0,.75);
     --glow:0 10px 34px -10px rgba(196,86,106,.55);
-    --scrim:rgba(0,0,0,.62); --brand-navy:#7FB2E6; --brand-teal:#4FD1C3;
+    --scrim:rgba(0,0,0,.62); --brand-navy:#F1F5F8; --brand-teal:#4FD1C3;
   }
 }
 :root[data-theme="dark"]{
@@ -79,7 +78,7 @@
   --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px -8px rgba(0,0,0,.55);
   --shadow-float:0 2px 6px rgba(0,0,0,.4),0 22px 48px -14px rgba(0,0,0,.75);
   --glow:0 10px 34px -10px rgba(196,86,106,.55);
-  --scrim:rgba(0,0,0,.62); --brand-navy:#7FB2E6; --brand-teal:#4FD1C3;
+  --scrim:rgba(0,0,0,.62); --brand-navy:#F1F5F8; --brand-teal:#4FD1C3;
 }
 *{box-sizing:border-box}
 html,body{margin:0;overflow-x:clip}
@@ -104,8 +103,8 @@ p{margin:0}
 .topbar{position:sticky;top:0;z-index:var(--z-bar);background:var(--glass);backdrop-filter:saturate(1.4) blur(14px);-webkit-backdrop-filter:saturate(1.4) blur(14px);border-bottom:1px solid var(--line);padding-top:var(--safe-t)}
 .topbar-in{max-width:1120px;margin:0 auto;padding:0 16px;height:60px;display:flex;align-items:center;gap:12px}
 a.brand{display:flex;align-items:center;gap:9px;font:800 21px/1 var(--body);letter-spacing:-.01em;color:var(--ink);text-decoration:none;min-height:44px}
-.mark{width:50px;height:24px;flex-shrink:0;color:var(--brand-navy)}
-a.brand .word{color:var(--brand-teal);font-weight:800;letter-spacing:.06em;font-size:.86em}
+.mark{width:67px;height:22px;flex-shrink:0;background:var(--brand-navy);-webkit-mask:url(static/img/mdc-mark.png) center/contain no-repeat;mask:url(static/img/mdc-mark.png) center/contain no-repeat}
+a.brand .word{display:block;width:121px;height:11px;flex-shrink:0;background:var(--brand-teal);-webkit-mask:url(static/img/mdc-word.png) center/contain no-repeat;mask:url(static/img/mdc-word.png) center/contain no-repeat}
 .mark svg{width:18px;height:18px}
 .toptabs{display:none;gap:4px;margin-left:24px}
 .toptabs button{height:40px;padding:0 16px;border-radius:999px;font-weight:700;font-size:15px;color:var(--muted);transition:background-color .2s var(--ease),color .2s var(--ease),box-shadow .2s var(--ease)}
@@ -639,9 +638,9 @@ h1,h2,h3{font-synthesis-weight:none}
 .lp-copy h1 .grad-text,.lp-head .grad-text,.cta-band .grad-text{font-style:normal;padding-right:.02em}
 .lookpill{white-space:nowrap;flex-shrink:0}
 @media (max-width:420px){.topbar-in{gap:4px}.topbar-in .spacer{min-width:4px}.lookpill{padding-left:12px;gap:6px}}
-@media (max-width:420px){a.brand{font-size:19px;gap:6px}.mark{width:40px;height:20px}}
+@media (max-width:420px){a.brand{gap:7px}.mark{width:55px;height:18px}a.brand .word{width:105px;height:9.5px}}
 @media (max-width:430px){.lookpill .lbl{display:none}.lookpill{padding-left:10px}}
-@media (max-width:360px){a.brand .word{font-size:.78em;letter-spacing:.04em}.mark{width:34px;height:17px}}
+@media (max-width:360px){.mark{width:46px;height:15px}a.brand .word{width:88px;height:8px}}
 .account-btn.signed{color:var(--accent-text);background:var(--accent-soft)}
 .account-btn.signed::after{content:"";position:absolute;right:8px;top:8px;width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 2px var(--surface)}
 .pw-wrap{position:relative;display:block}
@@ -781,7 +780,7 @@ h1,h2,h3{font-synthesis-weight:none}
 <div class="topnote">WEAR IT BEFORE YOU BUY IT<span class="tn-more"> · Multi-store try-on preview</span></div>
 <header class="topbar">
   <div class="topbar-in">
-    <a class="brand" href="#" data-act="go" data-view="landing" aria-label="MyDripCheck home"><svg class="mark" viewBox="0 0 126 60" aria-hidden="true"><defs><mask id="hdrUnderTop" maskUnits="userSpaceOnUse" x="0" y="0" width="126" height="60"><rect width="126" height="60" fill="#fff"/><circle cx="79" cy="14.5" r="8" fill="#000"/></mask><mask id="hdrUnderBottom" maskUnits="userSpaceOnUse" x="0" y="0" width="126" height="60"><rect width="126" height="60" fill="#fff"/><circle cx="79" cy="45.5" r="8" fill="#000"/></mask></defs><g fill="none" stroke="currentColor" stroke-width="9"><path d="M5 55 L19 5 L37 47 L49 5.5 H60 A24.5 24.5 0 0 1 60 54.5 H40" stroke-miterlimit="10" mask="url(#hdrUnderTop)"/><path d="M117.5 15 A23 23 0 1 0 117.5 45" mask="url(#hdrUnderBottom)"/></g></svg><span class="word">MYDRIPCHECK</span></a>
+    <a class="brand" href="#" data-act="go" data-view="landing" aria-label="MyDripCheck home"><span class="mark" aria-hidden="true"></span><span class="word" aria-hidden="true"></span></a>
     <nav class="toptabs" aria-label="Main">
       <button data-act="go" data-view="home">Try on</button>
       <button data-act="go" data-view="wardrobe">Wardrobe</button>

@@ -82,6 +82,9 @@ app.add_middleware(
         "https://jeet9909.github.io",
         "https://mydripcheck.com",
         "https://www.mydripcheck.com",
+        # Until GitHub Pages "Enforce HTTPS" is on, visitors can land on the plain http address.
+        "http://mydripcheck.com",
+        "http://www.mydripcheck.com",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         *EXTRA_ORIGINS,

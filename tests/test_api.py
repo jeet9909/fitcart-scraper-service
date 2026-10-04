@@ -2064,3 +2064,27 @@ def test_api_accepts_requests_from_mydripcheck_com() -> None:
             assert response.headers.get("access-control-allow-origin") == origin
         other = client.options("/v1/looks/balance", headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "GET"})
         assert "access-control-allow-origin" not in other.headers
+
+
+def test_share_text_is_reduced_to_the_product_link() -> None:
+    from app.security import extract_url
+
+    assert extract_url("Check out this Roadster Shirt on Myntra! https://www.myntra.com/shirts/roadster/123/buy") == "https://www.myntra.com/shirts/roadster/123/buy"
+    assert extract_url("U.S. Polo Shirt ₹1,299 https://amzn.in/d/aBc12Xy") == "https://amzn.in/d/aBc12Xy"
+    assert extract_url("Have a look on AJIO: https://www.ajio.com/p/469583920_blue.") == "https://www.ajio.com/p/469583920_blue"
+    assert extract_url("Found https://bit.ly/x and https://www.amazon.in/dp/B0C123?th=1") == "https://www.amazon.in/dp/B0C123?th=1"
+    assert extract_url("www.myntra.com/tshirts/hrx/9999") == "https://www.myntra.com/tshirts/hrx/9999"
+    assert extract_url("https://example.com/shirt?a=1") == "https://example.com/shirt?a=1"
+    assert extract_url("no link here") == "no link here"
+
+
+def test_scrape_endpoint_accepts_pasted_share_text() -> None:
+    app.dependency_overrides[get_scraper] = lambda: FakeScraper()
+    app.dependency_overrides[get_runtime_settings] = lambda: SETTINGS
+    try:
+        with TestClient(app) as client:
+            response = client.post("/v1/products/scrape", json={"url": "Look at this Green Shirt! https://example.com/shirt?id=7 Thanks"})
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()["data"]["source_url"] == "https://example.com/shirt?id=7"

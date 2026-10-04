@@ -48,7 +48,7 @@ from app.models import (
     WardrobeResponse,
 )
 from app.scraper import BrightDataScraper, ScrapeProviderError
-from app.security import UnsafeUrlError, validate_public_url
+from app.security import UnsafeUrlError, extract_url, validate_public_url
 from app.tryon import MAX_OUTFIT_PIECES, SOCIAL_POSES, OutfitPiece, TryOnError, TryOnService, validate_image
 from app.wardrobe import SLOT_LABELS, WardrobeService
 
@@ -340,6 +340,7 @@ async def create_tryon(
     try:
         service.ensure_configured()
         extras = _parse_outfit_items(outfit_items, len(outfit_images or []))
+        product_page_url = extract_url(product_page_url) if product_page_url else product_page_url
         # A product_page_url sent with product_image_url is the listing the image came from, not a second source.
         page_is_source = product_page_url is not None and product_image_url is None
         sources = sum(value is not None for value in (product_image, product_image_url)) + page_is_source

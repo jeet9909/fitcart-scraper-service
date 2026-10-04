@@ -10,11 +10,13 @@ from uuid import UUID
 import httpx
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import TypeAdapter, ValidationError
 
+from app import activity, admin
 from app.anonymous_auth import create_anonymous_session, create_email_session, verify_session_token
 from app import email_auth
 from app.billing import Billing
@@ -63,6 +65,7 @@ async def lifespan(app: FastAPI):
     app.state.scraper = BrightDataScraper(settings)
     app.state.tryon = TryOnService(settings)
     app.state.wardrobe = WardrobeService(app.state.tryon)
+    app.state.admin_state = admin.AdminState(app.state.tryon)
     yield
 
 
@@ -72,6 +75,9 @@ app = FastAPI(
     description="Scrape product details and create private Gemini virtual try-on images.",
     lifespan=lifespan,
 )
+
+# Logs try-ons, 360° views, poses and product imports for the admin dashboard, and pauses them in maintenance mode.
+app.middleware("http")(activity.middleware)
 
 # Sites allowed to call the API from a browser. Add your own domain with the CORS_ORIGINS variable,
 # e.g. CORS_ORIGINS=https://mydripcheck.com,https://www.mydripcheck.com
@@ -95,6 +101,16 @@ app.add_middleware(
 )
 
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
+# The admin dashboard is its own small site, served by the API at /admin and kept apart from the storefront.
+app.mount("/admin", StaticFiles(directory="app/admin_ui", html=True), name="admin")
+app.include_router(admin.router)
+app.include_router(admin.public)
+
+
+@app.exception_handler(HTTPException)
+async def record_http_error(request: Request, exc: HTTPException):
+    activity.note_error(exc.detail)
+    return await http_exception_handler(request, exc)
 
 
 def get_scraper(request: Request) -> BrightDataScraper:
@@ -199,6 +215,7 @@ async def scrape_product(
     settings: Settings = Depends(get_runtime_settings),
 ) -> ScrapeResponse:
     try:
+        activity.note(store=admin._store_of(str(payload.url)))
         url = validate_public_url(str(payload.url), settings.allowed_product_hosts)
         return await scraper.scrape(url, payload.country)
     except UnsafeUrlError as exc:
@@ -347,6 +364,7 @@ async def create_tryon(
             product_source = "scraped_url"
         name = product_name.strip()[:200] if product_name and product_name.strip() else None
         category = category.strip()[:80] or "clothing"
+        activity.note(pose=pose, pieces=1 + len(extras), product=name, store=admin._store_of(source_url), source=product_source)
         if not extras:
             result = await draw_look(claims, ledger, lambda check: service.generate(person, product, category, product_name=name, pose=pose, face_check=check))
             return await service.save(user_id, person, product, result, category, product_source, source_url)
@@ -416,6 +434,7 @@ async def create_outfit_tryon(
         service.ensure_configured()
         person = validate_image(await person_image.read(), person_image.content_type, settings.max_image_bytes)
         pieces, summary = await wardrobe.outfit_pieces(user_id, [item.strip() for item in item_ids.split(",") if item.strip()])
+        activity.note(pose=pose, pieces=len(pieces), product=" + ".join(filter(None, (item.get("name") for item in summary)))[:200] or None, source="wardrobe")
         result = await draw_look(claims, ledger, lambda check: service.generate_outfit(person, pieces, pose=pose, face_check=check))
         category = " + ".join(item["slot"] for item in summary)[:80]
         product_url = next((item["product_url"] for item in summary if item.get("product_url")), None)
@@ -483,6 +502,7 @@ async def create_social_pose(
     """Plus and Pro: redraw a saved look in a social-ready pose (4:5). Plus has 3 poses, Pro all of them.
     Uses one look per pose; a pose already made for this look is returned free."""
     pose = SOCIAL_POSES.get(body.pose)
+    activity.note(pose=body.pose)
     if pose is None:
         raise HTTPException(status_code=422, detail=f"pose must be one of: {', '.join(SOCIAL_POSES)}")
     try:

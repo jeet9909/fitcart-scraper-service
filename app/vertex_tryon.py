@@ -16,6 +16,7 @@ from typing import Any
 
 import httpx
 
+from app import activity
 from app.config import Settings
 
 log = logging.getLogger(__name__)
@@ -88,6 +89,7 @@ class VertexTryOn:
             "parameters": {"sampleCount": 1},
         }
         token = await asyncio.to_thread(self._token)
+        activity.count_call("vertex")
         response = await client.post(url, json=body, headers={"Authorization": f"Bearer {token}"})
         if response.status_code == 429:
             raise VertexTryOnError("Google try-on is busy right now. Please try again in a minute.", 429)

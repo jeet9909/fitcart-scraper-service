@@ -14,7 +14,7 @@ from uuid import uuid4
 import httpx
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from app import identity
+from app import activity, identity
 from app.config import Settings
 from app.models import GalleryItem, GeminiUsageResponse, GeminiUsageSinceStart, PoseImage
 from app.vertex_tryon import VertexTryOn, VertexTryOnError
@@ -555,6 +555,7 @@ class TryOnService:
         async with httpx.AsyncClient(timeout=180) as client:
             for attempt in range(2):
                 self.usage.requests += 1
+                activity.count_call("gemini_image" if model == self.settings.gemini_image_model else "gemini_text")
                 try:
                     response = await client.post(
                         f"{self._model_url(model)}:generateContent",

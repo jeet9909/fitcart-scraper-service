@@ -1,12 +1,20 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, field_validator
+
+from app.security import extract_url
 
 
 class ScrapeRequest(BaseModel):
     url: HttpUrl
     country: str = Field(default="IN", min_length=2, max_length=2, pattern=r"^[A-Z]{2}$")
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def _link_from_share_text(cls, value):
+        """Accept the whole text a store's Share button copies; keep only the product link."""
+        return extract_url(value) if isinstance(value, str) else value
 
 
 class Money(BaseModel):

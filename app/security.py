@@ -1,4 +1,5 @@
 import ipaddress
+import re
 import socket
 from urllib.parse import urlsplit
 
@@ -34,3 +35,32 @@ def validate_public_url(url: str, allowed_hosts: tuple[str, ...] = ()) -> str:
 
     return url
 
+
+
+# Store Share buttons copy text such as "Check out this shirt on Myntra! https://www.myntra.com/...".
+_URL_IN_TEXT = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+_BARE_URL_IN_TEXT = re.compile(r"\b(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+/[^\s<>\"']*", re.IGNORECASE)
+_STORE_HOST = re.compile(
+    r"(^|\.)(myntra\.com|amazon\.[a-z.]+|amzn\.(in|to|eu)|ajio\.com|flipkart\.com|fkrt\.it|meesho\.com|nike\.com|"
+    r"nykaafashion\.com|nykaa\.com|tatacliq\.com|hm\.com|zara\.com|snitch\.co\.in|souledstore\.com|bewakoof\.com)$",
+    re.IGNORECASE,
+)
+
+
+def extract_url(text: str) -> str:
+    """The product link inside pasted text; text that is already just a link is returned unchanged."""
+    text = (text or "").strip()
+    if not text or (" " not in text and "\n" not in text and text.lower().startswith(("http://", "https://"))):
+        return text
+    found = _URL_IN_TEXT.findall(text) or _BARE_URL_IN_TEXT.findall(text)
+    links = []
+    for candidate in found:
+        link = candidate.lstrip("<([\"'“‘").rstrip(")]>\"'”’.,;:!?…")
+        if not link.lower().startswith(("http://", "https://")):
+            link = "https://" + link
+        host = urlsplit(link).hostname or ""
+        if "." in host:
+            links.append((link, host))
+    if not links:
+        return text
+    return next((link for link, host in links if _STORE_HOST.search(host)), links[0][0])

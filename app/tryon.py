@@ -179,11 +179,15 @@ FACE_REFINE_PROMPT = (
 # from above; 0 is the saved front-facing image). The viewer spins through front, right, back, left.
 SPIN_ANGLES = (90, 180, 270)
 SPIN_VIEWS = {
-    90: "turned 90 degrees to their left, so the camera sees their right side in full profile",
+    90: "turned 90 degrees to their left, standing side-on so their nose, chest and toes point to the RIGHT edge of the picture. "
+        "The camera sees their right side in full profile: the right cheek, right ear, right arm and right shoulder",
     180: "turned around 180 degrees, so the camera sees them directly from behind: the back of the head and hair, "
          "the back of every garment and the heels of the shoes. The face is not visible",
-    270: "turned 90 degrees to their right, so the camera sees their left side in full profile",
+    270: "turned 90 degrees to their right, standing side-on so their nose, chest and toes point to the LEFT edge of the picture. "
+         "The camera sees their left side in full profile: the left cheek, left ear, left arm and left shoulder",
 }
+# Which way the nose should point in the picture for each side view; a view drawn the wrong way round is mirrored.
+SPIN_FACING = {90: "right", 270: "left"}
 
 
 # Social-ready poses: the finished look redrawn in a pose and setting made for a feed post (4:5).
@@ -244,14 +248,37 @@ def social_pose_prompt(pose: SocialPose) -> str:
 def spin_prompt(angle: int) -> str:
     return (
         "Image 1 is a finished fashion photo of a person. Redraw the same photo with the person " + SPIN_VIEWS[angle] + ". "
-        "It is the same moment from a camera that walked around them: the same person, body size and proportions, height, "
-        "hairstyle, skin tone, glasses and accessories, and exactly the same outfit, colours, prints, fabric, fit, length and shoes. "
+        "The person turns on the spot; the camera does not move. Keep exactly the same background as image 1: the same place, "
+        "walls, objects, floor, light and shadows, in the same position and size, as if only the person rotated in front of it. "
+        "Keep the same person, body size and proportions, height, hairstyle, skin tone, glasses and accessories, and exactly the same "
+        "outfit, colours, prints, fabric, fit, length and shoes. "
         "Image 2 is the person's own photo and image 3 is a product reference; use them for details that image 1 does not show, "
         "such as the back of a garment, but never change what image 1 already shows. "
-        "Keep the same plain studio background, the same soft even lighting, the same camera height and distance, and the same framing: "
-        "the whole body from the top of the head to the soles of the shoes, the same size in the frame as in image 1, standing upright "
-        "with arms relaxed at the sides. Photorealistic, one person, no text, no watermark, no collage."
+        "Keep the same camera height and distance and the same framing: the whole body from the top of the head to the soles of the "
+        "shoes, the same size and position in the frame as in image 1, standing upright with arms relaxed at the sides. "
+        "Photorealistic, one person, no text, no watermark, no collage."
     )
+
+
+def _face_the_right_way(view: tuple[bytes, str, str], angle: int) -> tuple[bytes, str, str]:
+    """The image model often draws both side views facing the same way. Mirror a side view whose face points
+    the wrong way, so the right and left sides really are opposite. Front and back views are left alone."""
+    expected = SPIN_FACING.get(angle)
+    if expected is None:
+        return view
+    try:
+        drawn = identity.facing(view[0])
+        if drawn is None or drawn == expected:
+            return view
+        with Image.open(io.BytesIO(view[0])) as image:
+            mirrored = ImageOps.mirror(image.convert("RGB"))
+            out = io.BytesIO()
+            mirrored.save(out, format="PNG")
+        log.info("360 view %s faced %s instead of %s; mirrored it", angle, drawn, expected)
+        return out.getvalue(), "image/png", "png"
+    except Exception:  # a failed check must never lose a finished view
+        log.warning("Could not check which way 360 view %s faces", angle, exc_info=True)
+        return view
 
 
 @dataclass
@@ -456,6 +483,7 @@ class TryOnService:
         look, person, product = await asyncio.gather(
             self.download(row["result_path"]), self.download(row["person_path"]), self.download(row["product_path"]))
         views = await asyncio.gather(*(self.generate_spin_view(look, person, product, angle) for angle in SPIN_ANGLES))
+        views = list(await asyncio.gather(*(asyncio.to_thread(_face_the_right_way, view, angle) for view, angle in zip(views, SPIN_ANGLES))))
         prefix = f"{user_id}/{row['id']}"
         paths = [f"{prefix}/spin_{angle}_{uuid4().hex[:8]}.{view[2]}" for angle, view in zip(SPIN_ANGLES, views)]
         await asyncio.gather(*(self._upload(path, view) for path, view in zip(paths, views)))

@@ -2102,3 +2102,30 @@ def test_flipkart_share_text_becomes_a_clean_product_link() -> None:
     assert extract_url(shared) == clean
     assert extract_url(shared.replace("\n", "")) == clean  # a one-line box drops the line break
     assert extract_url(shared.split("\n")[1]) == clean
+
+
+def test_360_side_views_are_mirrored_when_drawn_facing_the_wrong_way(monkeypatch) -> None:
+    from app import identity, tryon
+
+    image = Image.new("RGB", (4, 2), "white")
+    image.putpixel((0, 0), (255, 0, 0))
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    view = (buffer.getvalue(), "image/png", "png")
+
+    monkeypatch.setattr(identity, "facing", lambda data: "left")
+    right = tryon._face_the_right_way(view, 90)  # right side should face right: mirrored
+    assert Image.open(BytesIO(right[0])).getpixel((3, 0)) == (255, 0, 0)
+    assert tryon._face_the_right_way(view, 270) is view  # left side already faces left
+    assert tryon._face_the_right_way(view, 180) is view  # back view is never touched
+    monkeypatch.setattr(identity, "facing", lambda data: None)
+    assert tryon._face_the_right_way(view, 90) is view  # no face found: keep the drawing
+
+
+def test_360_prompt_keeps_the_background_and_names_the_direction() -> None:
+    from app.tryon import spin_prompt
+
+    right, left = spin_prompt(90), spin_prompt(270)
+    assert "RIGHT edge of the picture" in right and "LEFT edge of the picture" in left
+    assert "camera does not move" in right and "same background as image 1" in left
+    assert "studio background" not in right

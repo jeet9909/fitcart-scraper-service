@@ -1,5 +1,5 @@
 'use strict';
-/* MyDripCheck Admin Studio: talks to the API it is served from (/v1/admin/*). */
+/* MyDripCheck Admin Console: talks to the API it is served from (/v1/admin/*). */
 const API = location.origin;
 const KEY = 'mdc-admin-session';
 const $ = s => document.querySelector(s);
@@ -139,7 +139,7 @@ async function render(fresh) {
     const data = cached || await LOADERS[page]();
     S.cache[page + S.days] = data;
     if (S.page !== page) return;
-    main.innerHTML = VIEWS[page](data) + `<div class="footer"><span>MYDRIPCHECK ADMIN STUDIO · Live data</span><span>Signed in as ${esc(S.email)}</span></div>`;
+    main.innerHTML = VIEWS[page](data) + `<div class="footer"><span>MYDRIPCHECK ADMIN CONSOLE · Live data</span><span>Signed in as ${esc(S.email)}</span></div>`;
     nav(); notices();
   } catch (err) {
     if (S.page === page && S.token) main.innerHTML = `<div class="panel empty"><h2>Could not load this page</h2><p class="sub">${esc(err.message)}</p><button class="small" data-act="refresh" style="margin-top:14px">Try again</button></div>`;
@@ -435,7 +435,7 @@ document.addEventListener('input', e => { if (e.target.dataset?.act === 'search'
 function rerender() {
   const data = S.cache[S.page + S.days]; if (!data) return;
   const pos = document.activeElement?.dataset?.act === 'search' ? document.activeElement.selectionStart : null;
-  $('#main').innerHTML = VIEWS[S.page](data) + `<div class="footer"><span>MYDRIPCHECK ADMIN STUDIO · Live data</span><span>Signed in as ${esc(S.email)}</span></div>`;
+  $('#main').innerHTML = VIEWS[S.page](data) + `<div class="footer"><span>MYDRIPCHECK ADMIN CONSOLE · Live data</span><span>Signed in as ${esc(S.email)}</span></div>`;
   if (pos != null) { const i = $('[data-act="search"]'); i.focus(); i.setSelectionRange(pos, pos); }
 }
 document.addEventListener('keydown', e => {

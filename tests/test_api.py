@@ -2088,3 +2088,17 @@ def test_scrape_endpoint_accepts_pasted_share_text() -> None:
         app.dependency_overrides.clear()
     assert response.status_code == 200
     assert response.json()["data"]["source_url"] == "https://example.com/shirt?id=7"
+
+
+def test_flipkart_share_text_becomes_a_clean_product_link() -> None:
+    from app.security import extract_url
+
+    shared = (
+        "Take a look at this Men Striped Round Neck Cotton Blend Green T-Shirt on Flipkart\n"
+        "https://dl.flipkart.com/dl/mack-jonney-striped-men-round-neck-green-t-shirt/p/itm01456c7393553?pid=TSHHA63TT9CFS5QG"
+        "&lid=LSTTSHHA63TT9CFS5QGLLECJU&hl_lid=&marketplace=FLIPKART&fm=eyJ3dHAiOiJhdGxhc19wcm9kdWN0X3N1bW1hcnlfZ3JpZF9saWZlc3R5bGVfdjIiLCJwcnB0Ijoic3AiLCJtaWQiOiJhZHMifQ==&ctx=eyJkZWxpdmVyZWRCeSI6IiIsImRpc3BsYXlQcmljZSI6IjMzMCJ9&_refId=&_appId=CL"
+    )
+    clean = "https://www.flipkart.com/mack-jonney-striped-men-round-neck-green-t-shirt/p/itm01456c7393553?pid=TSHHA63TT9CFS5QG"
+    assert extract_url(shared) == clean
+    assert extract_url(shared.replace("\n", "")) == clean  # a one-line box drops the line break
+    assert extract_url(shared.split("\n")[1]) == clean

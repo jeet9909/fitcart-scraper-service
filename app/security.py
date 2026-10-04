@@ -47,11 +47,23 @@ _STORE_HOST = re.compile(
 )
 
 
+def _tidy_store_link(link: str) -> str:
+    """Flipkart's Share button gives an app deep link (dl.flipkart.com/dl/...) full of tracking
+    parameters; the same product page is www.flipkart.com/... with only its pid."""
+    parts = urlsplit(link)
+    host = (parts.hostname or "").lower()
+    if host == "dl.flipkart.com" and "/p/" in parts.path:
+        path = parts.path[3:] if parts.path.startswith("/dl/") else parts.path
+        pid = next((pair.split("=", 1)[1] for pair in parts.query.split("&") if pair.startswith("pid=") and "=" in pair), "")
+        return f"https://www.flipkart.com{path}" + (f"?pid={pid}" if pid else "")
+    return link
+
+
 def extract_url(text: str) -> str:
     """The product link inside pasted text; text that is already just a link is returned unchanged."""
     text = (text or "").strip()
     if not text or (" " not in text and "\n" not in text and text.lower().startswith(("http://", "https://"))):
-        return text
+        return _tidy_store_link(text) if text else text
     found = _URL_IN_TEXT.findall(text) or _BARE_URL_IN_TEXT.findall(text)
     links = []
     for candidate in found:
@@ -63,4 +75,4 @@ def extract_url(text: str) -> str:
             links.append((link, host))
     if not links:
         return text
-    return next((link for link, host in links if _STORE_HOST.search(host)), links[0][0])
+    return _tidy_store_link(next((link for link, host in links if _STORE_HOST.search(host)), links[0][0]))

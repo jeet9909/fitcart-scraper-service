@@ -120,7 +120,7 @@ FACE_ACCESSORIES = (
 )
 
 
-def tryon_prompt(pieces: list["OutfitPiece"], pose: str = "standard", face_reference: bool = False) -> str:
+def tryon_prompt(pieces: list["OutfitPiece"], pose: str = "standard", face_reference: bool = False, person_share: float | None = None) -> str:
     """Instruction for the image model. Image 1 is the person, then an optional face close-up, then the products in order."""
     first_product = 3 if face_reference else 2
     areas = ", ".join(dict.fromkeys(piece.category for piece in pieces))
@@ -153,7 +153,10 @@ def tryon_prompt(pieces: list["OutfitPiece"], pose: str = "standard", face_refer
         + "Pose: ignore the pose in image 1 and stand the person upright, facing the camera straight on, weight evenly on both feet, feet slightly apart, "
         + "arms relaxed and straight down at the sides and held slightly away from the torso so the arms and hands cover no part of the outfit, "
         + "hands open and relaxed, shoulders level, head straight and facing the camera like in a passport photo, calm neutral expression, looking at the camera. "
-        + "Framing: vertical portrait with the entire body in frame from the top of the head to the soles of the shoes, a small margin above the head and below the feet, "
+        + "Framing: vertical portrait with the entire body in frame from the top of the head to the soles of the shoes, "
+        + (f"the person the same size in the picture as in image 1: from head to feet they fill about {round(person_share * 100)}% of the picture height, "
+           "with the backdrop visible around them; do not zoom in or make the person bigger than in image 1, "
+           if person_share else "a small margin above the head and below the feet, ")
         + "camera at chest height with no tilt, nothing cropped. "
         + "Background and light: a plain, light neutral studio backdrop with soft, even front lighting so every garment is clearly visible. "
         + "For body areas the products do not cover, keep the person's own clothing from image 1; if those areas are not visible in image 1, "
@@ -258,6 +261,29 @@ def spin_prompt(angle: int) -> str:
         "shoes, the same size and position in the frame as in image 1, standing upright with arms relaxed at the sides. "
         "Photorealistic, one person, no text, no watermark, no collage."
     )
+
+
+MIN_PERSON_SHARE = 0.35  # a smaller person in the photo is too far away to copy the size from
+MAX_PERSON_SHARE = 0.9  # leave a little room above the head and below the feet
+PERSON_SIZE_TOLERANCE = 1.1  # drawn up to 10% bigger than the photo is fine
+
+
+def _keep_person_size(result: tuple[bytes, str, str], target: float) -> tuple[bytes, str, str]:
+    """The image model tends to zoom in on the person. When the drawn person is clearly bigger in the picture
+    than in their own photo, scale the drawing down to match (plain backdrops only, see identity.shrink_to_share)."""
+    try:
+        drawn = identity.person_height_share(result[0])
+        if not drawn or drawn <= target * PERSON_SIZE_TOLERANCE:
+            return result
+        shrunk = identity.shrink_to_share(result[0], drawn, target)
+        if shrunk is None:
+            log.info("Standard pose person is %.0f%% tall vs %.0f%% in the photo; backdrop too busy to resize", drawn * 100, target * 100)
+            return result
+        log.info("Standard pose person resized from %.0f%% to %.0f%% of the picture height", drawn * 100, target * 100)
+        return shrunk, "image/png", "png"
+    except Exception:  # sizing is a polish step; never lose a finished look over it
+        log.warning("Could not check the person's size in the look", exc_info=True)
+        return result
 
 
 def _face_the_right_way(view: tuple[bytes, str, str], angle: int) -> tuple[bytes, str, str]:
@@ -368,7 +394,10 @@ class TryOnService:
             except (VertexTryOnError, httpx.HTTPError) as exc:
                 log.warning("Vertex try-on failed, using Gemini instead: %s", exc)
         face = await asyncio.to_thread(identity.face_reference, person[0]) if self.settings.face_lock_enabled else None
-        prompt = tryon_prompt(pieces, pose, face_reference=face is not None)
+        # How big the person is in their own photo; the standard pose keeps them that size instead of zooming in.
+        share = await asyncio.to_thread(identity.person_height_share, person[0]) if pose == "standard" else None
+        target = min(share, MAX_PERSON_SHARE) if share and MIN_PERSON_SHARE <= share <= 1.0 else None
+        prompt = tryon_prompt(pieces, pose, face_reference=face is not None, person_share=target)
         face_part = [self._inline_part((face[0], face[1], "jpg"))] if face else []
         payload = {
             "contents": [{
@@ -385,6 +414,8 @@ class TryOnService:
             # Re-posing redraws the whole person, so faces drift (often slimmer, a smaller head). A second,
             # edit-only pass fixes just the head against the real references; everything else stays.
             result = await self._refine_face(result, person, face, "3:4", "standard pose", check=face_check)
+        if target:
+            result = await asyncio.to_thread(_keep_person_size, result, target)
         elif pose == "keep" and self.settings.face_lock_enabled:
             # In the person's own pose the head barely moves, so pasting their real features is safe.
             locked = await asyncio.to_thread(identity.lock_face, person[0], result[0], result[1])

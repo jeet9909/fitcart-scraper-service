@@ -224,3 +224,62 @@ def facing(image_bytes: bytes) -> str | None:
 
 
 PROFILE_OFFSET = 0.12  # nose this far (share of face width) from the eyes and mouth means a side view
+
+
+BODY_PER_FACE_BOX = 6.1  # a standing adult, head to feet, is about six YuNet face boxes tall (measured on real looks)
+
+
+def person_height_share(image_bytes: bytes) -> float | None:
+    """Roughly how much of the picture height a standing person fills, head to feet, from the size of their face."""
+    image = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        return None
+    face = _detect(image)
+    if face is None:
+        return None
+    return float(face.box[3]) * BODY_PER_FACE_BOX / image.shape[0]
+
+
+def shrink_to_share(image_bytes: bytes, share_now: float, share_wanted: float) -> bytes | None:
+    """Make the person smaller in a plain-backdrop picture: scale it down around the feet and fill the freed
+    edges with the backdrop colour. Returns None when the backdrop is not plain enough to extend cleanly."""
+    image = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if image is None or share_now <= 0:
+        return None
+    height, width = image.shape[:2]
+    band = max(4, round(min(height, width) * 0.05))
+    if _edge_roughness(image, band) > PLAIN_BACKDROP_ROUGHNESS:
+        return None
+    factor = max(MIN_SHRINK, share_wanted / share_now)
+    small = cv2.resize(image, (round(width * factor), round(height * factor)), interpolation=cv2.INTER_AREA)
+    # Extend the backdrop from the picture's own left and right edges (never the person), blending across,
+    # which keeps the backdrop's light falloff and tint.
+    left = image[:, :band].astype(np.float32).mean(axis=1)
+    right = image[:, -band:].astype(np.float32).mean(axis=1)
+    across = np.linspace(0.0, 1.0, width, dtype=np.float32)[None, :, None]
+    backdrop = left[:, None, :] * (1 - across) + right[:, None, :] * across
+    backdrop = cv2.GaussianBlur(backdrop, (0, 0), band)
+    x, y = (width - small.shape[1]) // 2, height - small.shape[0]
+    pasted = backdrop.copy()
+    pasted[y:, x:x + small.shape[1]] = small
+    # Fade the smaller picture's edges into the extended backdrop so no seam shows.
+    mask = np.zeros((height, width), np.float32)
+    inset = max(2, round(width * 0.03))
+    mask[y + inset:, x + inset:x + small.shape[1] - inset] = 1
+    mask = cv2.GaussianBlur(mask, (0, 0), inset)[..., None]
+    out = backdrop * (1 - mask) + pasted * mask
+    ok, encoded = cv2.imencode(".png", np.clip(out, 0, 255).astype(np.uint8))
+    return encoded.tobytes() if ok else None
+
+
+PLAIN_BACKDROP_ROUGHNESS = 1.5  # studio backdrops measure about 0.6, real places (plants, walls, bikes) 3 and up
+
+
+def _edge_roughness(image: np.ndarray, band: int) -> float:
+    """Fine detail along the left and right edges (mean Laplacian, floor excluded). Smooth gradients, the
+    usual studio backdrop, score low; a real background scores high."""
+    grey = cv2.GaussianBlur(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32), (0, 0), 1.0)
+    detail = np.abs(cv2.Laplacian(grey, cv2.CV_32F))
+    rows = slice(0, int(image.shape[0] * 0.85))
+    return float(np.concatenate([detail[rows, :band], detail[rows, -band:]], axis=1).mean())
+MIN_SHRINK = 0.7  # never shrink by more than 30%: past that the drawing itself is off and a redraw is better

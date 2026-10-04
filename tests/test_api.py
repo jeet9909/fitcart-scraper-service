@@ -2129,3 +2129,33 @@ def test_360_prompt_keeps_the_background_and_names_the_direction() -> None:
     assert "RIGHT edge of the picture" in right and "LEFT edge of the picture" in left
     assert "camera does not move" in right and "same background as image 1" in left
     assert "studio background" not in right
+
+
+def test_standard_pose_prompt_keeps_the_photo_size() -> None:
+    from app.tryon import OutfitPiece, tryon_prompt
+
+    pieces = [OutfitPiece((b"", "image/png", "png"), "top", "Striped tee")]
+    sized = tryon_prompt(pieces, person_share=0.62)
+    assert "fill about 62% of the picture height" in sized and "do not zoom in" in sized
+    assert "small margin above the head" in tryon_prompt(pieces)  # no face found: old framing
+
+
+def test_oversized_person_is_scaled_back_on_a_plain_backdrop(monkeypatch) -> None:
+    from app import identity, tryon
+
+    plain = Image.new("RGB", (300, 400), (210, 214, 218))
+    buffer = BytesIO()
+    plain.save(buffer, format="PNG")
+    look = (buffer.getvalue(), "image/png", "png")
+    sizes = iter([0.9, 0.6])
+    monkeypatch.setattr(identity, "person_height_share", lambda data: next(sizes))
+    resized = tryon._keep_person_size(look, 0.6)
+    assert resized[0] != look[0] and Image.open(BytesIO(resized[0])).size == (300, 400)
+
+    monkeypatch.setattr(identity, "person_height_share", lambda data: 0.63)
+    assert tryon._keep_person_size(look, 0.6) is look  # within 10%: untouched
+
+    busy = Image.effect_noise((300, 400), 90).convert("RGB")
+    buffer = BytesIO()
+    busy.save(buffer, format="PNG")
+    assert identity.shrink_to_share(buffer.getvalue(), 0.9, 0.6) is None  # real background: never stretched

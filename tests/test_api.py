@@ -2175,3 +2175,19 @@ def test_social_pose_face_pass_keeps_the_head_size(monkeypatch) -> None:
     assert tryon._keep_head_size(before, after, "pose")[0] == b"resized"  # grew 25%: put back
     heights[b"refined"] = 104.0
     assert tryon._keep_head_size(before, after, "pose") is after  # within 6%: untouched
+
+
+def test_face_step_tone_is_matched_back_to_the_body(monkeypatch) -> None:
+    from app import identity, tryon
+
+    drawn, edited = (b"drawn", "image/png", "png"), (b"edited", "image/png", "png")
+    monkeypatch.setattr(identity, "match_face_tone", lambda reference, image, mime: b"matched")
+    assert tryon._match_body_tone(drawn, edited, "test")[0] == b"matched"
+    monkeypatch.setattr(identity, "match_face_tone", lambda reference, image, mime: None)
+    assert tryon._match_body_tone(drawn, edited, "test") is edited  # already matching: untouched
+
+    def broken(reference, image, mime):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(identity, "match_face_tone", broken)
+    assert tryon._match_body_tone(drawn, edited, "test") is edited  # a failed polish never loses the look

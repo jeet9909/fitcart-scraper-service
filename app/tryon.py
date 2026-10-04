@@ -188,6 +188,17 @@ POSE_FACE_REFINE_PROMPT = FACE_REFINE_PROMPT.replace(
 HEAD_GROWTH_LIMIT = 1.06  # a refined head more than 6% bigger than before is put back at its original size
 
 
+def _match_body_tone(drawn: tuple[bytes, str, str], edited: tuple[bytes, str, str], label: str) -> tuple[bytes, str, str]:
+    """After a face step, bring the face back to the skin tone it had when the whole person was drawn together,
+    so face, neck, arms and hands match (see identity.match_face_tone)."""
+    try:
+        matched = identity.match_face_tone(drawn[0], edited[0], edited[1])
+        return (matched, edited[1], edited[2]) if matched else edited
+    except Exception:  # a tone polish must never lose a finished look
+        log.warning("Could not match the face tone for %s", label, exc_info=True)
+        return edited
+
+
 def _keep_head_size(before: tuple[bytes, str, str], after: tuple[bytes, str, str], label: str) -> tuple[bytes, str, str]:
     """If the face pass enlarged the head, place the refined head back onto the pose at the head size the pose
     had (aligned on the eyes, nose and mouth), so the corrected face keeps natural body proportions."""
@@ -448,13 +459,15 @@ class TryOnService:
             # In the person's own pose the head barely moves, so pasting their real features is safe.
             locked = await asyncio.to_thread(identity.lock_face, person[0], result[0], result[1])
             if locked:
-                result = (locked, result[1], result[2])
+                result = await asyncio.to_thread(_match_body_tone, result, (locked, result[1], result[2]), "my pose")
         return result
 
     async def _refine_face(self, image: tuple[bytes, str, str], person: tuple[bytes, str, str], face: tuple[bytes, str], aspect: str, label: str, check: bool = True, keep_head_size: bool = False) -> tuple[bytes, str, str]:
         refined = await self._refine_face_pass(image, person, face, aspect, label, check, POSE_FACE_REFINE_PROMPT if keep_head_size else FACE_REFINE_PROMPT)
         if keep_head_size and refined is not image:
             refined = await asyncio.to_thread(_keep_head_size, image, refined, label)
+        if refined is not image:
+            refined = await asyncio.to_thread(_match_body_tone, image, refined, label)
         return refined
 
     async def _refine_face_pass(self, image: tuple[bytes, str, str], person: tuple[bytes, str, str], face: tuple[bytes, str], aspect: str, label: str, check: bool, prompt: str) -> tuple[bytes, str, str]:

@@ -94,8 +94,8 @@ def _login(client) -> dict:
 def test_admin_dashboard_page_is_served_separately() -> None:
     with TestClient(app) as client:
         page = client.get("/admin/")
-        assert page.status_code == 200 and "Admin Studio" in page.text
-        assert "Admin Studio" not in client.get("/").text
+        assert page.status_code == 200 and "Admin Console" in page.text
+        assert "Admin Console" not in client.get("/").text
 
 
 def test_only_admin_emails_get_an_admin_session(monkeypatch) -> None:

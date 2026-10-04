@@ -205,3 +205,22 @@ def face_match(real: np.ndarray | None, image_bytes: bytes) -> float | None:
     if other is None or _recognizer is None:
         return None
     return float(_recognizer.match(real, other, cv2.FaceRecognizerSF_FR_COSINE))
+
+
+def facing(image_bytes: bytes) -> str | None:
+    """Which way a face in profile points in the picture: 'left', 'right', or None when it faces the camera,
+    is turned away, or no face is found. Measured as the nose tip against the eyes and mouth corners."""
+    image = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        return None
+    face = _detect(image)
+    if face is None:
+        return None
+    others = np.concatenate([face.points[:2, 0], face.points[3:, 0]])
+    offset = (face.points[2][0] - float(others.mean())) / max(float(face.box[2]), 1.0)
+    if abs(offset) < PROFILE_OFFSET:
+        return None
+    return "right" if offset > 0 else "left"
+
+
+PROFILE_OFFSET = 0.12  # nose this far (share of face width) from the eyes and mouth means a side view

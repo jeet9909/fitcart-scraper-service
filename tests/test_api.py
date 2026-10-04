@@ -596,7 +596,7 @@ def test_outfit_prompt_sends_every_piece(monkeypatch) -> None:
     result = asyncio.run(service.generate_outfit(image, pieces))
     parts = sent["contents"][0]["parts"]
     assert len(parts) == 5
-    assert "Image 3 = bottom wear (beige trousers)." in parts[0]["text"]
+    assert "image 3 is the bottom wear (beige trousers)" in parts[0]["text"]
     assert result[1] == "image/png"
 
 
@@ -854,20 +854,17 @@ def test_standard_pose_prompt_reposes_and_keeps_identity() -> None:
     image = (b"", "image/png", "png")
     pieces = [OutfitPiece(image, "top", "CK BLACK Calvin Klein Jeans Men Shirt"), OutfitPiece(image, "footwear", "White sneakers")]
     standard = tryon_prompt(pieces)
-    assert "Only change the pose" in standard
-    assert "arms relaxed straight down at the sides" in standard
-    assert "entire body from top of head to soles of shoes" in standard
-    assert "exact same real person" in standard and "one single clean pair" in standard and "shoulder width" in standard
-    assert standard.index("Reproduce the face with zero deviation") < standard.index("Pose:")  # identity is stated before the pose
-    assert "Image 1 = person photo (full identity + body).\nImage 2 = top (CK BLACK Calvin Klein Jeans Men Shirt).\nImage 3 = footwear (White sneakers)." in standard
-    assert "Use Image 1 as the sole identity source" in standard and "Replace only the top and footwear clothing areas" in standard
-    assert "Photorealistic. Natural fabric folds" in standard and "Reproduce every product with zero change" in standard
+    assert "ignore the pose in image 1" in standard
+    assert "arms relaxed and straight down at the sides" in standard
+    assert "from the top of the head to the soles of the shoes" in standard
+    assert "same real person" in standard and "one single pair" in standard and "shoulder width" in standard
+    assert standard.index("Keep their exact face") < standard.index("Pose:")  # identity is stated before anything else
+    assert "image 2 is the top (CK BLACK Calvin Klein Jeans Men Shirt); image 3 is the footwear (White sneakers)" in standard
     with_face = tryon_prompt(pieces, face_reference=True)
-    assert "Image 2 = face close-up (primary identity reference)." in with_face and "sole identity source" not in with_face
-    assert "Image 3 = top (CK BLACK Calvin Klein Jeans Men Shirt).\nImage 4 = footwear (White sneakers)." in with_face
+    assert "Image 2 is a close-up of their face" in with_face
+    assert "image 3 is the top (CK BLACK Calvin Klein Jeans Men Shirt); image 4 is the footwear (White sneakers)" in with_face
     keep = tryon_prompt(pieces, "keep")
-    assert "Keep the exact pose, camera angle, background" in keep and "Only change the pose" not in keep
-    assert "Image 2 = top" in keep
+    assert "Keep the person's own pose" in keep and "ignore the pose" not in keep
 
 
 def test_tryon_passes_pose_and_rejects_unknown_pose() -> None:
@@ -1471,9 +1468,9 @@ def test_standard_pose_refines_the_face_and_keep_pose_locks_it(monkeypatch) -> N
     replies[:] = ["after", "tee"]  # first pass, then the refined image
     standard = _asyncio.run(service.generate(person, product, "top", "Linen shirt"))
     first, second = sent[0]["contents"][0]["parts"], sent[1]["contents"][0]["parts"]
-    assert len(first) == 4 and "Image 2 = face close-up" in first[0]["text"]  # prompt, person, face, product
+    assert len(first) == 4 and "Image 2 is a close-up of their face" in first[0]["text"]  # prompt, person, face, product
     assert second[0]["text"] == FACE_REFINE_PROMPT and len(second) == 4  # edit prompt, first result, face, full photo
-    assert "one single clean pair" in FACE_REFINE_PROMPT and "remove any glasses" in FACE_REFINE_PROMPT
+    assert "one single pair" in FACE_REFINE_PROMPT and "remove any glasses" in FACE_REFINE_PROMPT
     assert base64.b64decode(second[1]["inline_data"]["data"]) == _sample("after")
     assert standard[0] == _sample("tee")  # the refined image, not pixel-pasted
 
@@ -1779,8 +1776,8 @@ def test_plus_gets_three_social_poses_and_pro_gets_all(monkeypatch) -> None:
     assert walk.status_code == 200, walk.text
     assert [(p["pose"], p["label"]) for p in walk.json()["pose_images"]] == [("street-walk", "Street walk")]
     prompt = next(c[2]["contents"][0]["parts"][0]["text"] for c in calls if c[2] and "contents" in c[2])
-    assert "walking towards the camera" in prompt and "4:5" in prompt and "one single clean pair" in prompt
-    assert "to shoes" in prompt and "seams, logos, pockets" in prompt
+    assert "walking towards the camera" in prompt and "4:5" in prompt and "one single pair" in prompt
+    assert "to the shoes" in prompt and "pockets, buttons" in prompt
     gemini = [c[2] for c in calls if c[2] and "contents" in c[2]]
     assert all(g["generationConfig"]["imageConfig"]["aspectRatio"] == "4:5" for g in gemini)
     patch = next(c for c in calls if c[0] == "PATCH")

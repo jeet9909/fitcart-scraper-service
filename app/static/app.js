@@ -425,7 +425,7 @@ function home(){
         <label for="homeLink" class="small" style="font-weight:800">Product link</label>
         <div class="linkrow">
           <span style="display:grid;place-items:center;padding-left:8px;color:var(--muted)">${icon('link')}</span>
-          <input id="homeLink" type="url" inputmode="url" autocomplete="off" placeholder="https://www.myntra.com/…" aria-describedby="homeLinkHelp homeError">
+          <input id="homeLink" type="text" inputmode="url" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="https://www.myntra.com/…" aria-describedby="homeLinkHelp homeError">
           <button class="btn" type="submit" id="homeSubmit">Add</button>
         </div>
         <p class="error" id="homeError" role="alert"></p>
@@ -1323,7 +1323,7 @@ function renderAdd(){
       ${slotSelect('importSlot', i.slot, 'import-slot')}
       ${i.sizes.length ? `<div style="display:grid;gap:6px"><p class="small" style="font-weight:800">Your size <span class="muted" style="font-weight:600">· optional for now</span></p>${sizesHtml(i, state.draftSize, 'draft-size')}</div>` : ''}
       <div style="display:flex;gap:10px"><button class="btn" style="flex:1" data-act="confirm-add">${icon('plus','s')} Add to look</button><button class="btn ghost" data-act="add-reset">Back</button></div>`;
-    } else body = `<form id="addForm" novalidate style="display:grid;gap:10px"><label class="field" for="addLink">Link from any store<input class="input" id="addLink" type="url" inputmode="url" autocomplete="off" placeholder="Paste a Myntra, Amazon, AJIO or Nike link" aria-describedby="addError addTip"></label><p class="error" id="addError" role="alert">${esc(state.importError)}</p><button class="btn wide" type="submit">Find product</button></form>
+    } else body = `<form id="addForm" novalidate style="display:grid;gap:10px"><label class="field" for="addLink">Link from any store<input class="input" id="addLink" type="text" inputmode="url" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="Paste a Myntra, Amazon, AJIO or Nike link" aria-describedby="addError addTip"></label><p class="error" id="addError" role="alert">${esc(state.importError)}</p><button class="btn wide" type="submit">Find product</button></form>
       <p class="tiny muted" id="addTip">Tip: in the store's app, tap Share, then Copy link.</p>`;
   } else if (state.addTab === 'wardrobe'){
     if (!state.wardrobe){ if (!state.wardrobeLoading && !state.wardrobeError) setTimeout(loadWardrobe, 0); }
@@ -1339,19 +1339,48 @@ function renderAdd(){
     <div class="sheet-body"><div class="seg" role="tablist" aria-label="Where from">${[['link','Store link'],['wardrobe','My wardrobe'],['photo','Photo']].map(([k, l]) => `<button role="tab" aria-selected="${state.addTab === k}" data-act="add-tab" data-tab="${k}">${l}</button>`).join('')}</div>${body}</div>`;
   const form = $('#addForm');
   if (form) form.onsubmit = e => { e.preventDefault(); importLink($('#addLink').value, true); };
+  tidyOnPaste($('#addLink'));
 }
-function validLink(raw){
-  try { const u = new URL(String(raw).trim()); if (!/^https?:$/.test(u.protocol) || u.username || u.password) throw 0; return u.href; } catch { return null; }
+/* Store share buttons copy text like "Check out this shirt on Myntra! https://myntra.com/..." or
+   "Brand Shirt ₹999 https://amzn.in/d/abc". Pull the product link out of whatever was pasted. */
+const STORE_HOSTS = /(^|\.)(myntra\.com|amazon\.[a-z.]+|amzn\.(in|to|eu)|ajio\.com|flipkart\.com|fkrt\.it|dl\.flipkart\.com|meesho\.com|nike\.com|nykaafashion\.com|nykaa\.com|tatacliq\.com|hm\.com|zara\.com|snitch\.co\.in|souledstore\.com|bewakoof\.com|westside\.com|uniqlo\.com|levi\.in|puma\.com|adidas\.co\.in)$/i;
+function cleanCandidate(text){
+  let link = text.replace(/^[<(\["'“‘]+/, '').replace(/[)\]>"'”’.,;:!?…]+$/, '');
+  if (!/^https?:\/\//i.test(link)) link = 'https://' + link;
+  try {
+    const u = new URL(link);
+    if (!/^https?:$/.test(u.protocol) || u.username || u.password || !u.hostname.includes('.')) return null;
+    return u;
+  } catch { return null; }
 }
+function extractLink(raw){
+  const text = String(raw || '').trim();
+  if (!text) return null;
+  const found = [...text.matchAll(/https?:\/\/[^\s<>"']+/gi)].map(m => m[0]);
+  if (!found.length) found.push(...(text.match(/\b(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+\/[^\s<>"']*/gi) || []));
+  const links = found.map(cleanCandidate).filter(Boolean);
+  if (!links.length) return null;
+  return (links.find(u => STORE_HOSTS.test(u.hostname)) || links[0]).href;
+}
+function validLink(raw){ return extractLink(raw); }
 async function scrape(url){
   const res = await api('/v1/products/scrape', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({url, country:'IN'})}, false);
   if (!res.data?.image_urls?.length) throw Error('The store did not share a product photo. Add this item with a photo instead.');
   return fromScrape(res.data);
 }
+function tidyOnPaste(input){
+  if (!input || input.dataset.tidy) return;
+  input.dataset.tidy = '1';
+  input.addEventListener('paste', e => {
+    const text = e.clipboardData?.getData('text') || '';
+    const link = extractLink(text);
+    if (link && link !== text.trim()){ e.preventDefault(); input.value = link; input.dispatchEvent(new Event('input', {bubbles:true})); }
+  });
+}
 async function importLink(raw, inSheet){
   const url = validLink(raw);
   if (!url){
-    const msg = 'Paste a full product link that starts with https://';
+    const msg = 'We could not find a product link in that. Paste the link from the store\'s Share button.';
     if (inSheet){ state.importError = msg; renderAdd(); $('#addLink').value = raw; $('#addLink').focus(); }
     else { $('#homeError').textContent = msg; $('#homeLink').focus(); }
     return;
@@ -1479,6 +1508,7 @@ function bindView(){
   };
   const form = $('#linkForm');
   if (form) form.onsubmit = e => { e.preventDefault(); $('#homeError').textContent = ''; importLink($('#homeLink').value, false); };
+  tidyOnPaste($('#homeLink'));
 }
 function removeAt(index){
   const [removed] = state.look.splice(index, 1);

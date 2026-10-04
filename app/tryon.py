@@ -178,6 +178,34 @@ FACE_REFINE_PROMPT = (
 )
 
 
+# Social poses: the pose is already drawn with natural proportions, so the face pass must not resize the head.
+POSE_FACE_REFINE_PROMPT = FACE_REFINE_PROMPT.replace(
+    "The head must be the same size relative to the shoulders and body "
+    "as in image 3: a real person's head is about one seventh of their height, so never shrink it to fashion-model proportions. ",
+    "Keep the head exactly the same size, position and angle as the head already in image 1: do not make the head or face bigger "
+    "or smaller; only the face, hair and accessories change to match the real person. ",
+)
+HEAD_GROWTH_LIMIT = 1.06  # a refined head more than 6% bigger than before is put back at its original size
+
+
+def _keep_head_size(before: tuple[bytes, str, str], after: tuple[bytes, str, str], label: str) -> tuple[bytes, str, str]:
+    """If the face pass enlarged the head, place the refined head back onto the pose at the head size the pose
+    had (aligned on the eyes, nose and mouth), so the corrected face keeps natural body proportions."""
+    try:
+        was, now = identity.face_height(before[0]), identity.face_height(after[0])
+        if not was or not now or now <= was * HEAD_GROWTH_LIMIT:
+            return after
+        placed = identity.lock_face(after[0], before[0], before[1])
+        if placed is None:
+            log.info("Head grew %.0f%% in the face pass for %s but could not be resized", (now / was - 1) * 100, label)
+            return after
+        log.info("Head grew %.0f%% in the face pass for %s; put back at its original size", (now / was - 1) * 100, label)
+        return placed, before[1], before[2]
+    except Exception:  # sizing is a polish step; never lose a finished pose over it
+        log.warning("Could not check the head size for %s", label, exc_info=True)
+        return after
+
+
 # 360° view: the finished look is redrawn from these turns around the person (degrees, clockwise seen
 # from above; 0 is the saved front-facing image). The viewer spins through front, right, back, left.
 SPIN_ANGLES = (90, 180, 270)
@@ -423,13 +451,19 @@ class TryOnService:
                 result = (locked, result[1], result[2])
         return result
 
-    async def _refine_face(self, image: tuple[bytes, str, str], person: tuple[bytes, str, str], face: tuple[bytes, str], aspect: str, label: str, check: bool = True) -> tuple[bytes, str, str]:
+    async def _refine_face(self, image: tuple[bytes, str, str], person: tuple[bytes, str, str], face: tuple[bytes, str], aspect: str, label: str, check: bool = True, keep_head_size: bool = False) -> tuple[bytes, str, str]:
+        refined = await self._refine_face_pass(image, person, face, aspect, label, check, POSE_FACE_REFINE_PROMPT if keep_head_size else FACE_REFINE_PROMPT)
+        if keep_head_size and refined is not image:
+            refined = await asyncio.to_thread(_keep_head_size, image, refined, label)
+        return refined
+
+    async def _refine_face_pass(self, image: tuple[bytes, str, str], person: tuple[bytes, str, str], face: tuple[bytes, str], aspect: str, label: str, check: bool, prompt: str) -> tuple[bytes, str, str]:
         """Edit-only pass that redraws the head from the real references. With check (Plus and Pro), the
         result is scored with face recognition against the real photo; below the target it is redrawn again
         and the closest version wins (the unrefined image included). Without check, or without a readable
         face, the refined image is used as it is."""
         refine = {"contents": [{"role": "user", "parts": [
-            {"text": FACE_REFINE_PROMPT}, self._inline_part(image), self._inline_part((face[0], face[1], "jpg")), self._inline_part(person),
+            {"text": prompt}, self._inline_part(image), self._inline_part((face[0], face[1], "jpg")), self._inline_part(person),
         ]}], "generationConfig": {"responseModalities": ["TEXT", "IMAGE"], "imageConfig": {"aspectRatio": aspect}}}
         if not check:
             try:
@@ -486,7 +520,7 @@ class TryOnService:
         face = await asyncio.to_thread(identity.face_reference, person[0]) if self.settings.face_lock_enabled else None
         if face and self.settings.face_refine_enabled:
             # A new pose redraws the whole person, so the face drifts the same way as in the standard pose.
-            image = await self._refine_face(image, person, face, "4:5", f"pose {pose.key}", check=True)
+            image = await self._refine_face(image, person, face, "4:5", f"pose {pose.key}", check=True, keep_head_size=True)
         path = f"{user_id}/{row['id']}/pose_{pose.key}_{uuid4().hex[:8]}.{image[2]}"
         await self._upload(path, image)
         shots = [shot for shot in row.get("pose_shots") or [] if shot.get("pose") != pose.key] + [{"pose": pose.key, "path": path}]

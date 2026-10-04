@@ -135,3 +135,60 @@ revoke all on function public.refund_look(uuid) from public, anon, authenticated
 grant execute on function public.ensure_free_looks(uuid, integer) to service_role;
 grant execute on function public.consume_look(uuid, integer) to service_role;
 grant execute on function public.refund_look(uuid) to service_role;
+
+-- Admin dashboard (/admin). Safe to run more than once.
+-- One row per try-on, 360° view, social pose and product import, written by the API after each request.
+create table if not exists public.activity_events (
+  id uuid primary key default gen_random_uuid(),
+  kind text not null check (kind in ('look', 'outfit', 'spin', 'pose', 'scrape')),
+  status text not null check (status in ('completed', 'failed', 'rejected')),
+  http_status integer,
+  user_id uuid,
+  email text,
+  error text,
+  duration_ms integer,
+  image_calls integer not null default 0,
+  vertex_calls integer not null default 0,
+  cost_inr numeric(10, 2) not null default 0,
+  meta jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists activity_events_created_idx on public.activity_events (created_at desc);
+create index if not exists activity_events_user_idx on public.activity_events (user_id, created_at desc);
+alter table public.activity_events enable row level security;
+
+-- Messages sent from the storefront's help form.
+create table if not exists public.support_tickets (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid,
+  email text not null,
+  subject text not null,
+  message text not null,
+  status text not null default 'open' check (status in ('open', 'resolved')),
+  priority text not null default 'normal' check (priority in ('normal', 'high')),
+  note text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists support_tickets_status_idx on public.support_tickets (status, created_at desc);
+alter table public.support_tickets enable row level security;
+
+-- Switches set from the dashboard: maintenance mode, the storefront banner, suspended accounts.
+create table if not exists public.app_settings (
+  key text primary key,
+  value jsonb not null,
+  updated_at timestamptz not null default now()
+);
+alter table public.app_settings enable row level security;
+
+-- Who changed what in the dashboard.
+create table if not exists public.admin_audit (
+  id uuid primary key default gen_random_uuid(),
+  admin_email text not null,
+  action text not null,
+  target text,
+  detail jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists admin_audit_created_idx on public.admin_audit (created_at desc);
+alter table public.admin_audit enable row level security;

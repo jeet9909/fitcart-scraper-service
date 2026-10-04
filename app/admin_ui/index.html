@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>MyDripCheck · Admin Studio</title>
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<div id="login" class="login" hidden>
+  <form class="login-card" id="loginForm" autocomplete="on">
+    <div class="login-brand"><span class="mark" aria-hidden="true"></span><div>MyDrip<span>Check</span><small>ADMIN STUDIO</small></div></div>
+    <h1>Sign in</h1>
+    <p class="sub">Use your MyDripCheck account. Only emails listed in <code>ADMIN_EMAILS</code> can open the studio.</p>
+    <label class="field">Email<input id="loginEmail" type="email" required autocomplete="username"></label>
+    <label class="field">Password<input id="loginPassword" type="password" required autocomplete="current-password"></label>
+    <p class="form-error" id="loginError" role="alert"></p>
+    <button class="primary wide" type="submit" id="loginButton">Sign in</button>
+  </form>
+</div>
+
+<div id="app" hidden>
+  <div class="mobile-shade" data-act="close-nav"></div>
+  <aside>
+    <div class="brand">MyDrip<span>Check</span><small>ADMIN STUDIO</small></div>
+    <div class="nav-label">WORKSPACE</div>
+    <nav id="nav" aria-label="Admin sections"></nav>
+    <div class="aside-bottom"><span class="dot" id="liveDot"></span> <span id="liveText">Live data</span><br><span class="muted-side" id="whoami"></span><br><button class="link-btn" data-act="logout">Sign out</button></div>
+  </aside>
+  <div class="shell">
+    <header>
+      <button class="menu" aria-label="Open navigation" data-act="open-nav">☰</button>
+      <div class="crumb">Workspace &nbsp;/&nbsp; <b id="crumb">Overview</b></div>
+      <div class="top-right">
+        <span class="badge" id="modeBadge" hidden></span>
+        <button class="small" data-act="refresh" aria-label="Refresh">↻ Refresh</button>
+        <button class="small" data-act="notifications" aria-label="Notifications">🔔 <span id="notice">0</span></button>
+        <span class="avatar" id="avatar">A</span>
+      </div>
+    </header>
+    <main id="main" tabindex="-1"></main>
+  </div>
+</div>
+
+<div id="modal" class="overlay" role="dialog" aria-modal="true" aria-labelledby="dialog-title"><div class="dialog" id="dialog"></div></div>
+<div id="toast" class="toast" role="status"></div>
+<script src="admin.js"></script>
+</body>
+</html>

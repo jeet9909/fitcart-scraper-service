@@ -292,3 +292,65 @@ def face_height(image_bytes: bytes) -> float | None:
         return None
     face = _detect(image)
     return float(face.box[3]) if face is not None else None
+
+
+TONE_SHIFT_LIMIT = 3.0  # colour difference (Lab) between the two faces below which nothing is changed
+TONE_MAX_SHIFT = 25.0  # never move the face colour further than this, whatever the measurement says
+SKIN_COLOUR_RANGE = 45.0  # Lab distance from the face tone at which a pixel stops counting as skin
+
+
+def _skin_tone(image: np.ndarray, face: Face) -> np.ndarray | None:
+    """Average Lab colour of the inner face (cheeks, nose, forehead), avoiding hair, glasses rims and background."""
+    x, y, w, h = face.box
+    mask = np.zeros(image.shape[:2], np.uint8)
+    cv2.ellipse(mask, (int(x + w / 2), int(y + h * 0.55)), (max(2, int(w * 0.30)), max(2, int(h * 0.32))), face.tilt, 0, 360, 255, -1)
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB).astype(np.float32)
+    pixels = lab[mask > 0]
+    if len(pixels) < 50:
+        return None
+    lightness = pixels[:, 0]
+    low, high = np.percentile(lightness, [15, 90])  # drop shadows, eyes, beard and specular highlights
+    keep = pixels[(lightness >= low) & (lightness <= high)]
+    return keep.mean(axis=0) if len(keep) >= 30 else None
+
+
+def match_face_tone(reference: bytes, edited: bytes, output_mime: str = "image/png") -> bytes | None:
+    """Give the head in `edited` the skin tone the face had in `reference`, the same picture before a face
+    pass. The first drawing lights the face like the neck, arms and hands; a face pass copies the colour of
+    the person's own photo, taken in different light, so the face no longer matches the body. Only the
+    average colour moves: every feature, shadow and texture of the edited face is kept. None when no change
+    is needed or the faces cannot be found."""
+    try:
+        before = cv2.imdecode(np.frombuffer(reference, np.uint8), cv2.IMREAD_COLOR)
+        after = cv2.imdecode(np.frombuffer(edited, np.uint8), cv2.IMREAD_COLOR)
+        if before is None or after is None:
+            return None
+        face_before, face_after = _detect(before), _detect(after)
+        if face_before is None or face_after is None:
+            return None
+        tone_before, tone_after = _skin_tone(before, face_before), _skin_tone(after, face_after)
+        if tone_before is None or tone_after is None:
+            return None
+        shift = tone_before - tone_after
+        distance = float(np.linalg.norm(shift))
+        if distance < TONE_SHIFT_LIMIT:
+            return None
+        if distance > TONE_MAX_SHIFT:
+            shift *= TONE_MAX_SHIFT / distance
+        lab = cv2.cvtColor(after, cv2.COLOR_BGR2LAB).astype(np.float32)
+        # Move only skin: weight each pixel in the head area by how close its colour is to the face's own
+        # tone, so hair, glasses, beard and the background around the head keep their colour (no halo).
+        closeness = np.linalg.norm((lab - tone_after[None, None, :]) * np.array([0.5, 1.0, 1.0], np.float32), axis=2)
+        skin = np.sqrt(np.clip(1.0 - closeness / SKIN_COLOUR_RANGE, 0.0, 1.0))
+        skin = cv2.GaussianBlur(skin, (0, 0), max(1.0, float(face_after.box[2]) * 0.03))
+        mask = _head_mask(face_after, after.shape[:2]) * skin
+        lab += mask[..., None] * shift[None, None, :]
+        corrected = cv2.cvtColor(np.clip(lab, 0, 255).astype(np.uint8), cv2.COLOR_LAB2BGR)
+        log.info("Face tone matched to the body: shift L%+.1f a%+.1f b%+.1f", *shift)
+        extension = ".jpg" if output_mime == "image/jpeg" else ".webp" if output_mime == "image/webp" else ".png"
+        params = [cv2.IMWRITE_JPEG_QUALITY, 95] if extension == ".jpg" else []
+        ok, encoded = cv2.imencode(extension, corrected, params)
+        return encoded.tobytes() if ok else None
+    except cv2.error:
+        log.exception("Face tone matching failed")
+        return None

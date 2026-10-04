@@ -694,6 +694,10 @@ h1,h2,h3{font-synthesis-weight:none}
 .icon-btn:hover{background:var(--surface-2)}
 
 /* ---------- MyDripCheck cream & wine landing ---------- */
+.site-banner{text-align:center;font-size:13px;font-weight:500;padding:9px 16px;background:var(--accent-soft);color:var(--ink);border-bottom:1px solid var(--line)}
+.site-banner.warn{background:#FBEFD9}
+textarea.input{font-family:inherit;resize:vertical}
+.help-link{background:none;border:0;padding:0;color:inherit;font:inherit;text-decoration:underline;cursor:pointer}
 .topnote{text-align:center;font-size:11px;font-weight:600;letter-spacing:.12em;padding:8px 16px;background:var(--ink);color:var(--paper)}
 .landing.md{gap:0}
 .md .lp-section{width:min(1120px,calc(100% - 32px))}
@@ -778,6 +782,7 @@ h1,h2,h3{font-synthesis-weight:none}
 </head>
 <body>
 <div class="topnote">YOUR STYLE, BEFORE YOU BUY<span class="tn-more"> · Multi-store try-on preview</span></div>
+<div class="site-banner" id="siteBanner" role="status" hidden></div>
 <header class="topbar">
   <div class="topbar-in">
     <a class="brand" href="#" data-act="go" data-view="landing" aria-label="MyDripCheck home"><span class="mark" aria-hidden="true"></span><span class="word" aria-hidden="true"></span></a>
@@ -804,6 +809,7 @@ h1,h2,h3{font-synthesis-weight:none}
 <dialog class="sheet" id="photoSheet" aria-labelledby="photoTitle"></dialog>
 <dialog class="sheet" id="itemSheet" aria-labelledby="itemTitle"></dialog>
 <dialog class="sheet" id="signinSheet" aria-labelledby="signinTitle"></dialog>
+<dialog class="sheet" id="helpSheet" aria-labelledby="helpTitle"></dialog>
 <div id="toastHost" role="status" aria-live="polite"></div>
 <p class="sr" id="announcer" aria-live="polite"></p>
 <input type="file" id="photoFile" accept="image/jpeg,image/png,image/webp" hidden>

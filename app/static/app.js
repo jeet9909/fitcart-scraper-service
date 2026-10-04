@@ -389,7 +389,7 @@ function landing(){
   </section>
   <footer class="md-foot">
     <div class="md-foot-panel reveal"><div><p class="eyebrow">Wear what feels like you</p><h2>Make your next<br>look a sure thing.</h2></div><button class="btn light big" data-act="go" data-view="home">Let's try it on ${icon('arrow','s')}</button></div>
-    <div class="md-foot-bottom"><span>© 2026 MyDripCheck · Your style, before you buy.</span><span>Prices include GST · Made in India</span></div>
+    <div class="md-foot-bottom"><span>© 2026 MyDripCheck · Your style, before you buy.</span><span><button class="help-link" data-act="help">Help &amp; support</button> · Prices include GST · Made in India</span></div>
   </footer>
 </div>`;
 }
@@ -1059,6 +1059,7 @@ function renderSignin(){
   if (s.step === 'account'){
     body = `<div class="account-card"><span class="small muted">Signed in as</span><strong>${esc(a.email)}</strong>${a.unlimited ? `<span class="tag" style="justify-self:start">${icon('spark','s')} Unlimited looks</span>` : `<span class="small muted">${looksLeft() === null ? 'Checking your looks…' : looksLeft() === Infinity ? 'Looks available' : `${looksLeft()} ${looksLeft() === 1 ? 'look' : 'looks'} left`}</span>`}</div>
       <p class="small muted">Your wardrobe and looks are saved to this account, so they follow you to any device you sign in on.</p>
+      <button class="btn ghost wide" data-act="help">Help &amp; support</button>
       <button class="btn ghost wide" data-act="sign-out">Sign out</button>`;
   } else {
     const signup = s.mode === 'signup';
@@ -1248,6 +1249,49 @@ function signOut(){
   session(true).then(loadBalance).catch(() => {});
   render();
   toast('Signed out.', {kind:'info'});
+}
+
+/* ---------- Help & support ---------- */
+state.help = {busy:false, error:'', sent:false, subject:'', message:'', email:''};
+function renderHelp(){
+  const h = state.help, email = state.account?.email;
+  const body = h.sent
+    ? `<div class="notice">${icon('check')}<span>Thanks, your message is with the MyDripCheck team. We reply by email${email || h.email ? ` to <strong>${esc(email || h.email)}</strong>` : ''}, usually within a day.</span></div><button class="btn ghost wide" data-act="close-sheet">Close</button>`
+    : `<form id="helpForm" novalidate style="display:grid;gap:14px">
+      <p class="small muted">Something not working, a payment question, or an idea? Tell us and we will get back to you.${state.site?.support_email ? ` You can also email <a href="mailto:${esc(state.site.support_email)}">${esc(state.site.support_email)}</a>.` : ''}</p>
+      ${email ? `<p class="small">Replying to <strong>${esc(email)}</strong></p>` : `<label class="field" for="helpEmail">Your email<input class="input" id="helpEmail" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com" value="${esc(h.email)}" required></label>`}
+      <label class="field" for="helpSubject">Topic<input class="input" id="helpSubject" maxlength="150" placeholder="e.g. Paid but looks are missing" value="${esc(h.subject)}" required></label>
+      <label class="field" for="helpMessage">Message<textarea class="input" id="helpMessage" rows="5" maxlength="4000" placeholder="What happened? Include the time and the plan if it is about a payment." required>${esc(h.message)}</textarea></label>
+      <p class="error" role="alert">${esc(h.error)}</p>
+      <button class="btn brand wide" type="submit" ${h.busy ? 'disabled' : ''}>${h.busy ? '<span class="spin" aria-hidden="true"></span> Sending…' : 'Send message'}</button>
+    </form>`;
+  $('#helpSheet').innerHTML = `<div class="grabber" aria-hidden="true"></div><div class="sheet-head"><h2 id="helpTitle">Help &amp; support</h2><button class="iconbtn" data-act="close-sheet" aria-label="Close">${icon('x')}</button></div><div class="sheet-body">${body}</div>`;
+  const form = $('#helpForm');
+  if (form) form.onsubmit = e => { e.preventDefault(); sendHelp(); };
+}
+function openHelp(){
+  if (state.help.sent) state.help = {busy:false, error:'', sent:false, subject:'', message:'', email:state.help.email};
+  closeSheet($('#signinSheet')); renderHelp(); openSheet($('#helpSheet'));
+  setTimeout(() => (state.account ? $('#helpSubject') : $('#helpEmail'))?.focus(), 80);
+}
+async function sendHelp(){
+  const h = state.help;
+  h.email = ($('#helpEmail')?.value || '').trim(); h.subject = $('#helpSubject').value.trim(); h.message = $('#helpMessage').value.trim();
+  const fail = (error, field) => { h.error = error; h.busy = false; renderHelp(); $(field)?.focus(); };
+  if (!state.account && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(h.email)) return fail('Enter your email so we can reply.', '#helpEmail');
+  if (h.subject.length < 3) return fail('Add a short topic.', '#helpSubject');
+  if (h.message.length < 5) return fail('Tell us a little more in the message.', '#helpMessage');
+  h.busy = true; h.error = ''; renderHelp();
+  try {
+    await api('/v1/support', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email:state.account ? null : h.email, subject:h.subject, message:h.message})});
+    Object.assign(h, {busy:false, sent:true, subject:'', message:''}); renderHelp();
+  } catch (err){ fail(err.message, '#helpMessage'); }
+}
+function showSiteBanner(site){
+  state.site = site;
+  const el = $('#siteBanner'); if (!el || !site) return;
+  const text = site.maintenance ? site.maintenance_message : site.announcement;
+  el.hidden = !text; el.textContent = text || ''; el.classList.toggle('warn', Boolean(site.maintenance));
 }
 
 /* ---------- Sheets ---------- */
@@ -1541,6 +1585,7 @@ document.addEventListener('click', e => {
     case 'signin-mode': state.signin = {...state.signin, mode:t.dataset.mode, email:$('#signinEmail')?.value.trim() || state.signin.email, error:''}; renderSignin(); $('#signinEmail')?.value ? $('#signinPassword')?.focus() : $('#signinEmail')?.focus(); break;
     case 'toggle-password': { const input = $('#signinPassword'); const show = input.type === 'password'; input.type = show ? 'text' : 'password'; t.textContent = show ? 'Hide' : 'Show'; t.setAttribute('aria-label', show ? 'Hide password' : 'Show password'); break; }
     case 'sign-out': signOut(); break;
+    case 'help': e.preventDefault(); openHelp(); break;
     case 'toast-action': { const act = toastAction; dismissToast(); act?.run(); break; }
   }
 });
@@ -1592,6 +1637,7 @@ document.querySelectorAll('dialog.sheet').forEach(d => {
   if (theme === 'dark' || theme === 'light') document.documentElement.dataset.theme = theme;
   fetch(apiUrl('/health'), {cache:'no-store'}).catch(() => {});
   render();
+  fetch(apiUrl('/v1/site')).then(r => r.ok ? r.json() : null).then(showSiteBanner).catch(() => {});
   fetch(apiUrl('/v1/billing/config')).then(r => r.ok ? r.json() : null).then(cfg => { state.billingCfg = cfg; if (state.view === 'pricing') render(); }).catch(() => {});
   session().catch(() => {}).then(() => { refreshAccount(); if (!state.balance) loadBalance(); syncPendingOrder(); });
 })();

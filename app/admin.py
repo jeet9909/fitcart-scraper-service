@@ -114,7 +114,12 @@ class AdminState:
         response = await self.service.rest("POST", "app_settings", params={"on_conflict": "key"}, json_body=rows,
                                            prefer="resolution=merge-duplicates,return=minimal")
         if response.status_code == 404:
-            raise HTTPException(status_code=503, detail="Run supabase/schema.sql first: the app_settings table is missing.")
+            # PostgREST answers 404 for a table it does not know yet: either the SQL was not run, or it was run
+            # and Supabase's API has not reloaded its schema cache.
+            log.warning("app_settings not found by PostgREST: %s", response.text[:300])
+            raise HTTPException(status_code=503, detail=(
+                "Supabase cannot see the app_settings table yet. If you already ran supabase/schema.sql, run "
+                "NOTIFY pgrst, 'reload schema'; in the Supabase SQL editor and try again."))
         if response.status_code >= 400:
             raise HTTPException(status_code=502, detail=f"Could not save settings: {response.text[:200]}")
         return await self.settings(fresh=True)

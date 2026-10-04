@@ -1360,7 +1360,15 @@ function extractLink(raw){
   if (!found.length) found.push(...(text.match(/\b(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+\/[^\s<>"']*/gi) || []));
   const links = found.map(cleanCandidate).filter(Boolean);
   if (!links.length) return null;
-  return (links.find(u => STORE_HOSTS.test(u.hostname)) || links[0]).href;
+  return tidyStoreLink(links.find(u => STORE_HOSTS.test(u.hostname)) || links[0]);
+}
+/* Flipkart's Share gives an app link (dl.flipkart.com/dl/...) full of tracking; keep the product page and its pid. */
+function tidyStoreLink(u){
+  if (u.hostname === 'dl.flipkart.com' && u.pathname.includes('/p/')){
+    const pid = u.searchParams.get('pid');
+    return 'https://www.flipkart.com' + u.pathname.replace(/^\/dl\//, '/') + (pid ? '?pid=' + encodeURIComponent(pid) : '');
+  }
+  return u.href;
 }
 function validLink(raw){ return extractLink(raw); }
 async function scrape(url){
@@ -1380,7 +1388,7 @@ function tidyOnPaste(input){
 async function importLink(raw, inSheet){
   const url = validLink(raw);
   if (!url){
-    const msg = 'We could not find a product link in that. Paste the link from the store\'s Share button.';
+    const msg = 'Paste a full product link that starts with https://';
     if (inSheet){ state.importError = msg; renderAdd(); $('#addLink').value = raw; $('#addLink').focus(); }
     else { $('#homeError').textContent = msg; $('#homeLink').focus(); }
     return;

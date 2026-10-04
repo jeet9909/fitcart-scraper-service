@@ -283,3 +283,12 @@ def _edge_roughness(image: np.ndarray, band: int) -> float:
     rows = slice(0, int(image.shape[0] * 0.85))
     return float(np.concatenate([detail[rows, :band], detail[rows, -band:]], axis=1).mean())
 MIN_SHRINK = 0.7  # never shrink by more than 30%: past that the drawing itself is off and a redraw is better
+
+
+def face_height(image_bytes: bytes) -> float | None:
+    """Height in pixels of the main face, for comparing head size between two versions of the same picture."""
+    image = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        return None
+    face = _detect(image)
+    return float(face.box[3]) if face is not None else None

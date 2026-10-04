@@ -2159,3 +2159,19 @@ def test_oversized_person_is_scaled_back_on_a_plain_backdrop(monkeypatch) -> Non
     buffer = BytesIO()
     busy.save(buffer, format="PNG")
     assert identity.shrink_to_share(buffer.getvalue(), 0.9, 0.6) is None  # real background: never stretched
+
+
+def test_social_pose_face_pass_keeps_the_head_size(monkeypatch) -> None:
+    from app import identity, tryon
+
+    assert "one seventh" not in tryon.POSE_FACE_REFINE_PROMPT
+    assert "do not make the head or face bigger" in tryon.POSE_FACE_REFINE_PROMPT
+    assert "one seventh" in tryon.FACE_REFINE_PROMPT  # the standard pose keeps its rule
+
+    before, after = (b"pose", "image/png", "png"), (b"refined", "image/png", "png")
+    heights = {b"pose": 100.0, b"refined": 125.0}
+    monkeypatch.setattr(identity, "face_height", lambda data: heights[data])
+    monkeypatch.setattr(identity, "lock_face", lambda original, generated, mime: b"resized")
+    assert tryon._keep_head_size(before, after, "pose")[0] == b"resized"  # grew 25%: put back
+    heights[b"refined"] = 104.0
+    assert tryon._keep_head_size(before, after, "pose") is after  # within 6%: untouched

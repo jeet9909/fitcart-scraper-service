@@ -210,7 +210,7 @@ aside{background:#F8FAFC;color:#243247;border-right:1px solid var(--line)}
 .nav-label{color:#617185;letter-spacing:1px;font-size:11px}
 nav button{color:#4B5C70;border-radius:6px}
 nav button:hover{background:#EDF2F7;color:#243247}
-nav button.active{background:#E7EDF4;color:#294B6D;font-weight:650;box-shadow:inset 3px 0 #456A8D}
+nav button.active{background:#E7EDF4;color:#294B6D;font-weight:650}
 .nav-count,nav button.active .nav-count{background:#E1E8F0;color:#344E68}
 .aside-bottom{color:#53657A;border-top:1px solid var(--line)}
 .muted-side{color:#617185}

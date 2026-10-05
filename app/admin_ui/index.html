@@ -6,6 +6,9 @@
 <meta name="robots" content="noindex,nofollow">
 <title>MyDripCheck · Admin Console</title>
 <link rel="icon" type="image/png" href="favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400..700&display=swap">
 <link rel="stylesheet" href="admin.css">
 </head>
 <body>
@@ -27,16 +30,16 @@
     <div class="brand"><span class="brand-row"><span class="mark" aria-hidden="true"></span><span class="wordmark" role="img" aria-label="MyDripCheck"></span></span><small>ADMIN CONSOLE</small></div>
     <div class="nav-label">WORKSPACE</div>
     <nav id="nav" aria-label="Admin sections"></nav>
-    <div class="aside-bottom"><span class="dot" id="liveDot"></span> <span id="liveText">Live data</span><br><span class="muted-side" id="whoami"></span><br><button class="link-btn" data-act="logout">Sign out</button></div>
+    <div class="aside-bottom"><span class="dot"></span>Connected to the live API<br><span class="muted-side" id="whoami"></span><br><button class="link-btn" data-act="logout">Sign out</button></div>
   </aside>
   <div class="shell">
     <header>
-      <button class="menu" aria-label="Open navigation" data-act="open-nav">☰</button>
+      <button class="menu" aria-label="Open navigation" data-act="open-nav"><svg class="i" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
       <div class="crumb">Workspace &nbsp;/&nbsp; <b id="crumb">Overview</b></div>
       <div class="top-right">
         <span class="badge" id="modeBadge" hidden></span>
-        <button class="small" data-act="refresh" aria-label="Refresh">↻ Refresh</button>
-        <button class="small" data-act="notifications" aria-label="Notifications">🔔 <span id="notice">0</span></button>
+        <button class="small" data-act="refresh" aria-label="Refresh"><svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg><span class="label">Refresh</span></button>
+        <button class="small" data-act="notifications" aria-label="Notifications"><svg class="i" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 21h4"/></svg><span id="notice">0</span></button>
         <span class="avatar" id="avatar">A</span>
       </div>
     </header>

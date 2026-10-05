@@ -1368,6 +1368,7 @@ function tidyStoreLink(u){
     const pid = u.searchParams.get('pid');
     return 'https://www.flipkart.com' + u.pathname.replace(/^\/dl\//, '/') + (pid ? '?pid=' + encodeURIComponent(pid) : '');
   }
+  if (/^(www\.)?meesho\.com$/.test(u.hostname) && u.pathname.includes('/p/') && !u.pathname.startsWith('/s/')) return 'https://www.meesho.com' + u.pathname;
   return u.href;
 }
 function validLink(raw){ return extractLink(raw); }

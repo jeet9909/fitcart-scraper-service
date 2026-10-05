@@ -2191,3 +2191,33 @@ def test_face_step_tone_is_matched_back_to_the_body(monkeypatch) -> None:
 
     monkeypatch.setattr(identity, "match_face_tone", broken)
     assert tryon._match_body_tone(drawn, edited, "test") is edited  # a failed polish never loses the look
+
+
+MEESHO_PAGE = """<html><head><title>Meesho</title></head><body><div id="__next"></div>
+<script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"initialState":{"product":{"details":{"data":{
+"product_id":"4xk2lm","name":"Trendy Men Striped Cotton Shirt","description":"Fabric: Cotton\\nSleeve Length: Long Sleeves",
+"images":["https://images.meesho.com/images/products/123/abc_512.webp","https://images.meesho.com/images/products/123/def_512.webp"],
+"sub_sub_category_name":"Shirts","mrp_details":{"mrp":999},
+"suppliers":[{"price":349,"name":"Shop"}],
+"variations":[{"name":"M","in_stock":true},{"name":"L","in_stock":true},{"name":"XL","in_stock":false}],
+"review_summary":{"data":{"average_rating":4.1,"rating_count":2381}}
+},"related":[{"name":"Other shirt","price":199}]}}}}}}</script></body></html>"""
+
+
+def test_meesho_product_is_read_from_next_data() -> None:
+    from app.scraper import _structured_product
+
+    found = _structured_product(MEESHO_PAGE, "https://www.meesho.com/trendy-men-shirt/p/4xk2lm")
+    assert found["title"] == "Trendy Men Striped Cotton Shirt"
+    assert found["price"] == 349 and found["mrp"] == 999 and found["currency"] == "INR"
+    assert found["images"][0].startswith("https://images.meesho.com/")
+    assert found["sizes"] == ["M", "L"] and found["unavailable_sizes"] == ["XL"]
+    assert found["rating"] == 4.1 and found["review_count"] == 2381 and found["category"] == "Shirts"
+
+
+def test_meesho_share_link_is_cleaned() -> None:
+    from app.security import extract_url
+
+    shared = "Check out this product on Meesho! https://www.meesho.com/trendy-men-shirt/p/4xk2lm?utm_source=s_cc&utm_medium=whatsapp"
+    assert extract_url(shared) == "https://www.meesho.com/trendy-men-shirt/p/4xk2lm"
+    assert extract_url("https://meesho.com/s/p/4kh5lb?utm_source=s") == "https://meesho.com/s/p/4kh5lb?utm_source=s"  # short link: left to redirect

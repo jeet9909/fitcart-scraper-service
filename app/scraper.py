@@ -541,6 +541,88 @@ def _structured_from_meta(page: str) -> dict:
     return {key: value for key, value in found.items() if value not in (None, [], "")}
 
 
+MEESHO_PRICE_KEYS = ("price", "min_product_price", "min_catalog_price", "transient_price", "final_price", "discounted_price", "selling_price")
+MEESHO_MRP_KEYS = ("mrp", "original_price", "mrp_price", "strike_price")
+
+
+def _next_data(page: str) -> object | None:
+    match = re.search(r'<script[^>]+id=["\']__NEXT_DATA__["\'][^>]*>(.*?)</script>', page, re.IGNORECASE | re.DOTALL)
+    if not match:
+        return None
+    try:
+        return json.loads(match.group(1))
+    except ValueError:
+        return None
+
+
+def _meesho_images(node: dict) -> list[str]:
+    images: list[str] = []
+    for key in ("images", "image_urls", "product_images"):
+        for item in node.get(key) or []:
+            url = item if isinstance(item, str) else (item.get("url") or item.get("image")) if isinstance(item, dict) else None
+            if isinstance(url, str) and url.strip():
+                images.append(url)
+    if isinstance(node.get("image"), str):
+        images.append(node["image"])
+    return images
+
+
+def _structured_from_meesho(page: str) -> dict:
+    """Meesho pages are Next.js apps: the product (name, prices, sizes, photos) sits in the __NEXT_DATA__ JSON.
+    The exact nesting changes between releases, so look for the product-shaped object instead of a fixed path."""
+    data = _next_data(page)
+    if data is None:
+        return {}
+    best: dict | None = None
+    best_score = 0
+    for node in _walk(data):
+        if not isinstance(node.get("name"), str) or not node.get("name").strip():
+            continue
+        images = _meesho_images(node)
+        price = next((_number(node.get(key)) for key in MEESHO_PRICE_KEYS if _number(node.get(key))), None)
+        if not price:
+            suppliers = node.get("suppliers")
+            if isinstance(suppliers, list) and suppliers and isinstance(suppliers[0], dict):
+                price = next((_number(suppliers[0].get(key)) for key in MEESHO_PRICE_KEYS if _number(suppliers[0].get(key))), None)
+        score = (2 if images else 0) + (2 if price else 0) + (1 if node.get("variations") or node.get("sizes") else 0) + (1 if node.get("description") else 0)
+        if score > best_score:
+            best, best_score = node, score
+    if best is None or best_score < 4:  # needs at least a name with photos and a price
+        return {}
+    node = best
+    found: dict = {"title": _text(node.get("name")), "currency": "INR", "images": _meesho_images(node)}
+    found["price"] = next((_number(node.get(key)) for key in MEESHO_PRICE_KEYS if _number(node.get(key))), None)
+    suppliers = node.get("suppliers") if isinstance(node.get("suppliers"), list) else []
+    supplier = suppliers[0] if suppliers and isinstance(suppliers[0], dict) else {}
+    if not found["price"]:
+        found["price"] = next((_number(supplier.get(key)) for key in MEESHO_PRICE_KEYS if _number(supplier.get(key))), None)
+    mrp_details = node.get("mrp_details") if isinstance(node.get("mrp_details"), dict) else {}
+    found["mrp"] = next((value for value in (
+        *(_number(node.get(key)) for key in MEESHO_MRP_KEYS), _number(mrp_details.get("mrp")), *(_number(supplier.get(key)) for key in MEESHO_MRP_KEYS),
+    ) if value), None)
+    found["description"] = _text(node.get("description"))
+    found["category"] = _text(node.get("sub_sub_category_name") or node.get("category_name") or node.get("category"))
+    found["external_id"] = _text(node.get("product_id") or node.get("id"))
+    sizes, unavailable = [], []
+    for variation in node.get("variations") or node.get("sizes") or []:
+        if isinstance(variation, str):
+            sizes.append(variation)
+            continue
+        if not isinstance(variation, dict) or not (label := _text(variation.get("name") or variation.get("size") or variation.get("label"))):
+            continue
+        in_stock = variation.get("in_stock", variation.get("available", True))
+        (sizes if in_stock is not False else unavailable).append(label)
+    found["sizes"], found["unavailable_sizes"] = sizes, unavailable
+    if sizes or unavailable:
+        found["availability"] = "in_stock" if sizes else "out_of_stock"
+    review = node.get("review_summary") if isinstance(node.get("review_summary"), dict) else {}
+    review = review.get("data") if isinstance(review.get("data"), dict) else review
+    found["rating"] = _number(review.get("average_rating") or node.get("average_rating"))
+    count = _number(review.get("rating_count") or review.get("review_count") or node.get("rating_count"))
+    found["review_count"] = int(count) if count is not None else None
+    return {key: value for key, value in found.items() if value not in (None, [], "")}
+
+
 def _structured_product(page: str, url: str) -> dict:
     """Combine structured product data found in page HTML, most reliable source first."""
     host = (urlsplit(url).hostname or "").lower()
@@ -549,6 +631,8 @@ def _structured_product(page: str, url: str) -> dict:
         sources.append(_structured_from_myntra(page))
     if "amazon" in host or "amzn" in host:
         sources.append(_structured_from_amazon(page))
+    if "meesho" in host:
+        sources.append(_structured_from_meesho(page))
     sources += [_structured_from_json_ld(page), _structured_from_meta(page)]
     merged: dict = {}
     for source in sources:

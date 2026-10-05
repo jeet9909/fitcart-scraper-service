@@ -56,6 +56,9 @@ def _tidy_store_link(link: str) -> str:
         path = parts.path[3:] if parts.path.startswith("/dl/") else parts.path
         pid = next((pair.split("=", 1)[1] for pair in parts.query.split("&") if pair.startswith("pid=") and "=" in pair), "")
         return f"https://www.flipkart.com{path}" + (f"?pid={pid}" if pid else "")
+    if host in ("meesho.com", "www.meesho.com") and "/p/" in parts.path and not parts.path.startswith("/s/"):
+        # Meesho product pages need no query string; share links add utm_* and referral tracking.
+        return f"https://www.meesho.com{parts.path}"
     return link
 
 

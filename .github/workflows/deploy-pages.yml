@@ -39,6 +39,7 @@ jobs:
           cp app/static/index.html _site/index.html
           cp app/static/app.js _site/static/app.js
           cp -r app/static/img _site/static/img
+          cp -r app/static/legal _site/legal
           printf "window.FITCART_API_BASE = %s;\n" "$(jq -Rn --arg v "${FITCART_API_BASE%/}" '$v')" > _site/static/config.js
           printf "window.MDC_CONTACT_EMAIL = %s;\n" "$(jq -Rn --arg v "$MDC_CONTACT_EMAIL" '$v')" >> _site/static/config.js
           echo "mydripcheck.com" > _site/CNAME

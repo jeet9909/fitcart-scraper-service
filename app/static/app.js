@@ -4,6 +4,7 @@ const IMG = {
   before:'static/img/before.jpg', after:'static/img/after.jpg',
   shirt:'static/img/shirt.jpg', jeans:'static/img/jeans.jpg',
   sneakers:'static/img/sneakers.jpg', tee:'static/img/tee.jpg',
+  demoPaste:'static/img/demo-paste.jpg', demoBuild:'static/img/demo-build.jpg', demoTotal:'static/img/demo-total.jpg',
 };
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)');
 
@@ -143,9 +144,10 @@ const off = i => i.mrp && i.mrp > i.price ? Math.round((i.mrp - i.price) / i.mrp
 const short = i => i.name.split(',')[0];
 const img = k => IMG[k] || k;
 const ic = {
+  ticket:'<path d="M3 5h18v4a3 3 0 0 0 0 6v4H3v-4a3 3 0 0 0 0-6z"/><path d="M15 5v14"/>',
   plus:'<path d="M12 5v14M5 12h14"/>', x:'<path d="M6 6l12 12M18 6 6 18"/>', check:'<path d="m5 12.5 4.5 4.5L19 7"/>',
   link:'<path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1.2 1.2M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1.2-1.2"/>',
-  arrow:'<path d="M5 12h14M13 6l6 6-6 6"/>', spark:'<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18"/>',
+  arrow:'<path d="M5 12h14M13 6l6 6-6 6"/>', 
   lock:'<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>', store:'<path d="M4 9 5.5 4h13L20 9M4 9v11h16V9M4 9h16M9 20v-6h6v6"/>',
   upload:'<path d="M12 16V4M7 9l5-5 5 5M4 16v4h16v-4"/>', share:'<circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="m8.2 10.8 7.6-4.4M8.2 13.2l7.6 4.4"/>',
   redo:'<path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/>', edit:'<path d="M4 20h4L19 9l-4-4L4 16z"/>', bag:'<path d="M6 7h12l-1 13H7z"/><path d="M9 7a3 3 0 0 1 6 0"/>',
@@ -283,7 +285,7 @@ function pricingHtml(){
       <div><div class="amt">${pr.was ? `<s class="was num" aria-label="Was ₹${pr.was.toLocaleString('en-IN')}">₹${pr.was.toLocaleString('en-IN')}</s>` : ''}<b>₹${pr.amt.toLocaleString('en-IN')}</b><span>${pr.unit}</span></div>
         <p style="display:flex;gap:8px;flex-wrap:wrap;min-height:24px">${pr.off ? `<span class="save-badge num">${pr.off}% off</span>` : '<span class="per">No card needed</span>'}</p></div>
       <button class="btn ${p.popular ? 'brand' : p.key === 'free' ? 'glassy' : ''} wide" data-act="choose-plan" data-plan="${p.key}" ${locked || state.checkingOut ? 'disabled' : ''}>${state.checkingOut === p.key ? '<span class="spin" aria-hidden="true"></span> Opening checkout…' : cta}</button>
-      <ul>${p.perks.map(x => `<li>${icon('check','s')}${esc(x)}</li>`).join('')}${p.missing.map(x => `<li class="no">${icon('x','s')}${esc(x)}</li>`).join('')}</ul>
+      <ul>${p.perks.map(x => `<li>${esc(x)}</li>`).join('')}${p.missing.map(x => `<li class="no"><span class="sr">Not included: </span>${esc(x)}</li>`).join('')}</ul>
     </article>`;
   }).join('');
   const rows = [
@@ -294,7 +296,7 @@ function pricingHtml(){
     ['AI stylist ideas', ...PLANS.map(p => p.stylist)],
     ['Wardrobe items', ...PLANS.map(p => p.wardrobe.toLocaleString('en-IN'))],
     ['Looks history', 'Last 5', 'Last 5', 'Unlimited', 'Unlimited'],
-    ['Priority generation', 'No', 'No', 'No', '✓'],
+    ['Priority generation', 'No', 'No', 'No', 'Yes'],
     ['Fit score (coming soon)', 'No', 'No', 'Included', 'Early access'],
   ];
   return `<div class="pricing">
@@ -323,7 +325,7 @@ function landing(){
         <h1>Wear it <em>before</em><br>buy it.</h1>
         <p class="lede">Paste pieces from Myntra, Amazon, AJIO and more. See the full outfit on you, then buy only what feels right.</p>
         <div class="lp-ctas"><button class="btn brand big" data-act="go" data-view="home">Try it free ${icon('arrow','s')}</button><button class="btn ghost big" data-act="scroll" data-target="lpPricing">See plans</button></div>
-        <div class="lp-trust"><span>${icon('check','s')} 2 free looks a month</span><span>${icon('lock','s')} Your photo stays private</span><span>${icon('check','s')} Real store prices</span></div>
+        <p class="lp-trust">2 free looks a month. Your photo stays private. Real store prices.</p>
       </div>
       <div class="stage">
         <div class="device glass">${compareHtml('before','after','You','New look', true)}</div>
@@ -341,13 +343,21 @@ function landing(){
       <li class="reveal"><div class="md-step-art"><img src="${img('after')}" alt="The full look on you"><span class="tag-on">Myntra · Amazon · AJIO</span></div><span class="num">03</span><h3>See it, then buy</h3><p>Preview the full look of your outfit, then jump to each store to buy.</p></li>
     </ol>
   </section>
+  <section class="lp-section" aria-labelledby="demoTitle">
+    <div class="md-heading reveal"><div><p class="eyebrow">The real app</p><h2 id="demoTitle">This is what you<br><em>actually tap.</em></h2></div><p>Real screens from MyDripCheck on a phone. Paste a link, pick sizes, see the total, then try it on.</p></div>
+    <div class="md-demo">
+      <figure class="reveal"><img src="${img('demoPaste')}" alt="MyDripCheck home screen with a Myntra product link pasted into the link box" loading="lazy" width="540" height="1080"><figcaption><b>1.</b> Paste a link from any store</figcaption></figure>
+      <figure class="reveal"><img src="${img('demoBuild')}" alt="Your look screen with a shirt, jeans and sneakers, each with sizes and prices" loading="lazy" width="540" height="1080"><figcaption><b>2.</b> Pick sizes for each piece</figcaption></figure>
+      <figure class="reveal"><img src="${img('demoTotal')}" alt="The look total of 5,897 rupees for three pieces with the Try it on button" loading="lazy" width="540" height="1080"><figcaption><b>3.</b> See the total, then try it on</figcaption></figure>
+    </div>
+  </section>
   <section class="lp-section">
     <div class="md-heading reveal"><div><p class="eyebrow">Why MyDripCheck</p><h2>A fitting room<br>built for <em>real shopping.</em></h2></div></div>
-    <div class="md-features">
-      <article class="wide reveal"><span class="ico">${icon('bag')}</span><h3>One outfit, many stores</h3><p>Mix up to five pieces from different shops and see them together as one look, priced as one total.</p><div class="thumbs"><img src="${img('shirt')}" alt=""><img src="${img('jeans')}" alt=""><img src="${img('sneakers')}" alt=""></div></article>
-      <article class="reveal"><span class="ico">${icon('face')}</span><h3>Built to keep you, you</h3><p>Face, hair, glasses and skin tone stay true to your photo. No generic models.</p></article>
-      <article class="reveal"><span class="ico">${icon('hanger')}</span><h3>Your wardrobe, online</h3><p>Save looks, mix new finds with clothes you own, and build a collection that travels with you across stores.</p></article>
-    </div>
+    <ol class="md-points">
+      <li class="reveal"><span class="n">01</span><div><h3>One outfit, many stores</h3><p>Mix up to five pieces from different shops and see them together as one look, priced as one total.</p></div><div class="thumbs"><img src="${img('shirt')}" alt=""><img src="${img('jeans')}" alt=""><img src="${img('sneakers')}" alt=""></div></li>
+      <li class="reveal"><span class="n">02</span><div><h3>Built to keep you, you</h3><p>Face, hair, glasses and skin tone stay true to your photo. No generic models.</p></div></li>
+      <li class="reveal"><span class="n">03</span><div><h3>Your wardrobe, online</h3><p>Save looks, mix new finds with clothes you own, and build a collection that travels with you across stores.</p></div></li>
+    </ol>
   </section>
   <section class="lp-section">
     <div class="md-heading reveal"><div><p class="eyebrow">The inspiration edit</p><h2>A mood for every day.<br><em>A look for every you.</em></h2></div><p>Start with a little inspiration. Make every piece feel like your own.</p></div>
@@ -359,7 +369,7 @@ function landing(){
   </section>
   <section class="md-dark reveal">
     <p class="eyebrow">Style has no single definition</p>
-    <h2>Not a different you.<br>Just more room to explore<br><em>every version of you.</em></h2>
+    <h2>Still you.<br>With more room to explore<br><em>every version of you.</em></h2>
     <p class="sub">Mix a new find with an old favourite. Try something unexpected. Your wardrobe should start with you.</p>
     <div class="md-collage"><img src="${img('sneakers')}" alt=""><img src="${img('after')}" alt=""><img src="${img('tee')}" alt=""></div>
     <button class="btn light" data-act="go" data-view="home">Make it yours ${icon('arrow','s')}</button>
@@ -381,7 +391,7 @@ function landing(){
   <section class="md-loop reveal" id="lpAgency">
     <div><p class="eyebrow">Stay in the loop</p><h2>Agency plan.<br><em>Built for teams.</em></h2><p>For brands, stylists and agencies: custom pricing, bulk looks for your catalogue, team seats and early access to new features.</p></div>
     <form class="md-agency" data-contact="${esc(contact)}">
-      <ul><li>${icon('check','s')} Bulk looks at a team rate</li><li>${icon('check','s')} Seats for your whole team</li><li>${icon('check','s')} Your brand on every look</li></ul>
+      <ul><li>Bulk looks at a team rate</li><li>Seats for your whole team</li><li>Your brand on every look</li></ul>
       <label class="sr" for="agencyEmail">Your work email</label>
       <div class="md-agency-row"><input id="agencyEmail" type="email" required placeholder="Your work email" autocomplete="email"><button class="btn brand" type="submit">Talk to us ${icon('arrow','s')}</button></div>
       <p class="tiny muted" id="agencyNote"></p>
@@ -389,7 +399,7 @@ function landing(){
   </section>
   <footer class="md-foot">
     <div class="md-foot-panel reveal"><div><p class="eyebrow">Wear what feels like you</p><h2>Make your next<br>look a sure thing.</h2></div><button class="btn light big" data-act="go" data-view="home">Let's try it on ${icon('arrow','s')}</button></div>
-    <div class="md-foot-bottom"><span>© 2026 MyDripCheck · Your style, before you buy.</span><span><button class="help-link" data-act="help">Help &amp; support</button> · Prices include GST · Made in India</span></div>
+    <div class="md-foot-bottom"><span>© 2026 MyDripCheck · Your style, before you buy.</span><span><a href="legal/terms.html">Terms</a> · <a href="legal/privacy.html">Privacy</a> · <a href="legal/refund.html">Refunds</a> · <button class="help-link" data-act="help">Help &amp; support</button> · Prices include GST</span></div>
   </footer>
 </div>`;
 }
@@ -404,14 +414,14 @@ function setupReveal(){
 }
 const unlimited = () => Boolean(state.account?.unlimited);
 function planChip(){
-  if (unlimited()) return `<button class="plan-chip" data-act="account">${icon('spark','s')} Unlimited looks · ${esc(state.account.email)}</button>`;
+  if (unlimited()) return `<button class="plan-chip" data-act="account">${icon('ticket','s')} Unlimited looks · ${esc(state.account.email)}</button>`;
   const free = state.balance?.free_looks_per_month ?? 3;
-  if (!state.account) return `<button class="plan-chip" data-act="account" data-reason="free">${icon('spark','s')} Sign in for ${free} free looks a month</button>`;
+  if (!state.account) return `<button class="plan-chip" data-act="account" data-reason="free">${icon('ticket','s')} Sign in for ${free} free looks a month</button>`;
   const left = looksLeft();
-  if (left === null) return `<button class="plan-chip" data-act="go" data-view="pricing">${icon('spark','s')} Checking your looks…</button>`;
-  if (left === Infinity) return `<button class="plan-chip" data-act="go" data-view="pricing">${icon('spark','s')} Looks available</button>`;
+  if (left === null) return `<button class="plan-chip" data-act="go" data-view="pricing">${icon('ticket','s')} Checking your looks…</button>`;
+  if (left === Infinity) return `<button class="plan-chip" data-act="go" data-view="pricing">${icon('ticket','s')} Looks available</button>`;
   const p = PLANS.find(x => x.key === (state.balance.plan || 'free'));
-  return `<button class="plan-chip" data-act="go" data-view="pricing">${icon('spark','s')} ${esc(p.name)} · ${left} ${left === 1 ? 'look' : 'looks'} left</button>`;
+  return `<button class="plan-chip" data-act="go" data-view="pricing">${icon('ticket','s')} ${esc(p.name)} · ${left} ${left === 1 ? 'look' : 'looks'} left</button>`;
 }
 
 /* ---------- Home ---------- */
@@ -432,7 +442,7 @@ function home(){
         <p id="homeLinkHelp" class="stores">Works with <b>Myntra</b><b>Amazon</b><b>AJIO</b><b>Flipkart</b><b>Nike</b></p>
       </form>
       <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">
-        <button class="chip" data-act="demo">${icon('spark','s')} Try a 3-store sample look</button>
+        <button class="chip" data-act="demo">${icon('store','s')} Try a 3-store sample look</button>
         <button class="chip" data-act="go" data-view="wardrobe">${icon('hanger','s')} Start from my wardrobe</button>
       </div>
       <div class="trust"><span>${icon('lock','s')} Your look is private</span><span>${icon('shield','s')} 2 free looks a month</span><span>${icon('store','s')} Live prices from each store</span></div>
@@ -511,7 +521,7 @@ function tryPanel(){
     ${poseHtml('side')}
     ${state.look.length ? `<div class="panel-total"><span class="small muted num">${state.look.length} ${state.look.length === 1 ? 'piece' : 'pieces'} · ${stores.size} ${stores.size === 1 ? 'store' : 'stores'}</span><span class="total">${inr(lookTotal())}</span></div>` : ''}
     ${consentHtml()}
-    <button class="btn brand wide" data-act="generate" ${canGenerate() ? '' : 'disabled'}>${icon('spark')} Generate my look</button>
+    <button class="btn brand wide" data-act="generate" ${canGenerate() ? '' : 'disabled'}>${icon('camera')} Generate my look</button>
     <p class="tiny muted gen-hint">${generateHint()}</p>
   </div>`;
 }
@@ -521,8 +531,8 @@ function builder(){
   const n = state.look.length;
   const body = n ? `<div class="slots${n >= 3 ? ' compact' : ''}">${state.look.map(slotCard).join('')}</div>
       ${open.length ? `<div class="more"><p class="small" style="font-weight:800">Complete the look <span class="muted" style="font-weight:600">· ${MAX_PIECES - n} more ${MAX_PIECES - n === 1 ? 'piece' : 'pieces'} allowed</span></p><div class="chips">${open.map(s => `<button class="chip add" data-act="add" data-slot="${s.key}">${icon('plus','s')} ${s.add}</button>`).join('')}</div></div>` : ''}
-      <div class="summary"><div><div class="total">${inr(lookTotal())}</div><div class="meta num">${n} ${n === 1 ? 'piece' : 'pieces'} · ${stores.size} ${stores.size === 1 ? 'store' : 'stores'}</div></div><button class="btn brand" data-act="open-photo">${icon('spark')} Try it on</button></div>`
-    : `<div class="empty">${EMPTY_ART}<h2>Start with one piece you love</h2><p class="muted">Paste a product link from any store. We'll bring in the price, sizes and photos, then you can add the rest of the outfit.</p><div class="row"><button class="btn" data-act="add" data-slot="top">${icon('link','s')} Paste a link</button><button class="btn ghost" data-act="demo">${icon('spark','s')} Try a sample look</button></div><button class="link small" data-act="go" data-view="wardrobe">Or pick from your wardrobe</button></div>`;
+      <div class="summary"><div><div class="total">${inr(lookTotal())}</div><div class="meta num">${n} ${n === 1 ? 'piece' : 'pieces'} · ${stores.size} ${stores.size === 1 ? 'store' : 'stores'}</div></div><button class="btn brand" data-act="open-photo">${icon('camera')} Try it on</button></div>`
+    : `<div class="empty">${EMPTY_ART}<h2>Start with one piece you love</h2><p class="muted">Paste a product link from any store. We'll bring in the price, sizes and photos, then you can add the rest of the outfit.</p><div class="row"><button class="btn" data-act="add" data-slot="top">${icon('link','s')} Paste a link</button><button class="btn ghost" data-act="demo">${icon('store','s')} Try a sample look</button></div><button class="link small" data-act="go" data-view="wardrobe">Or pick from your wardrobe</button></div>`;
   return `<section class="builder">
     <div class="page-head"><div><p class="eyebrow">Look builder</p><h1>Your look</h1></div>${n ? `<p class="small muted num">${n} of ${MAX_PIECES} pieces</p>` : ''}</div>
     <div style="display:grid;gap:14px;align-content:start">${body}</div>
@@ -728,7 +738,7 @@ function result(){
   const status = p => p.item.sample ? '<span class="tag">Sample</span>' : p.item.source === 'owned' ? '<span class="tag ok">Owned</span>'
     : p.item.url ? `<a class="btn small" href="${esc(p.item.url)}" target="_blank" rel="noopener noreferrer" aria-label="Buy ${esc(p.item.name)} at ${esc(p.item.store)}">Buy ${icon('arrow','s')}</a>` : '';
   return `<section class="result">
-    <div class="result-head"><div><p class="eyebrow">Saved to Looks</p><h1 style="margin-top:4px">Here's your look</h1></div><div style="display:flex;flex-wrap:wrap;gap:8px">${privatePill()}<span class="tag ai">${icon('spark','s')} ${look.pose === 'keep' ? 'Your pose' : 'Standard pose'}</span></div></div>
+    <div class="result-head"><div><p class="eyebrow">Saved to Looks</p><h1 style="margin-top:4px">Here's your look</h1></div><div style="display:flex;flex-wrap:wrap;gap:8px">${privatePill()}<span class="tag ai">${icon('body','s')} ${look.pose === 'keep' ? 'Your pose' : 'Standard pose'}</span></div></div>
     <div class="result-visual${celebrate ? ' celebrate' : ''}">${spinTabs(look)}${state.resultMode === 'spin' && look.spin?.length ? spinHtml(look.spin) : compareHtml(look.before, look.img, 'You', 'New look', !celebrate)}<a class="link small" href="${esc(state.resultMode === 'spin' && look.spin?.length ? look.spin[state.spinIndex || 0] : look.img)}" target="_blank" rel="noopener">Open full image</a></div>
     <div style="display:grid;gap:14px;align-content:start">
       <div class="card shop">
@@ -879,7 +889,7 @@ function posesCard(look){
     const allowed = poseAllowed(p);
     const isBusy = busy === p.key;
     return `<button class="pose-chip${allowed ? '' : ' locked'}" data-act="make-pose" data-pose="${p.key}" ${busy ? 'disabled' : ''} ${isBusy ? 'aria-busy="true"' : ''}>
-      ${isBusy ? '<span class="spin-loader"></span>' : allowed ? icon('spark','s') : icon('lock','s')}<span>${esc(p.label)}</span>${!allowed && p.plan === 'pro' && plus ? '<span class="tag pro">Pro</span>' : ''}</button>`;
+      ${isBusy ? '<span class="spin-loader"></span>' : allowed ? icon('body','s') : icon('lock','s')}<span>${esc(p.label)}</span>${!allowed && p.plan === 'pro' && plus ? '<span class="tag pro">Pro</span>' : ''}</button>`;
   }).join('');
   const hint = busy ? `Posing you for “${esc(SOCIAL_POSES.find(p => p.key === busy)?.label || '')}”. About 30 to 60 seconds.`
     : plus ? `Ready-to-post 4:5 photos of this look. Each new pose uses 1 look.${hasPro() ? '' : ' Pro unlocks all 8.'}`
@@ -992,7 +1002,7 @@ function wardrobe(){
   return `<section style="display:grid;gap:18px;padding-top:8px">
     <div class="page-head" style="padding-top:0"><div><p class="eyebrow">Wardrobe</p><h1>Your clothes</h1></div><button class="btn small quiet" data-act="upload-item">${icon('camera','s')} Add clothes</button></div>
     <div class="card stylist">
-      <span class="tag ai" style="justify-self:start">${icon('spark','s')} AI stylist</span>
+      <span class="tag ai" style="justify-self:start">${icon('hanger','s')} AI stylist</span>
       <h2>What's the occasion?</h2>
       <div class="chips" role="group" aria-label="Occasion">${OCCASIONS.map(o => `<button class="chip" data-act="occasion" data-occasion="${o}" aria-pressed="${state.occasion === o}" ${state.ideasLoading ? 'disabled' : ''}>${o}</button>`).join('')}</div>
       ${ideas}
@@ -1023,7 +1033,7 @@ function looks(){
   let body;
   if (!state.gallery && !state.galleryError) body = `<div class="looks">${'<div class="look"><div class="sk" style="aspect-ratio:3/4;border-radius:14px"></div><div class="sk" style="height:14px;width:70%"></div></div>'.repeat(4)}</div>`;
   else if (state.galleryError) body = `<div class="notice" role="alert">${icon('alert')}<span>${esc(state.galleryError)}</span></div><button class="btn ghost small" data-act="gallery-retry" style="justify-self:start">${icon('redo','s')} Try again</button>`;
-  else if (!state.gallery.length) body = `<div class="empty">${EMPTY_ART}<h2>No looks yet</h2><p class="muted">Every look you create is saved here, privately.</p><button class="btn brand" data-act="go" data-view="home">${icon('spark','s')} Create my first look</button></div>`;
+  else if (!state.gallery.length) body = `<div class="empty">${EMPTY_ART}<h2>No looks yet</h2><p class="muted">Every look you create is saved here, privately.</p><button class="btn brand" data-act="go" data-view="home">${icon('camera','s')} Create my first look</button></div>`;
   else body = `<div class="looks">${state.gallery.map(g => `<button class="look" data-act="open-look" data-id="${esc(g.id)}">${(g.spin_image_urls || []).length ? `<span class="spin-badge">${icon('spin','s')} 360°</span>` : ''}<img src="${esc(g.result_image_url)}" alt="" loading="lazy"><span style="font-weight:700;line-height:1.3">${esc(galleryTitle(g))}</span><span class="tiny muted">${new Date(g.created_at).toLocaleDateString('en-IN', {day:'numeric', month:'short'})} · ${Math.max(1, (g.items || []).length)} ${Math.max(1, (g.items || []).length) === 1 ? 'piece' : 'pieces'}</span></button>`).join('')}</div>`;
   return `<section style="display:grid;gap:18px;padding-top:8px">
     <div class="page-head" style="padding-top:0"><div><p class="eyebrow">Private gallery</p><h1>Your looks</h1></div>${privatePill()}</div>
@@ -1057,14 +1067,14 @@ function renderSignin(){
   const s = state.signin, a = state.account;
   let body;
   if (s.step === 'account'){
-    body = `<div class="account-card"><span class="small muted">Signed in as</span><strong>${esc(a.email)}</strong>${a.unlimited ? `<span class="tag" style="justify-self:start">${icon('spark','s')} Unlimited looks</span>` : `<span class="small muted">${looksLeft() === null ? 'Checking your looks…' : looksLeft() === Infinity ? 'Looks available' : `${looksLeft()} ${looksLeft() === 1 ? 'look' : 'looks'} left`}</span>`}</div>
+    body = `<div class="account-card"><span class="small muted">Signed in as</span><strong>${esc(a.email)}</strong>${a.unlimited ? `<span class="tag" style="justify-self:start">${icon('ticket','s')} Unlimited looks</span>` : `<span class="small muted">${looksLeft() === null ? 'Checking your looks…' : looksLeft() === Infinity ? 'Looks available' : `${looksLeft()} ${looksLeft() === 1 ? 'look' : 'looks'} left`}</span>`}</div>
       <p class="small muted">Your wardrobe and looks are saved to this account, so they follow you to any device you sign in on.</p>
       <button class="btn ghost wide" data-act="help">Help &amp; support</button>
       <button class="btn ghost wide" data-act="sign-out">Sign out</button>`;
   } else {
     const signup = s.mode === 'signup';
     body = `<form id="signinForm" novalidate style="display:grid;gap:14px">
-      ${s.reason === 'free' ? `<div class="notice">${icon('spark')}<span>Sign in to get <strong>${state.balance?.free_looks_per_month ?? 3} free looks every month</strong>. Your looks and wardrobe are saved to your account.</span></div>` : s.reason === 'buy' ? `<div class="notice">${icon('lock')}<span>Sign in first so your pass or plan is added to your account.</span></div>` : ''}
+      ${s.reason === 'free' ? `<div class="notice">${icon('user')}<span>Sign in to get <strong>${state.balance?.free_looks_per_month ?? 3} free looks every month</strong>. Your looks and wardrobe are saved to your account.</span></div>` : s.reason === 'buy' ? `<div class="notice">${icon('lock')}<span>Sign in first so your pass or plan is added to your account.</span></div>` : ''}
       <div class="seg" role="tablist" aria-label="Sign in or create an account"><button type="button" role="tab" aria-selected="${!signup}" data-act="signin-mode" data-mode="login">Log in</button><button type="button" role="tab" aria-selected="${signup}" data-act="signin-mode" data-mode="signup">Create account</button></div>
       <label class="field" for="signinEmail">Email<input class="input" id="signinEmail" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com" value="${esc(s.email)}" required></label>
       <label class="field" for="signinPassword">Password<span class="pw-wrap"><input class="input" id="signinPassword" type="password" autocomplete="${signup ? 'new-password' : 'current-password'}" minlength="8" maxlength="72" placeholder="${signup ? 'At least 8 characters' : 'Your password'}" required><button type="button" class="pw-toggle" data-act="toggle-password" aria-label="Show password">Show</button></span></label>
@@ -1422,7 +1432,7 @@ function openPhoto(){
     <div class="tips"><div class="tip">${icon('face')}Face clearly visible</div><div class="tip">${icon('body')}Standing, head to toe is best</div><div class="tip">${icon('sun')}Good light</div></div>
     ${poseHtml('sheet')}
     ${consentHtml()}
-    <button class="btn brand wide" data-act="generate" ${canGenerate() ? '' : 'disabled'}>${icon('spark')} Generate my look</button>
+    <button class="btn brand wide" data-act="generate" ${canGenerate() ? '' : 'disabled'}>${icon('camera')} Generate my look</button>
     <p class="tiny muted gen-hint" style="text-align:center">${state.photo && state.consent ? '' : generateHint()}</p>
     <div style="display:flex;justify-content:center">${planChip()}</div>
     <p class="tiny muted" style="display:flex;gap:6px;align-items:center">${icon('lock','s')} Saved only to your private gallery.</p>
@@ -1676,6 +1686,7 @@ document.querySelectorAll('dialog.sheet').forEach(d => {
   if (theme === 'dark' || theme === 'light') document.documentElement.dataset.theme = theme;
   fetch(apiUrl('/health'), {cache:'no-store'}).catch(() => {});
   render();
+  if (location.hash === '#help') setTimeout(openHelp, 300);
   fetch(apiUrl('/v1/site')).then(r => r.ok ? r.json() : null).then(showSiteBanner).catch(() => {});
   fetch(apiUrl('/v1/billing/config')).then(r => r.ok ? r.json() : null).then(cfg => { state.billingCfg = cfg; if (state.view === 'pricing') render(); }).catch(() => {});
   session().catch(() => {}).then(() => { refreshAccount(); if (!state.balance) loadBalance(); syncPendingOrder(); });

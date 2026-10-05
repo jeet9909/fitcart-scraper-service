@@ -10,10 +10,30 @@ const pct = n => n == null ? '–' : n + '%';
 
 const S = {token: null, email: null, page: 'overview', days: 7, query: '', filter: 'All', cache: {}, notices: []};
 const SECTIONS = [
-  ['overview', '◫', 'Overview'], ['users', '♙', 'Users & looks'], ['tryons', '◇', 'Try-on activity'],
-  ['products', '▤', 'Products'], ['revenue', '↗', 'Revenue & plans'], ['integrations', '⊞', 'Integrations'],
-  ['support', '☏', 'Support inbox'], ['settings', '⚙', 'Settings'],
+  ['overview', 'overview', 'Overview'], ['users', 'users', 'Users & looks'], ['tryons', 'camera', 'Try-on activity'],
+  ['products', 'hanger', 'Products'], ['revenue', 'revenue', 'Revenue & plans'], ['integrations', 'plug', 'Integrations'],
+  ['support', 'inbox', 'Support inbox'], ['settings', 'sliders', 'Settings'],
 ];
+/* Our own line icons: 24px grid, square line ends. */
+const ICONS = {
+  overview: 'M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z',
+  users: 'M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM3 20v-1a6 6 0 0 1 12 0v1M16 4.5a3.5 3.5 0 0 1 0 6.5M21 20v-1a6 6 0 0 0-3.5-5.4',
+  camera: 'M4 7h4l2-3h4l2 3h4v13H4zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
+  hanger: 'M12 7a2 2 0 1 1 2-2M12 7v2L3 16v2h18v-2l-9-7',
+  revenue: 'M4 20V4M4 20h16M7 15l4-4 3 3 6-6M15 8h5v5',
+  plug: 'M9 3v5M15 3v5M6 8h12v4a6 6 0 0 1-12 0zM12 18v3',
+  inbox: 'M3 13l3-8h12l3 8v7H3zM3 13h5l1 3h6l1-3h5',
+  sliders: 'M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0M16 4v4M10 10v4M18 16v4',
+  download: 'M12 4v11M7 10l5 5 5-5M4 20h16',
+  refresh: 'M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5',
+  info: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v6M12 7v1',
+  warn: 'M12 3L2 20h20zM12 10v5M12 17v1',
+  mail: 'M3 5h18v14H3zM3 6l9 7 9-7',
+  close: 'M6 6l12 12M18 6L6 18',
+  external: 'M14 4h6v6M20 4l-9 9M18 14v6H4V6h6',
+};
+const ico = name => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="${ICONS[name]}"/></svg>`;
+const EVENTS = new Map();  // every event shown on screen, so "View" works from any list or dialog
 const KIND = {look: 'Look', outfit: 'Outfit', spin: '360° view', pose: 'Social pose', scrape: 'Product import'};
 const PLAN = {free: 'Free', pass: 'Pass', plus: 'Plus', pro: 'Pro', unlimited: 'Unlimited', bonus: 'Bonus'};
 
@@ -58,26 +78,29 @@ function badge(s, label) {
   const cls = ['failed', 'suspended', 'offline', 'high'].includes(v) ? 'bad'
     : ['queued', 'review', 'open', 'degraded', 'rejected', 'not set up', 'warn'].includes(v) ? 'warn'
     : ['free', 'normal', 'off', 'resolved'].includes(v) ? 'neutral'
-    : ['pro', 'plus', 'pass', 'unlimited', 'bonus'].includes(v) ? 'gold' : '';
+    : ['pro', 'plus', 'pass', 'unlimited', 'bonus', 'admin'].includes(v) ? 'plan' : '';
   return `<span class="status ${cls}">${esc(label || PLAN[v] || s)}</span>`;
 }
 
 function change(c, suffix) {
   if (c == null) return `<small>${suffix || 'No earlier data to compare'}</small>`;
-  return `<small class="${c < 0 ? 'down' : ''}">${c >= 0 ? '↑' : '↓'} ${Math.abs(c)}% vs previous ${S.days} days</small>`;
+  return `<small class="${c < 0 ? 'down' : 'up'}">${c >= 0 ? '+' : '−'}${Math.abs(c)}% vs previous ${S.days} days</small>`;
 }
 
 function title(eyebrow, h, sub, buttons = '') {
   return `<div class="heading"><div><div class="eyebrow">${eyebrow}</div><h1>${h}</h1><p class="sub">${sub}</p></div><div class="actions">${buttons}</div></div>`;
 }
 function stats(items) {
-  return `<div class="stats">${items.map((x, i) => `<div class="stat ${i === 0 ? 'feature' : ''}"><span class="statlabel">${x[0]}</span><span class="mini">${x[3] || ['↗', '♙', '◇', '◷'][i]}</span><strong title="${esc(x[1])}">${x[1]}</strong>${x[2]}</div>`).join('')}</div>`;
+  return `<div class="stats">${items.map(x => `<div class="stat"><span class="statlabel">${x[0]}</span><strong title="${esc(x[1])}">${x[1]}</strong>${x[2]}</div>`).join('')}</div>`;
 }
 const periodSelect = (opts = [7, 30]) => `<select aria-label="Report period" data-act="period">${opts.map(d => `<option value="${d}" ${S.days === d ? 'selected' : ''}>Last ${d} days</option>`).join('')}</select>`;
 const toolbar = (ph, options) => `<div class="toolbar"><input type="search" aria-label="Search" placeholder="${ph}" value="${esc(S.query)}" data-act="search"><select aria-label="Filter" data-act="filter">${options.map(o => `<option value="${o[0]}" ${S.filter === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}</select></div>`;
+const exportBtn = (act, label = 'Export CSV') => `<button data-act="${act}">${ico('download')}${label}</button>`;
+const footer = () => `<div class="footer"><span>MyDripCheck Admin Console · signed in as ${esc(S.email)}</span><span><a href="https://mydripcheck.com/legal/terms.html" target="_blank" rel="noopener">Terms</a> · <a href="https://mydripcheck.com/legal/privacy.html" target="_blank" rel="noopener">Privacy</a> · <a href="https://mydripcheck.com/legal/refund.html" target="_blank" rel="noopener">Refunds</a></span></div>`;
+const skeleton = () => `<span class="sk sk-title"></span><span class="sk sk-stats"></span><div class="panel">${'<span class="sk sk-row"></span>'.repeat(6)}</div>`;
 const matches = o => !S.query || JSON.stringify(o).toLowerCase().includes(S.query.toLowerCase());
 const initials = e => (e || '?').split('@')[0].split(/[._-]/).filter(Boolean).slice(0, 2).map(p => p[0]).join('').toUpperCase() || '?';
-const setupNote = what => `<div class="alert"><span style="font-size:20px">ⓘ</span><p><b>One-time database setup needed</b>Run <code>supabase/schema.sql</code> in the Supabase SQL editor to turn on ${what}.</p></div>`;
+const setupNote = what => `<div class="alert">${ico('info')}<p><b>One-time database setup needed</b>Run <code>supabase/schema.sql</code> in the Supabase SQL editor to turn on ${what}.</p></div>`;
 
 function csv(name, rows) {
   if (!rows.length) return toast('Nothing to export.');
@@ -118,10 +141,13 @@ function start() {
 
 /* ---------- navigation ---------- */
 function nav() {
-  const open = S.cache.overview?.open_tickets;
-  $('#nav').innerHTML = SECTIONS.map(([k, i, t]) => `<button class="${S.page === k ? 'active' : ''}" ${S.page === k ? 'aria-current="page"' : ''} data-go="${k}"><span class="ico">${i}</span>${t}${k === 'support' && open ? `<span class="nav-count">${open}</span>` : ''}</button>`).join('');
+  const open = overviewData()?.open_tickets;
+  $('#nav').innerHTML = SECTIONS.map(([k, i, t]) => `<button class="${S.page === k ? 'active' : ''}" ${S.page === k ? 'aria-current="page"' : ''} data-go="${k}">${ico(i)}${t}${k === 'support' && open ? `<span class="nav-count">${open}</span>` : ''}</button>`).join('');
   $('#crumb').textContent = SECTIONS.find(s => s[0] === S.page)[2];
 }
+
+/* The newest overview we have, whichever period it was loaded for. */
+function overviewData() { return S.cache['overview' + S.days] || S.cache.overview7 || S.cache.overview30; }
 
 function go(page, keepFilters) {
   S.page = page; if (!keepFilters) { S.query = ''; S.filter = 'All'; }
@@ -134,12 +160,12 @@ async function render(fresh) {
   const page = S.page, main = $('#main');
   if (fresh) delete S.cache[page + S.days];
   const cached = S.cache[page + S.days];
-  if (!cached) main.innerHTML = `<div class="loading">Loading ${esc(SECTIONS.find(s => s[0] === page)[2].toLowerCase())}…</div>`;
+  if (!cached) main.innerHTML = `<div aria-busy="true" aria-label="Loading ${esc(SECTIONS.find(s => s[0] === page)[2].toLowerCase())}">${skeleton()}</div>`;
   try {
     const data = cached || await LOADERS[page]();
     S.cache[page + S.days] = data;
     if (S.page !== page) return;
-    main.innerHTML = VIEWS[page](data) + `<div class="footer"><span>MYDRIPCHECK ADMIN CONSOLE · Live data</span><span>Signed in as ${esc(S.email)}</span></div>`;
+    main.innerHTML = VIEWS[page](data) + footer();
     nav(); notices();
   } catch (err) {
     if (S.page === page && S.token) main.innerHTML = `<div class="panel empty"><h2>Could not load this page</h2><p class="sub">${esc(err.message)}</p><button class="small" data-act="refresh" style="margin-top:14px">Try again</button></div>`;
@@ -162,111 +188,116 @@ function chart(series) {
   const max = Math.max(4, ...series.map(d => d.completed + d.failed));
   const top = Math.ceil(max / 4) * 4, h = 189;
   const label = d => { const x = new Date(d.date + 'T00:00:00'); return series.length <= 7 ? x.toLocaleDateString('en-IN', {weekday: 'short'}) : x.getDate(); };
-  return `<div class="chart"><div class="axis">${[1, .75, .5, .25, 0].map(f => `<span>${Math.round(top * f)}</span>`).join('')}</div><div class="plot"><div class="bars">${series.map(d => {
+  return `<div class="chart"><div class="axis">${[1, .75, .5, .25, 0].map(f => `<span>${Math.round(top * f)}</span>`).join('')}</div><div class="plot"><div class="bars">${[.25, .5, .75, 1].map(f => `<span class="rule" style="bottom:${f * h}px"></span>`).join('')}${series.map(d => {
     const ok = d.completed / top * h, bad = d.failed / top * h;
     return `<div class="bar" tabindex="0" role="img" aria-label="${d.date}: ${d.completed} completed, ${d.failed} failed"><i class="ok" style="height:${ok}px"></i><i class="bad" style="height:${bad}px"></i><span class="tip">${new Date(d.date + 'T00:00:00').toLocaleDateString('en-IN', {day: 'numeric', month: 'short'})}: ${d.completed} done${d.failed ? ', ' + d.failed + ' failed' : ''}</span></div>`;
   }).join('')}</div><div class="labels">${series.map(d => `<span>${label(d)}</span>`).join('')}</div></div></div>`;
 }
 
+const POSE = {keep: 'My pose', standard: 'Standard pose'};
 function eventRows(events, empty = 'Nothing yet. Activity appears here as soon as people create looks.') {
-  return `<div class="table-wrap"><table><thead><tr><th>Request / user</th><th>Details</th><th>Status</th><th>Time</th><th>Est. cost</th><th></th></tr></thead><tbody>${events.map(e => `<tr>
+  events.forEach(e => EVENTS.set(String(e.id), e));
+  return `<div class="table-wrap"><table><thead><tr><th>Request / user</th><th>Details</th><th>Status</th><th class="right">Time</th><th class="right">Est. cost</th><th></th></tr></thead><tbody>${events.map(e => `<tr>
     <td><b>${KIND[e.kind] || esc(e.kind)}</b><small>${esc(e.email || (e.user_id ? 'Guest ' + e.user_id.slice(0, 8) : 'Guest'))} · ${when(e.created_at)}</small></td>
-    <td class="wrap">${esc(e.meta?.product || e.meta?.store || e.meta?.pose || '–')}<small>${[e.meta?.pieces ? e.meta.pieces + ' piece' + (e.meta.pieces > 1 ? 's' : '') : '', e.meta?.pose && e.kind !== 'pose' ? (e.meta.pose === 'keep' ? 'My pose' : 'Standard pose') : '', e.kind === 'pose' ? '' : e.meta?.store].filter(Boolean).map(esc).join(' · ')}</small></td>
+    <td class="wrap">${esc(e.meta?.product || e.meta?.store || (e.kind === 'pose' ? e.meta?.pose : POSE[e.meta?.pose]) || '–')}<small>${[e.meta?.pieces ? e.meta.pieces + ' piece' + (e.meta.pieces > 1 ? 's' : '') : '', e.kind !== 'pose' && (e.meta?.product || e.meta?.store) ? POSE[e.meta?.pose] : '', e.meta?.product ? e.meta?.store : ''].filter(Boolean).map(esc).join(' · ')}</small></td>
     <td>${badge(e.status)}${e.error ? `<small style="max-width:220px;white-space:normal">${esc(e.error.slice(0, 90))}</small>` : ''}</td>
-    <td>${e.duration_ms != null ? (e.duration_ms / 1000).toFixed(1) + ' s' : '–'}</td>
-    <td>${e.cost_inr ? inr(e.cost_inr) : '–'}</td>
-    <td><button class="small" data-act="event" data-id="${esc(e.id)}">View →</button></td></tr>`).join('') || `<tr><td colspan="6" class="empty">${empty}</td></tr>`}</tbody></table></div>`;
+    <td class="right">${e.duration_ms != null ? (e.duration_ms / 1000).toFixed(1) + ' s' : '–'}</td>
+    <td class="right">${e.cost_inr ? inr(e.cost_inr) : '–'}</td>
+    <td class="right"><button class="small" data-act="event" data-id="${esc(e.id)}">View</button></td></tr>`).join('') || `<tr><td colspan="6" class="empty">${empty}</td></tr>`}</tbody></table></div>`;
 }
 
 const VIEWS = {
   overview(d) {
     const sr = d.success_rate;
     return title('YOUR BUSINESS, AT A GLANCE', 'How MyDripCheck is doing', `Welcome back. Live numbers for the last ${d.days} days.`,
-      periodSelect() + `<button data-act="export-overview">↓ Export</button>`)
+      periodSelect() + exportBtn('export-overview'))
       + stats([
         ['Revenue', inr(d.revenue.value), change(d.revenue.change, d.test_mode ? 'Razorpay test mode: not real money' : '')],
         ['Active users', num(d.active_users.value), change(d.active_users.change)],
         ['Looks created', num(d.looks.value), change(d.looks.change)],
-        ['Success rate', pct(sr.value), `<small>${sr.previous != null && sr.value != null ? (sr.value >= sr.previous ? '↑ ' : '↓ ') + Math.abs(Math.round((sr.value - sr.previous) * 10) / 10) + ' points' : 'Completed vs failed try-ons'}</small>`],
+        ['Success rate', pct(sr.value), `<small>${sr.previous != null && sr.value != null ? (sr.value >= sr.previous ? '+' : '−') + Math.abs(Math.round((sr.value - sr.previous) * 10) / 10) + ' points vs previous' : 'Completed vs failed try-ons'}</small>`],
       ])
-      + `<div class="alerts">${d.alerts.map(a => `<div class="alert ${a.level === 'bad' ? 'bad' : ''}"><span style="font-size:20px">${a.level === 'bad' ? '⚠' : 'ⓘ'}</span><p><b>${esc(a.title)}</b>${esc(a.message)}</p><button class="small" data-go="${a.page}">Review →</button></div>`).join('')}</div>`
-      + `<div class="grid"><section class="panel"><div class="panelhead"><div><h2>Outfits brought to life</h2><p class="sub">Completed and failed try-ons per day (India time)</p></div><span class="badge">TRY-ONS</span></div>${chart(d.series)}
-        <div class="chartfoot"><span><span class="legend-dot" style="background:var(--green)"></span>Completed</span><span><span class="legend-dot" style="background:#e2a69b"></span>Failed <b>${num(d.failed)}</b></span><span>Average time <b>${d.avg_seconds != null ? d.avg_seconds + ' s' : '–'}</b></span><span>Average cost per look <b>${inr(d.avg_cost_inr)}</b></span><span>New sign-ups <b>${num(d.signups.value)}</b> of ${num(d.signups.total)}</span></div></section>
+      + `<div class="alerts">${d.alerts.map(a => `<div class="alert ${a.level === 'bad' ? 'bad' : ''}">${ico(a.level === 'bad' ? 'warn' : 'info')}<p><b>${esc(a.title)}</b>${esc(a.message)}</p><button class="small" data-go="${a.page}">Review</button></div>`).join('')}</div>`
+      + `<div class="grid"><section class="panel"><div class="panelhead"><div><h2>Outfits brought to life</h2><p class="sub">Completed and failed try-ons per day (India time)</p></div></div>${chart(d.series)}
+        <div class="chartfoot"><span><span class="legend-dot" style="background:#3F6E96"></span>Completed</span><span><span class="legend-dot" style="background:#D9A39C"></span>Failed <b>${num(d.failed)}</b></span><span>Average time <b>${d.avg_seconds != null ? d.avg_seconds + ' s' : '–'}</b></span><span>Average cost per look <b>${inr(d.avg_cost_inr)}</b></span><span>New sign-ups <b>${num(d.signups.value)}</b> of ${num(d.signups.total)}</span></div></section>
         <section class="panel"><div class="panelhead"><div><h2>Store imports</h2><p class="sub">Product links pasted by shoppers</p></div><button class="small" data-go="integrations">All services</button></div>
-        ${d.stores.slice(0, 6).map(s => `<div class="service"><span class="service-icon">${esc(s.store[0])}</span><div><b>${esc(s.store)}</b><small>${s.attempts} imports · ${pct(s.success_rate)} worked</small></div>${badge(s.status)}</div>`).join('') || '<p class="sub">No product links imported in this period.</p>'}</section></div>`
-      + `<section class="panel"><div class="panelhead"><div><h2>Latest try-on activity</h2><p class="sub">The newest requests, from start to finish</p></div><button class="small" data-go="tryons">All activity →</button></div>${eventRows(d.latest)}</section>`;
+        ${d.stores.slice(0, 6).map(s => `<div class="row"><span class="tile">${esc(s.store[0])}</span><div><b>${esc(s.store)}</b><small>${s.attempts} imports · ${pct(s.success_rate)} worked</small></div>${badge(s.status)}</div>`).join('') || '<p class="sub">No product links imported in this period.</p>'}</section></div>`
+      + `<section class="panel flush"><div class="panelhead"><div><h2>Latest try-on activity</h2><p class="sub">The newest requests, from start to finish</p></div><button class="small" data-go="tryons">All activity</button></div>${eventRows(d.latest)}</section>`;
   },
 
   users(d) {
     const rows = d.users.filter(u => matches(u) && (S.filter === 'All' || u.plan === S.filter || u.status === S.filter));
-    return title('PEOPLE & ACCESS', 'Users & looks', 'Every MyDripCheck account, their plan and the looks they have left.', `<button data-act="export-users">↓ Export users</button>`)
+    return title('PEOPLE & ACCESS', 'Users & looks', 'Every MyDripCheck account, their plan and the looks they have left.', exportBtn('export-users'))
       + stats([['Registered accounts', num(d.total), '<small>Email sign-ups, all time</small>'], ['Paying now', num(d.paying), '<small>Active Pass, Plus or Pro</small>'],
         ['New this week', num(d.new_this_week), '<small>Last 7 days</small>'], ['Suspended', num(d.suspended), '<small>Blocked from creating looks</small>']])
-      + `<section class="panel">${toolbar('Search email or user ID…', [['All', 'All accounts'], ['free', 'Free'], ['pass', 'Pass'], ['plus', 'Plus'], ['pro', 'Pro'], ['unlimited', 'Unlimited'], ['suspended', 'Suspended']])}
-      <div class="table-wrap"><table><thead><tr><th>Account</th><th>Plan</th><th>Looks left</th><th>Looks made</th><th>Joined</th><th>Last sign-in</th><th>Status</th><th></th></tr></thead><tbody>${rows.slice(0, 500).map(u => `<tr>
+      + `<section class="panel flush">${toolbar('Search email or user ID…', [['All', 'All accounts'], ['free', 'Free'], ['pass', 'Pass'], ['plus', 'Plus'], ['pro', 'Pro'], ['unlimited', 'Unlimited'], ['suspended', 'Suspended']])}
+      <div class="table-wrap"><table><thead><tr><th>Account</th><th>Plan</th><th class="right">Looks left</th><th class="right">Looks made</th><th>Joined</th><th>Last sign-in</th><th>Status</th><th></th></tr></thead><tbody>${rows.slice(0, 500).map(u => `<tr>
         <td><div class="person"><span class="avatar">${initials(u.email)}</span><div><b>${esc(u.email)}</b>${u.admin ? ' ' + badge('admin', 'Admin') : ''}<small>${u.id}</small></div></div></td>
-        <td>${badge(u.plan)}</td><td>${u.looks_left == null ? '∞' : num(u.looks_left)}</td><td>${num(u.looks_made)}</td>
+        <td>${badge(u.plan)}</td><td class="right">${u.looks_left == null ? 'Unlimited' : num(u.looks_left)}</td><td class="right">${num(u.looks_made)}</td>
         <td>${when(u.created_at)}</td><td>${when(u.last_sign_in_at)}</td><td>${badge(u.status)}</td>
-        <td><button class="small" data-act="user" data-id="${u.id}">Manage →</button></td></tr>`).join('') || '<tr><td colspan="8" class="empty">No accounts match.</td></tr>'}</tbody></table></div>
-      ${rows.length > 500 ? `<p class="sub" style="margin-top:12px">Showing 500 of ${rows.length}. Search to narrow down.</p>` : ''}</section>`;
+        <td class="right"><button class="small" data-act="user" data-id="${u.id}">Manage</button></td></tr>`).join('') || '<tr><td colspan="8" class="empty">No accounts match.</td></tr>'}</tbody></table></div>
+      ${rows.length > 500 ? `<p class="sub" style="padding:12px 14px">Showing 500 of ${rows.length}. Search to narrow down.</p>` : ''}</section>`;
   },
 
   tryons(d) {
     const st = d.stats;
     const rows = d.events.filter(e => matches(e) && (S.filter === 'All' || e.status === S.filter || e.kind === S.filter));
-    return title('GENERATION MONITOR', 'Try-on activity', 'Every look, 360° view, social pose and product import, with failures and their reasons.', periodSelect([7, 30, 90]) + `<button data-act="export-activity">↓ Export</button>`)
+    return title('GENERATION MONITOR', 'Try-on activity', 'Every look, 360° view, social pose and product import, with failures and their reasons.', periodSelect([7, 30, 90]) + exportBtn('export-activity'))
       + (d.setup_needed ? setupNote('activity logging') : '')
       + stats([['Completed', num(st.completed), `<small>${num(st.looks)} looks · ${st.active_users} people</small>`], ['Failed', num(st.failed), '<small>Errors after a request started</small>'],
         ['Success rate', pct(st.success_rate), `<small>Average look ${st.avg_seconds != null ? st.avg_seconds + ' s' : '–'}</small>`], ['Model cost (est.)', inr(st.cost_inr), `<small>${st.rejected} refused (no looks, plan)</small>`]])
-      + `<section class="panel">${toolbar('Search email, product, error…', [['All', 'Everything'], ['completed', 'Completed'], ['failed', 'Failed'], ['rejected', 'Refused'], ['look', 'Looks'], ['outfit', 'Outfits'], ['spin', '360° views'], ['pose', 'Social poses'], ['scrape', 'Product imports']])}${eventRows(rows, d.setup_needed ? 'Activity appears after the database setup.' : 'No activity matches.')}</section>`;
+      + `<section class="panel flush">${toolbar('Search email, product, error…', [['All', 'Everything'], ['completed', 'Completed'], ['failed', 'Failed'], ['rejected', 'Refused'], ['look', 'Looks'], ['outfit', 'Outfits'], ['spin', '360° views'], ['pose', 'Social poses'], ['scrape', 'Product imports']])}${eventRows(rows, d.setup_needed ? 'Activity appears after the database setup.' : 'No activity matches.')}</section>`;
   },
 
   products(d) {
     const slots = [...new Set(d.products.map(p => p.slot).filter(Boolean))];
     const rows = d.products.filter(p => matches(p) && (S.filter === 'All' || p.slot === S.filter || p.store === S.filter));
-    const icon = {top: '👕', bottom: '👖', dress: '👗', outerwear: '🧥', footwear: '👟', jewelry: '💍', accessory: '🕶', other: '🛍'};
-    return title('WHAT SHOPPERS WANT', 'Products', 'Pieces people try on and save, across every store. Use it to spot trends and partner stores.', `<button data-act="export-products">↓ Export</button>`)
+    return title('WHAT SHOPPERS WANT', 'Products', 'Pieces people try on and save, across every store. Use it to spot trends and partner stores.', exportBtn('export-products'))
       + stats([['Different products', num(d.total), '<small>Tried on or saved</small>'], ['Looks created', num(d.looks), '<small>All time</small>'],
         ['Saved to wardrobes', num(d.saved), '<small>From store links</small>'], ['Top store', esc(d.stores[0]?.[0] || '–'), `<small>${d.stores[0] ? num(d.stores[0][1]) + ' products' : ''}</small>`]])
-      + `<section>${toolbar('Search product or store…', [['All', 'All products'], ...slots.map(s => [s, s[0].toUpperCase() + s.slice(1)]), ...d.stores.map(s => [s[0], s[0]])])}
-      <div class="cards">${rows.slice(0, 120).map(p => `<section class="panel"><div class="product-art">${icon[p.slot] || '🛍'}</div><p class="eyebrow">${esc(p.store || 'Uploaded photo')} · ${esc(p.slot || 'item')}</p><h2>${esc(p.name || 'Unnamed product')}</h2>
-        <div class="productmeta"><b>${p.price ? inr(p.price) : 'Price not saved'}</b><span>${num(p.tried)} tried · ${num(p.saved)} saved</span></div>
-        <p class="sub">Last seen ${when(p.last_seen)}</p>${p.product_url ? `<a class="small" href="${esc(p.product_url)}" target="_blank" rel="noopener noreferrer">Open in store ↗</a>` : ''}</section>`).join('') || '<div class="empty">No products yet.</div>'}</div></section>`;
+      + `<section class="panel flush">${toolbar('Search product or store…', [['All', 'All products'], ...slots.map(s => [s, s[0].toUpperCase() + s.slice(1)]), ...d.stores.map(s => [s[0], s[0]])])}
+      <div class="table-wrap"><table><thead><tr><th>Product</th><th>Store</th><th>Type</th><th class="right">Price</th><th class="right">Tried on</th><th class="right">Saved</th><th>Last seen</th><th></th></tr></thead><tbody>${rows.slice(0, 300).map(p => `<tr>
+        <td class="wrap"><b>${esc(p.name || 'Unnamed product')}</b></td><td>${esc(p.store || 'Uploaded photo')}</td><td style="text-transform:capitalize">${esc(p.slot || 'item')}</td>
+        <td class="right">${p.price ? inr(p.price) : '–'}</td><td class="right">${num(p.tried)}</td><td class="right">${num(p.saved)}</td><td>${when(p.last_seen)}</td>
+        <td class="right">${p.product_url ? `<a href="${esc(p.product_url)}" target="_blank" rel="noopener noreferrer">Open in store</a>` : ''}</td></tr>`).join('') || '<tr><td colspan="8" class="empty">No products yet.</td></tr>'}</tbody></table></div>
+      ${rows.length > 300 ? `<p class="sub" style="padding:12px 14px">Showing 300 of ${rows.length}. Search to narrow down.</p>` : ''}</section>`;
   },
 
   revenue(d) {
-    return title('BUSINESS PERFORMANCE', 'Revenue & plans', 'Payments from Razorpay, model costs and what is left.', periodSelect([7, 30, 90, 365]) + `<button data-act="export-revenue">↓ Export payments</button>`)
-      + (d.test_mode ? `<div class="alert"><span style="font-size:20px">ⓘ</span><p><b>Razorpay is in test mode</b>These payments are test payments, not real money. Switch to live keys in Render when you launch.</p></div>` : '')
-      + stats([['Gross revenue', inr(d.gross_inr), change(d.change)], ['Model cost (est.)', inr(d.generation_cost_inr), '<small>Gemini and Vertex calls</small>', '◇'],
-        ['GST + fixed costs', inr(d.gst_inr + d.fixed_cost_inr), `<small>GST ${inr(d.gst_inr)} · fixed ${inr(d.fixed_cost_inr)}</small>`, '₹'],
-        ['Contribution', inr(d.contribution_inr), `<small>${d.gross_inr ? Math.round(d.contribution_inr / d.gross_inr * 100) + '% of revenue · ' : ''}before salaries & tax</small>`, '◷']])
-      + `<div class="grid"><section class="panel"><div class="panelhead"><div><h2>Payments</h2><p class="sub">${d.purchases.length} in this period · ${inr(d.all_time_inr)} all time</p></div></div>
-        <div class="table-wrap"><table><thead><tr><th>Customer</th><th>Plan</th><th>Billing</th><th>Amount</th><th>Paid</th></tr></thead><tbody>${d.purchases.map(p => `<tr><td><b>${esc(p.email || p.user_id)}</b><small>${esc(p.ref)}</small></td><td>${badge(p.kind)}</td><td>${esc(p.billing)}</td><td>${inr(p.amount_inr)}</td><td>${when(p.created_at)}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">No payments in this period.</td></tr>'}</tbody></table></div></section>
+    return title('BUSINESS PERFORMANCE', 'Revenue & plans', 'Payments from Razorpay, model costs and what is left.', periodSelect([7, 30, 90, 365]) + exportBtn('export-revenue', 'Export payments'))
+      + (d.test_mode ? `<div class="alert">${ico('info')}<p><b>Razorpay is in test mode</b>These payments are test payments, not real money. Switch to live keys in Render when you launch.</p></div>` : '')
+      + stats([['Gross revenue', inr(d.gross_inr), change(d.change)], ['Model cost (est.)', inr(d.generation_cost_inr), '<small>Gemini and Vertex calls</small>'],
+        ['GST + fixed costs', inr(d.gst_inr + d.fixed_cost_inr), `<small>GST ${inr(d.gst_inr)} · fixed ${inr(d.fixed_cost_inr)}</small>`],
+        ['Contribution', inr(d.contribution_inr), `<small>${d.gross_inr ? Math.round(d.contribution_inr / d.gross_inr * 100) + '% of revenue · ' : ''}before salaries & tax</small>`]])
+      + `<div class="grid"><section class="panel flush"><div class="panelhead"><div><h2>Payments</h2><p class="sub">${d.purchases.length} in this period · ${inr(d.all_time_inr)} all time</p></div></div>
+        <div class="table-wrap"><table><thead><tr><th>Customer</th><th>Plan</th><th>Billing</th><th class="right">Amount</th><th>Paid</th></tr></thead><tbody>${d.purchases.map(p => `<tr><td><b>${esc(p.email || p.user_id)}</b><small>${esc(p.ref)}</small></td><td>${badge(p.kind)}</td><td style="text-transform:capitalize">${esc(p.billing)}</td><td class="right">${inr(p.amount_inr)}</td><td>${when(p.created_at)}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">No payments in this period.</td></tr>'}</tbody></table></div></section>
         <section class="panel"><h2>Revenue by plan</h2><p class="sub">This period</p>${d.by_plan.map(p => `<div class="metric-row"><span>${esc(PLAN[p.plan])} · ${p.count} sold</span><b>${inr(p.amount_inr)}</b></div><div class="progress"><i style="width:${d.gross_inr ? p.amount_inr / d.gross_inr * 100 : 0}%"></i></div>`).join('')}
-        <div class="help-box" style="margin-top:18px">Cost estimates: ${inr(d.costs.gemini_image)} per Gemini image and ${inr(d.costs.vertex)} per Vertex try-on. Fixed costs: ${inr(d.costs.monthly_fixed)}/month. Change them with <code>COST_GEMINI_IMAGE_INR</code>, <code>COST_VERTEX_TRYON_INR</code> and <code>MONTHLY_FIXED_COSTS_INR</code> in Render.</div></section></div>`
-      + `<div class="panelhead"><div><h2>Plans on sale</h2><p class="sub">Prices include GST. They live in the code (app/billing.py) so checkout and the site always agree; ask to change them there.</p></div></div>
-      <div class="cards">${d.plans.map(p => `<section class="panel plan" style="${p.key === 'plus' ? 'border-color:#92a776' : ''}"><div class="panelhead"><h2>${esc(PLAN[p.key] || p.name)}</h2>${p.key === 'plus' ? '<span class="badge">MOST POPULAR</span>' : ''}</div>
-        <div class="plan-price">${p.prices.once != null ? inr(p.prices.once) + '<small> once</small>' : inr(p.prices.monthly) + '<small> / month</small>'}</div>
-        <p class="sub">${p.prices.yearly ? inr(p.prices.yearly) + ' / year' : '&nbsp;'}</p><ul><li>${esc(p.note)}</li></ul></section>`).join('')}</div>`;
+        <div class="note" style="margin-top:18px">Cost estimates: ${inr(d.costs.gemini_image)} per Gemini image and ${inr(d.costs.vertex)} per Vertex try-on. Fixed costs: ${inr(d.costs.monthly_fixed)}/month. Change them with <code>COST_GEMINI_IMAGE_INR</code>, <code>COST_VERTEX_TRYON_INR</code> and <code>MONTHLY_FIXED_COSTS_INR</code> in Render.</div></section></div>`
+      + `<section class="panel flush"><div class="panelhead"><div><h2>Plans on sale</h2><p class="sub">Prices include GST. They live in the code (app/billing.py) so checkout and the site always agree.</p></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Plan</th><th class="right">Looks</th><th class="right">Once</th><th class="right">Monthly</th><th class="right">Yearly</th><th>What you get</th></tr></thead><tbody>${d.plans.map(p => `<tr>
+        <td><b>${esc(PLAN[p.key] || p.name)}</b></td><td class="right">${num(p.looks)}</td><td class="right">${p.prices.once != null ? inr(p.prices.once) : '–'}</td>
+        <td class="right">${p.prices.monthly != null ? inr(p.prices.monthly) : '–'}</td><td class="right">${p.prices.yearly != null ? inr(p.prices.yearly) : '–'}</td><td class="wrap">${esc(p.note)}</td></tr>`).join('')}</tbody></table></div></section>`;
   },
 
   integrations(d) {
     const icon = {gemini: 'G', database: 'S', auth: '@', razorpay: '₹', brightdata: 'B', vertex: 'V'};
-    return title('CONNECTIONS & RELIABILITY', 'Integrations', `Live checks, run just now (${new Date(d.checked_at).toLocaleTimeString('en-IN', {timeStyle: 'short'})}). No secrets are shown.`, `<button data-act="refresh">↻ Run checks again</button>`)
-      + `<div class="cards">${d.services.map(s => `<section class="panel"><div class="panelhead"><span class="service-icon">${icon[s.key] || '•'}</span>${badge(s.status)}</div><h2>${esc(s.name)}</h2><p class="sub">${esc(s.provider)}</p><p style="font-size:12px;margin:12px 0 4px">${esc(s.detail)}</p><p class="sub">Answered in ${s.latency_ms} ms</p></section>`).join('')}</div>`
-      + `<div class="two" style="margin-top:22px"><section class="panel"><h2>Store imports (last 7 days)</h2><p class="sub">How often pasted product links worked, per store</p>${d.stores.map(s => `<div class="metric-row"><span>${esc(s.store)} · ${s.attempts} imports</span><b>${pct(s.success_rate)}</b></div><div class="progress ${s.status !== 'Healthy' ? 'bad' : ''}"><i style="width:${s.success_rate ?? 0}%"></i></div>`).join('') || '<p class="sub" style="margin-top:12px">No imports yet.</p>'}</section>
+    return title('CONNECTIONS & RELIABILITY', 'Integrations', `Live checks, run just now (${new Date(d.checked_at).toLocaleTimeString('en-IN', {timeStyle: 'short'})}). No secrets are shown.`, `<button data-act="refresh">${ico('refresh')}Run checks again</button>`)
+      + `<section class="panel flush"><div class="table-wrap"><table><thead><tr><th>Service</th><th>What we checked</th><th class="right">Answered in</th><th>Status</th></tr></thead><tbody>${d.services.map(s => `<tr>
+        <td><div class="person"><span class="tile">${icon[s.key] || '·'}</span><div><b>${esc(s.name)}</b><small>${esc(s.provider)}</small></div></div></td>
+        <td class="wrap">${esc(s.detail)}</td><td class="right">${s.latency_ms ? s.latency_ms + ' ms' : '–'}</td><td>${badge(s.status)}</td></tr>`).join('')}</tbody></table></div></section>`
+      + `<div class="two gap"><section class="panel"><h2>Store imports (last 7 days)</h2><p class="sub">How often pasted product links worked, per store</p>${d.stores.map(s => `<div class="metric-row"><span>${esc(s.store)} · ${s.attempts} imports</span><b>${pct(s.success_rate)}</b></div><div class="progress ${s.status !== 'Healthy' ? 'bad' : ''}"><i style="width:${s.success_rate ?? 0}%"></i></div>`).join('') || '<p class="sub" style="margin-top:12px">No imports yet.</p>'}</section>
       <section class="panel"><h2>Gemini since the last restart</h2><p class="sub">Counted by this server; resets on every deploy</p><div class="kv" style="margin-top:14px"><span>Since</span><b>${fullDate(d.gemini_since_restart.since)}</b><span>Requests</span><b>${num(d.gemini_since_restart.requests)}</b><span>Succeeded</span><b>${num(d.gemini_since_restart.succeeded)}</b><span>Failed</span><b>${num(d.gemini_since_restart.failed)}</b><span>Last error</span><b>${esc(d.gemini_since_restart.last_error || 'None')}</b></div><p class="sub" style="margin-top:14px">Google does not show remaining credit through the API. See <a href="https://aistudio.google.com/usage" target="_blank" rel="noopener noreferrer">AI Studio usage</a>.</p></section></div>`;
   },
 
   support(d) {
     const rows = d.tickets.filter(t => matches(t) && (S.filter === 'All' || t.status === S.filter || t.priority === S.filter));
     const open = d.tickets.filter(t => t.status === 'open');
-    return title('CUSTOMER CARE', 'Support inbox', 'Messages sent from the help form on mydripcheck.com.', `<button data-act="export-support">↓ Export</button>`)
+    return title('CUSTOMER CARE', 'Support inbox', 'Messages sent from the help form on mydripcheck.com.', exportBtn('export-support'))
       + (d.setup_needed ? setupNote('the support inbox') : '')
-      + stats([['Open', num(open.length), '<small>Waiting for a reply</small>', '☏'], ['High priority', num(open.filter(t => t.priority === 'high').length), '<small>Payments and missing looks</small>', '!'],
-        ['Resolved', num(d.tickets.length - open.length), '<small>All time</small>', '✓'], ['Oldest open', open.length ? when(open[open.length - 1].created_at) : '–', '<small>First in line</small>', '◷']])
-      + `<section class="panel">${toolbar('Search ticket, email or message…', [['All', 'All tickets'], ['open', 'Open'], ['resolved', 'Resolved'], ['high', 'High priority']])}
-      <div class="table-wrap"><table><thead><tr><th>Ticket</th><th>Customer</th><th>Priority</th><th>Status</th><th>Received</th><th></th></tr></thead><tbody>${rows.map(t => `<tr><td class="wrap"><b>${esc(t.subject)}</b><small>${esc(t.message.slice(0, 90))}${t.message.length > 90 ? '…' : ''}</small></td><td>${esc(t.email)}</td><td>${badge(t.priority)}</td><td>${badge(t.status)}</td><td>${when(t.created_at)}</td><td><button class="small" data-act="ticket" data-id="${t.id}">Open →</button></td></tr>`).join('') || '<tr><td colspan="6" class="empty">No tickets. Nice.</td></tr>'}</tbody></table></div></section>`;
+      + stats([['Open', num(open.length), '<small>Waiting for a reply</small>'], ['High priority', num(open.filter(t => t.priority === 'high').length), '<small>Payments and missing looks</small>'],
+        ['Resolved', num(d.tickets.length - open.length), '<small>All time</small>'], ['Oldest open', open.length ? when(open[open.length - 1].created_at) : '–', '<small>First in line</small>']])
+      + `<section class="panel flush">${toolbar('Search ticket, email or message…', [['All', 'All tickets'], ['open', 'Open'], ['resolved', 'Resolved'], ['high', 'High priority']])}
+      <div class="table-wrap"><table><thead><tr><th>Ticket</th><th>Customer</th><th>Priority</th><th>Status</th><th>Received</th><th></th></tr></thead><tbody>${rows.map(t => `<tr><td class="wrap"><b>${esc(t.subject)}</b><small>${esc(t.message.slice(0, 90))}${t.message.length > 90 ? '…' : ''}</small></td><td>${esc(t.email)}</td><td>${badge(t.priority)}</td><td>${badge(t.status)}</td><td>${when(t.created_at)}</td><td class="right"><button class="small" data-act="ticket" data-id="${t.id}">Open</button></td></tr>`).join('') || '<tr><td colspan="6" class="empty">No tickets match.</td></tr>'}</tbody></table></div></section>`;
   },
 
   settings(d) {
@@ -284,14 +315,14 @@ const VIEWS = {
         <span>Free looks / month</span><b>${sv.free_looks_per_month}</b><span>Look limits</span><b>${sv.look_limits_enabled ? 'On' : 'Off'}</b>
         <span>Image model</span><b>${esc(sv.image_model)}</b><span>Face check target</span><b>${sv.face_check_target}</b><span>Razorpay autopay</span><b>${sv.razorpay_autopay ? 'On' : 'Off (prepaid)'}</b>
         <span>Admins</span><b>${sv.admin_emails.map(esc).join('<br>') || '–'}</b><span>Unlimited accounts</span><b>${sv.unlimited_emails.map(esc).join('<br>') || 'None'}</b><span>Suspended accounts</span><b>${d.suspended_count}</b></div>
-        <h3 style="margin-top:26px">Activity log</h3>${d.audit.slice(0, 12).map(a => `<div class="service"><span class="service-icon">✓</span><div><b>${esc(describeAudit(a))}</b><small>${esc(a.admin_email)} · ${when(a.created_at)}</small></div></div>`).join('') || '<p class="sub">No admin changes yet.</p>'}</section></div>`;
+        <h3 style="margin-top:26px">Activity log</h3>${d.audit.slice(0, 12).map(a => `<div class="row"><div><b>${esc(describeAudit(a))}</b><small>${esc(a.admin_email)}</small></div><small style="margin-left:auto;white-space:nowrap" title="${esc(fullDate(a.created_at))}">${when(a.created_at)}</small></div>`).join('') || '<p class="sub">No admin changes yet.</p>'}</section></div>`;
   },
 };
 
 function describeAudit(a) {
   const d = a.detail || {};
   return {add_looks: `Gave ${d.looks} looks (${d.days} days)${d.reason ? ': ' + d.reason : ''}`, suspend: `Suspended ${d.email || a.target}`, restore: `Restored ${d.email || a.target}`,
-    settings: 'Changed ' + Object.keys(d).join(', '), ticket: `Updated ticket ${String(a.target).slice(0, 8)}${d.status ? ' → ' + d.status : ''}`}[a.action] || a.action;
+    settings: 'Changed ' + Object.keys(d).join(', '), ticket: `Updated ticket ${String(a.target).slice(0, 8)}${d.status ? ': ' + d.status : ''}`}[a.action] || a.action;
 }
 
 /* ---------- dialogs ---------- */
@@ -299,14 +330,14 @@ let lastFocus;
 function modal(t, body, wide) {
   if (!$('#modal').classList.contains('open')) lastFocus = document.activeElement;
   $('#dialog').className = 'dialog' + (wide ? ' wide' : '');
-  $('#dialog').innerHTML = `<div class="dialoghead"><h2 id="dialog-title">${t}</h2><button class="small" data-act="close" aria-label="Close dialog">✕</button></div>${body}`;
+  $('#dialog').innerHTML = `<div class="dialoghead"><h2 id="dialog-title">${t}</h2><button class="small" data-act="close" aria-label="Close dialog">${ico('close')}</button></div>${body}`;
   $('#modal').classList.add('open'); ($('#dialog input, #dialog textarea') || $('#dialog button')).focus();
 }
 function closeModal() { $('#modal').classList.remove('open'); lastFocus?.focus?.(); }
 const detail = (k, v) => `<div class="detail"><span>${k}</span><b>${v}</b></div>`;
 
 async function userDialog(id) {
-  modal('Loading…', '<div class="loading">Loading account…</div>', true);
+  modal('Loading account', `<div aria-busy="true">${'<span class="sk sk-row"></span>'.repeat(5)}</div>`, true);
   try {
     const u = await api('/v1/admin/users/' + id);
     const active = u.grants.filter(g => g.active);
@@ -325,14 +356,13 @@ async function userDialog(id) {
 }
 
 function eventDialog(id) {
-  const all = [S.cache['tryons' + S.days]?.events, S.cache['overview' + S.days]?.latest].flat().filter(Boolean);
-  const e = all.find(x => String(x.id) === String(id));
+  const e = EVENTS.get(String(id));
   if (!e) return toast('Refresh and try again.');
   modal(KIND[e.kind] || esc(e.kind), `${detail('Status', badge(e.status))}${detail('Customer', esc(e.email || e.user_id || 'Guest'))}${detail('When', fullDate(e.created_at))}
     ${detail('Time taken', e.duration_ms != null ? (e.duration_ms / 1000).toFixed(1) + ' s' : '–')}${detail('Model calls', `${e.image_calls} Gemini image · ${e.vertex_calls} Vertex`)}${detail('Estimated cost', inr(e.cost_inr))}
     ${Object.entries(e.meta || {}).map(([k, v]) => detail(esc(k), esc(v))).join('')}${detail('HTTP status', e.http_status ?? '–')}
     ${e.error ? `<h3>What went wrong</h3><div class="message">${esc(e.error)}</div>` : ''}
-    ${e.status === 'failed' ? '<div class="help-box" style="margin-top:16px">Failed looks are never charged: the look goes back to the customer automatically. If it keeps failing, check Integrations.</div>' : ''}`);
+    ${e.status === 'failed' ? '<div class="note" style="margin-top:16px">Failed looks are never charged: the look goes back to the customer automatically. If it keeps failing, check Integrations.</div>' : ''}`);
 }
 
 function ticketDialog(id) {
@@ -342,14 +372,14 @@ function ticketDialog(id) {
   modal(esc(t.subject), `${detail('Customer', esc(t.email))}${detail('Received', fullDate(t.created_at))}${detail('Priority', badge(t.priority))}${detail('Status', badge(t.status))}
     <h3>Message</h3><div class="message">${esc(t.message)}</div>
     <label class="field">Internal note (only admins see this)<textarea id="ticketNote" rows="3" maxlength="4000">${esc(t.note || '')}</textarea></label>
-    <div class="actions"><a class="btn-link" href="${reply}">✉ Reply by email</a>
+    <div class="actions"><a class="btn-link" href="${reply}">${ico('mail')}Reply by email</a>
     <button data-act="ticket-save" data-id="${t.id}">Save note</button>
     <button data-act="ticket-priority" data-id="${t.id}" data-value="${t.priority === 'high' ? 'normal' : 'high'}">${t.priority === 'high' ? 'Set normal priority' : 'Mark high priority'}</button>
     <button class="primary" data-act="ticket-status" data-id="${t.id}" data-value="${t.status === 'open' ? 'resolved' : 'open'}">${t.status === 'open' ? 'Mark resolved' : 'Reopen'}</button></div>`, true);
 }
 
 function notices() {
-  const o = S.cache['overview' + S.days] || S.cache.overview7;
+  const o = overviewData();
   S.notices = o ? o.alerts : [];
   const n = S.notices.length + (o?.open_tickets ? 1 : 0);
   $('#notice').textContent = n;
@@ -376,8 +406,8 @@ document.addEventListener('click', async e => {
       case 'event': eventDialog(id); break;
       case 'ticket': ticketDialog(id); break;
       case 'notifications':
-        modal('Needs your attention', (S.notices.map(a => `<div class="service"><span class="service-icon">${a.level === 'bad' ? '⚠' : 'ⓘ'}</span><div><b>${esc(a.title)}</b><small>${esc(a.message)}</small></div><button class="small" data-go="${a.page}">Open</button></div>`).join('')
-          + (S.cache['overview' + S.days]?.open_tickets ? `<div class="service"><span class="service-icon">☏</span><div><b>${S.cache['overview' + S.days].open_tickets} open support tickets</b><small>Customers waiting for a reply</small></div><button class="small" data-go="support">Open</button></div>` : '')) || '<p class="sub">All clear. Nothing needs you right now.</p>');
+        modal('Needs your attention', (S.notices.map(a => `<div class="row"><span class="tile">${ico(a.level === 'bad' ? 'warn' : 'info')}</span><div><b>${esc(a.title)}</b><small>${esc(a.message)}</small></div><button class="small" data-go="${a.page}">Open</button></div>`).join('')
+          + (overviewData()?.open_tickets ? `<div class="row"><span class="tile">${ico('inbox')}</span><div><b>${overviewData().open_tickets} open support tickets</b><small>Customers waiting for a reply</small></div><button class="small" data-go="support">Open</button></div>` : '')) || '<p class="sub">All clear. Nothing needs you right now.</p>');
         break;
       case 'give-looks': {
         const looks = +$('#giveLooks').value, days = +$('#giveDays').value;
@@ -403,6 +433,7 @@ document.addEventListener('click', async e => {
         el.disabled = true;
         const updated = await api('/v1/admin/support/' + id, {method: 'PATCH', body});
         const list = S.cache['support' + S.days].tickets; list[list.findIndex(t => t.id === id)] = updated;
+        for (const d of [7, 30]) delete S.cache['overview' + d];  // open-ticket count and alerts change
         toast('Ticket updated.'); render(); ticketDialog(id);
         break;
       }
@@ -410,10 +441,10 @@ document.addEventListener('click', async e => {
         const body = {maintenance: $('[name="maintenance"]').checked, maintenance_message: $('#setMaintenanceMessage').value.trim(),
           announcement: $('#setAnnouncement').value.trim(), support_email: $('#setSupportEmail').value.trim()};
         if (body.support_email && !$('#setSupportEmail').checkValidity()) return toast('Enter a valid support email.', true);
-        if (body.maintenance && !confirm('Turn on maintenance mode? Nobody will be able to create looks until you turn it off.')) return;
+        if (body.maintenance && !data.settings.maintenance && !confirm('Turn on maintenance mode? Nobody will be able to create looks until you turn it off.')) return;
         el.disabled = true;
         await api('/v1/admin/settings', {method: 'PUT', body});
-        toast('Settings saved. The live site picks them up within 30 seconds.'); delete S.cache['overview' + S.days]; render(true);
+        toast('Settings saved. The live site picks them up within 30 seconds.'); render(true);
         break;
       }
       case 'export-users': csv('users', data.users.map(u => ({email: u.email, id: u.id, plan: u.plan, looks_left: u.looks_left, looks_made: u.looks_made, status: u.status, joined: u.created_at, last_sign_in: u.last_sign_in_at}))); break;
@@ -435,7 +466,7 @@ document.addEventListener('input', e => { if (e.target.dataset?.act === 'search'
 function rerender() {
   const data = S.cache[S.page + S.days]; if (!data) return;
   const pos = document.activeElement?.dataset?.act === 'search' ? document.activeElement.selectionStart : null;
-  $('#main').innerHTML = VIEWS[S.page](data) + `<div class="footer"><span>MYDRIPCHECK ADMIN CONSOLE · Live data</span><span>Signed in as ${esc(S.email)}</span></div>`;
+  $('#main').innerHTML = VIEWS[S.page](data) + footer();
   if (pos != null) { const i = $('[data-act="search"]'); i.focus(); i.setSelectionRange(pos, pos); }
 }
 document.addEventListener('keydown', e => {

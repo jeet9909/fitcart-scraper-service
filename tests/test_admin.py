@@ -142,6 +142,18 @@ def test_users_show_plan_looks_left_and_status(monkeypatch) -> None:
         app.dependency_overrides.clear()
 
 
+def test_users_list_survives_a_grant_without_a_used_count(monkeypatch) -> None:
+    service = FakeService(_settings(), {"look_grants": [{"user_id": USER_A, "kind": "bonus", "looks": 5, "period": None}]})
+    _client(monkeypatch, service)
+    try:
+        with TestClient(app) as client:
+            response = client.get("/v1/admin/users", headers=_login(client))
+        assert response.status_code == 200
+        assert next(u for u in response.json()["users"] if u["id"] == USER_A)["looks_left"] == 5 + 2  # bonus + this month's free looks
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_admin_can_add_bonus_looks_and_it_is_audited(monkeypatch) -> None:
     service = FakeService(_settings())
     _client(monkeypatch, service)

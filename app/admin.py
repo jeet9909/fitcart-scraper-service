@@ -469,7 +469,7 @@ async def list_users(actor: str = Depends(require_admin_access), service: TryOnS
     for user in users:
         user_id, email = str(user["id"]), (user.get("email") or "").lower()
         mine = by_user.get(user_id, [])
-        remaining = sum(max(0, g["looks"] - g["used"]) for g in mine)
+        remaining = sum(max(0, (g.get("looks") or 0) - (g.get("used") or 0)) for g in mine)
         if not any(g["kind"] == "free" and g.get("period") == month for g in mine):
             remaining += settings.free_looks_per_month  # the free grant is created on first use each month
         banned = _parse_time(user.get("banned_until"))
@@ -517,7 +517,7 @@ async def user_detail(user_id: UUID, actor: str = Depends(require_admin_access),
         "banned_until": user.get("banned_until"),
         "suspended": uid in set((await state.settings()).get("suspended") or []),
         "unlimited": settings.is_unlimited(user.get("email")),
-        "grants": [{**g, "remaining": max(0, g["looks"] - g["used"]),
+        "grants": [{**g, "remaining": max(0, (g.get("looks") or 0) - (g.get("used") or 0)),
                     "active": (_parse_time(g["starts_at"]) or now) <= now < (_parse_time(g["expires_at"]) or now)}
                    for g in grants],
         "looks": looks,
@@ -531,7 +531,7 @@ async def add_looks(user_id: UUID, body: AddLooks, actor: str = Depends(require_
                     settings: Settings = Depends(get_settings)) -> dict:
     _require_supabase(settings)
     now = _now()
-    row = {"user_id": str(user_id), "kind": "bonus", "looks": body.looks, "starts_at": now.isoformat(),
+    row = {"user_id": str(user_id), "kind": "bonus", "looks": body.looks, "used": 0, "starts_at": now.isoformat(),
            "expires_at": (now + timedelta(days=body.days)).isoformat(), "payment_ref": f"admin:{uuid4()}"}
     response = await service.rest("POST", "look_grants", json_body=row, prefer="return=minimal")
     if response.status_code >= 400:

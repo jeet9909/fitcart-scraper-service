@@ -84,13 +84,14 @@ class AdminState:
         self._users: tuple[float, list[dict]] | None = None
 
     async def settings(self, fresh: bool = False) -> dict[str, Any]:
-        if not self.service.settings.supabase_url:
-            return dict(self._settings)
-        if fresh or time.monotonic() - self._loaded_at > SETTINGS_TTL_SECONDS:
+        if self.service.settings.supabase_url and (fresh or time.monotonic() - self._loaded_at > SETTINGS_TTL_SECONDS):
             async with self._lock:
                 if fresh or time.monotonic() - self._loaded_at > SETTINGS_TTL_SECONDS:
                     await self._load()
-        return dict(self._settings)
+        current = dict(self._settings)
+        if self.service.settings.maintenance_mode:  # MAINTENANCE_MODE in Render wins over the dashboard switch
+            current["maintenance"] = True
+        return current
 
     async def _load(self) -> None:
         try:
@@ -110,18 +111,16 @@ class AdminState:
         self._settings = {**DEFAULT_SETTINGS, **loaded}
 
     async def save(self, values: dict[str, Any]) -> dict[str, Any]:
+        self._settings = {**self._settings, **values}  # takes effect on this server at once, whatever the database says
+        if not self.service.settings.supabase_url:
+            return await self.settings()
         rows = [{"key": key, "value": value, "updated_at": _now().isoformat()} for key, value in values.items()]
         response = await self.service.rest("POST", "app_settings", params={"on_conflict": "key"}, json_body=rows,
                                            prefer="resolution=merge-duplicates,return=minimal")
-        if response.status_code == 404:
-            # PostgREST answers 404 for a table it does not know yet: either the SQL was not run, or it was run
-            # and Supabase's API has not reloaded its schema cache.
-            log.warning("app_settings not found by PostgREST: %s", response.text[:300])
-            raise HTTPException(status_code=503, detail=(
-                "Supabase cannot see the app_settings table yet. If you already ran supabase/schema.sql, run "
-                "NOTIFY pgrst, 'reload schema'; in the Supabase SQL editor and try again."))
         if response.status_code >= 400:
-            raise HTTPException(status_code=502, detail=f"Could not save settings: {response.text[:200]}")
+            # Only when Supabase's table and the backup storage both fail: the switch still works on this server.
+            log.warning("Settings kept in memory only: %s %s", response.status_code, response.text[:200])
+            return await self.settings()
         return await self.settings(fresh=True)
 
     async def blocked_reason(self, user_id: str | None) -> dict | None:
@@ -241,6 +240,11 @@ async def _audit(service: TryOnService, actor: str, action: str, target: str | N
                            prefer="return=minimal")
     except Exception:
         log.warning("Could not write the admin audit log", exc_info=True)
+
+
+def _backup_status(service: TryOnService) -> dict:
+    backup = getattr(service, "backup", None)
+    return backup.status() if backup else {"tables_on_backup": {}, "storage_error": None}
 
 
 def _require_supabase(settings: Settings) -> None:
@@ -706,13 +710,14 @@ async def integrations(actor: str = Depends(require_admin_access), service: TryO
         response = await service.rest("GET", "try_on_gallery", params={"select": "id", "limit": "1"})
         if response.status_code >= 400:
             return {"status": "Offline", "detail": f"Supabase answered {response.status_code}."}
-        missing = []
-        for table in ADMIN_TABLES:
-            check = await service.rest("GET", table, params={"select": "*", "limit": "1"})
-            if check.status_code == 404:
-                missing.append(table)
-        if missing:
-            return {"status": "Degraded", "detail": f"Database works. Run supabase/schema.sql to add: {', '.join(missing)}."}
+        for table in ADMIN_TABLES:  # each read records whether Supabase's table API answered
+            await service.rest("GET", table, params={"select": "*", "limit": "1"})
+        backup = _backup_status(service)
+        if backup["tables_on_backup"]:
+            names = ", ".join(sorted(backup["tables_on_backup"]))
+            where = "backup storage" if not backup["storage_error"] else "server memory (backup storage failed too)"
+            return {"status": "Degraded", "detail": f"Database works. {names} run on {where}: every admin feature still works. "
+                    "To move them back, run supabase/schema.sql in the Supabase SQL editor."}
         return {"status": "Healthy", "detail": "Database, gallery and admin tables are reachable."}
 
     async def auth() -> dict:
@@ -813,6 +818,8 @@ async def get_admin_settings(actor: str = Depends(require_admin_access), service
         },
         "audit": audit,
         "setup_needed": state.table_missing or bool(missing),
+        "backup": _backup_status(service),
+        "maintenance_forced": settings.maintenance_mode,
     }
 
 

@@ -15,6 +15,7 @@ import httpx
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app import activity, identity
+from app.admin_store import BACKED_UP_TABLES, BackupTables
 from app.config import Settings
 from app.models import GalleryItem, GeminiUsageResponse, GeminiUsageSinceStart, PoseImage
 from app.vertex_tryon import VertexTryOn, VertexTryOnError
@@ -369,6 +370,7 @@ class TryOnService:
         self.usage = GeminiUsage()
         self.vertex = VertexTryOn(settings)
         self._pool: tuple[asyncio.AbstractEventLoop, httpx.AsyncClient] | None = None
+        self.backup = BackupTables(self)
 
     @asynccontextmanager
     async def _supabase(self) -> AsyncIterator[httpx.AsyncClient]:
@@ -813,7 +815,11 @@ class TryOnService:
         headers = {**self._headers, "Content-Type": "application/json"}
         if prefer:
             headers["Prefer"] = prefer
-        return await self._sb(method, f"{self.settings.supabase_url.rstrip('/')}/rest/v1/{table}", headers=headers, params=params, json=json_body)
+        url = f"{self.settings.supabase_url.rstrip('/')}/rest/v1/{table}"
+        if table in BACKED_UP_TABLES:
+            return await self.backup.rest(method, table, params=params, json_body=json_body, prefer=prefer,
+                                          real=lambda: self._sb(method, url, headers=headers, params=params, json=json_body))
+        return await self._sb(method, url, headers=headers, params=params, json=json_body)
 
     async def upload(self, path: str, image: tuple[bytes, str, str]) -> None:
         await self._upload(path, image)

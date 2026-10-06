@@ -483,7 +483,12 @@ BLOCKED_PAGE_MARKERS = (
 def _looks_blocked(page: str) -> bool:
     """Bot walls and captcha pages must not be parsed as the product."""
     head = page[:20000].lower()
-    return any(marker in head for marker in BLOCKED_PAGE_MARKERS) and "producttitle" not in head and "pdpdata" not in head
+    if not any(marker in head for marker in BLOCKED_PAGE_MARKERS) or "producttitle" in head or "pdpdata" in head:
+        return False
+    # Bot walls are small pages. A large page that carries the store's product data is the real page, even if
+    # its scripts contain words like "access denied" (Meesho's do).
+    lowered = page.lower()
+    return not (len(page) > 50_000 and ("__next_data__" in lowered or "self.__next_f" in lowered or "application/ld+json" in lowered))
 
 
 def _structured_from_amazon(page: str) -> dict:
@@ -555,6 +560,37 @@ def _next_data(page: str) -> object | None:
         return None
 
 
+def _next_flight_data(page: str) -> list[object]:
+    """Product objects from a Next.js app-router page, which streams its data in self.__next_f.push([1, "..."])
+    chunks instead of one __NEXT_DATA__ block. The chunks are joined, then every JSON object that holds a
+    product id is decoded."""
+    chunks = []
+    for literal in re.findall(r'self\.__next_f\.push\(\[\s*1\s*,\s*("(?:[^"\\]|\\.)*")\s*\]\)', page):
+        try:
+            chunks.append(json.loads(literal))
+        except ValueError:
+            continue
+    stream = "".join(chunks)
+    found: list[object] = []
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r'"(?:product_id|catalog_id)"\s*:', stream):
+        # Walk back to the braces that could open the object holding this key; the nearest that decodes wins.
+        start = match.start()
+        for _ in range(40):
+            start = stream.rfind("{", 0, start)
+            if start < 0:
+                break
+            try:
+                value, _ = decoder.raw_decode(stream, start)
+            except ValueError:
+                continue
+            found.append(value)
+            break
+        if len(found) > 50:
+            break
+    return found
+
+
 def _meesho_images(node: dict) -> list[str]:
     images: list[str] = []
     for key in ("images", "image_urls", "product_images"):
@@ -571,8 +607,10 @@ def _structured_from_meesho(page: str) -> dict:
     """Meesho pages are Next.js apps: the product (name, prices, sizes, photos) sits in the __NEXT_DATA__ JSON.
     The exact nesting changes between releases, so look for the product-shaped object instead of a fixed path."""
     data = _next_data(page)
-    if data is None:
+    flight = _next_flight_data(page) if data is None else []
+    if data is None and not flight:
         return {}
+    data = data if data is not None else flight
     best: dict | None = None
     best_score = 0
     for node in _walk(data):
@@ -604,7 +642,15 @@ def _structured_from_meesho(page: str) -> dict:
     found["category"] = _text(node.get("sub_sub_category_name") or node.get("category_name") or node.get("category"))
     found["external_id"] = _text(node.get("product_id") or node.get("id"))
     sizes, unavailable = [], []
+    inventory = supplier.get("inventory") if isinstance(supplier.get("inventory"), list) else []
+    stock = {}
+    for entry in inventory:
+        if isinstance(entry, dict) and isinstance(entry.get("variation"), dict) and (label := _text(entry["variation"].get("name"))):
+            stock[label] = entry.get("in_stock", True) is not False
     for variation in node.get("variations") or node.get("sizes") or []:
+        if isinstance(variation, str) and variation in stock and not stock[variation]:
+            unavailable.append(variation)
+            continue
         if isinstance(variation, str):
             sizes.append(variation)
             continue
@@ -728,6 +774,21 @@ def _apply_structured(product: ProductData, data: dict, url: str) -> ProductData
     return product
 
 
+# Stores whose pages need a real browser when the unlocker's copy has no product in it.
+BROWSER_HOSTS = ("meesho.com",)
+
+
+def _needs_browser(url: str) -> bool:
+    host = (urlsplit(url).hostname or "").lower()
+    return any(host == root or host.endswith("." + root) for root in BROWSER_HOSTS)
+
+
+def _store_name(url: str) -> str:
+    host = (urlsplit(url).hostname or "").lower().removeprefix("www.").removeprefix("dl.")
+    names = {"amzn.in": "Amazon", "fkrt.it": "Flipkart", "hm.com": "H&M", "nykaafashion.com": "Nykaa Fashion", "tatacliq.com": "Tata CLiQ"}
+    return names.get(host) or (host.split(".")[0].capitalize() if host else "The store")
+
+
 class BrightDataScraper:
     def __init__(self, settings: Settings, client: object | None = None, clock: Callable[[], datetime] | None = None) -> None:
         self.settings = settings
@@ -754,6 +815,25 @@ class BrightDataScraper:
                 return None
             raise ScrapeProviderError(text.strip() or "Bright Data returned no page content")
         return text
+
+    async def _fetch_html_via_browser(self, url: str) -> str | None:
+        """Open the page in Bright Data's hosted real browser (the MCP server's pro tools). It runs the store's
+        scripts like a shopper's phone would, which gets past bot walls the plain unlocker cannot. Slower and
+        dearer, so only used when the other fetches gave no usable product."""
+        token = self.settings.brightdata_api_token.get_secret_value()
+        async with streamablehttp_client(f"https://mcp.brightdata.com/mcp?token={token}&pro=1") as (read_stream, write_stream, _):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                names = {item.name for item in (await session.list_tools()).tools}
+                if not {"scraping_browser_navigate", "scraping_browser_get_html"} <= names:
+                    logger.info("Bright Data browser tools are not available on this token")
+                    return None
+                await session.call_tool("scraping_browser_navigate", {"url": url})
+                result = await session.call_tool("scraping_browser_get_html", {"full_page": True})
+                if result.isError:
+                    result = await session.call_tool("scraping_browser_get_html", {})
+        text = "\n".join(block.text for block in result.content if isinstance(block, TextContent))
+        return None if result.isError or not text.strip() else _strip_security_wrapper(text)
 
     async def _fetch_page(self, url: str) -> str:
         return await self._call_brightdata("scrape_as_markdown", url) or ""
@@ -865,6 +945,19 @@ class BrightDataScraper:
                 structured = _structured_product(page, resolved_url) if page else {}
                 html_images = [] if structured.get("images") or not page else _images_from_html(page, resolved_url)
                 complete = bool(structured.get("title") and structured.get("price") and (structured.get("images") or html_images))
+                if not complete and _needs_browser(resolved_url):
+                    try:
+                        browser_page = await asyncio.wait_for(self._fetch_html_via_browser(resolved_url), timeout=self.settings.scrape_timeout_seconds * 1.5)
+                    except Exception as exc:
+                        logger.info("Browser fetch failed host=%s type=%s", urlsplit(resolved_url).hostname, type(exc).__name__)
+                        browser_page = None
+                    if browser_page and not _looks_blocked(browser_page):
+                        from_browser = _structured_product(browser_page, resolved_url)
+                        if len(from_browser) > len(structured):
+                            logger.info("Browser fetch host=%s gave fields=%s", urlsplit(resolved_url).hostname, sorted(from_browser))
+                            page, structured = browser_page, from_browser
+                            html_images = [] if structured.get("images") else _images_from_html(page, resolved_url)
+                            complete = bool(structured.get("title") and structured.get("price") and (structured.get("images") or html_images))
                 content = ""
                 if not complete:
                     try:
@@ -894,9 +987,13 @@ class BrightDataScraper:
                         content[:1500],
                     )
         except TimeoutError as exc:
-            raise ScrapeProviderError("Product scraping timed out") from exc
-        except ScrapeProviderError:
-            raise
+            raise ScrapeProviderError(f"{_store_name(url)} took too long to answer. Try again, or add the item with a photo.", code="store_blocked") from exc
+        except ScrapeProviderError as exc:
+            if exc.code == "invalid_share_link":
+                raise
+            logger.warning("Product import failed host=%s error=%s", urlsplit(url).hostname, str(exc)[:300])
+            raise ScrapeProviderError(f"{_store_name(url)} didn't let us read this product page right now. Try again in a minute, "
+                                      "or add the item with a photo.", code="store_blocked") from exc
         except Exception as exc:
             safe_message = str(exc).replace(self.settings.brightdata_api_token.get_secret_value(), "[REDACTED]")
             logger.error("Product scraping failed host=%s type=%s error=%s", urlsplit(url).hostname, type(exc).__name__, safe_message[:2000])

@@ -192,3 +192,8 @@ create table if not exists public.admin_audit (
 );
 create index if not exists admin_audit_created_idx on public.admin_audit (created_at desc);
 alter table public.admin_audit enable row level security;
+
+-- The API uses the service role. Grant it the admin tables explicitly (some projects do not expose new
+-- tables automatically), then make Supabase's API reload its table list so it sees them at once.
+grant select, insert, update, delete on public.activity_events, public.support_tickets, public.app_settings, public.admin_audit to service_role;
+notify pgrst, 'reload schema';

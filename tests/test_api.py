@@ -2221,3 +2221,80 @@ def test_meesho_share_link_is_cleaned() -> None:
     shared = "Check out this product on Meesho! https://www.meesho.com/trendy-men-shirt/p/4xk2lm?utm_source=s_cc&utm_medium=whatsapp"
     assert extract_url(shared) == "https://www.meesho.com/trendy-men-shirt/p/4xk2lm"
     assert extract_url("https://meesho.com/s/p/4kh5lb?utm_source=s") == "https://meesho.com/s/p/4kh5lb?utm_source=s"  # short link: left to redirect
+
+
+def _flight_page(product: dict) -> str:
+    """A Next.js app-router page: the product travels inside self.__next_f.push string chunks."""
+    payload = '5:["$","div",null,{"children":' + json.dumps({"product": {"details": {"data": product}}}) + "}]\n"
+    half = len(payload) // 2
+    chunks = "".join(f"<script>self.__next_f.push([1,{json.dumps(part)}])</script>" for part in (payload[:half], payload[half:]))
+    return "<html><body>" + chunks + "<script>/* access denied handler */</script>" + "x" * 60_000 + "</body></html>"
+
+
+MEESHO_FLIGHT_PRODUCT = {
+    "product_id": "4xk2lm", "name": "Floral Kurti", "images": ["https://images.meesho.com/images/products/9/a_512.webp"],
+    "price": 299, "mrp_details": {"mrp": 799}, "variations": ["S", "M", "L"],
+    "suppliers": [{"price": 299, "inventory": [{"variation": {"name": "L"}, "in_stock": False}]}],
+}
+
+
+def test_meesho_app_router_page_is_read_and_not_mistaken_for_a_bot_wall() -> None:
+    from app.scraper import _looks_blocked, _structured_product
+
+    page = _flight_page(MEESHO_FLIGHT_PRODUCT)
+    assert not _looks_blocked(page)
+    assert _looks_blocked("<html><title>Access Denied</title>You don't have permission</html>")
+    found = _structured_product(page, "https://www.meesho.com/floral-kurti/p/4xk2lm")
+    assert found["title"] == "Floral Kurti" and found["price"] == 299 and found["mrp"] == 799
+    assert found["sizes"] == ["S", "M"] and found["unavailable_sizes"] == ["L"]
+
+
+def test_meesho_falls_back_to_a_real_browser_when_the_unlocker_is_walled() -> None:
+    import asyncio
+
+    from app.scraper import BrightDataScraper
+
+    calls = []
+
+    class StubScraper(BrightDataScraper):
+        async def _fetch_html_via_unlocker(self, url: str) -> str | None:
+            return "<html><title>Access Denied</title></html>"
+
+        async def _fetch_html_directly(self, url: str) -> str | None:
+            return None
+
+        async def _fetch_html_via_browser(self, url: str) -> str | None:
+            calls.append(url)
+            return _flight_page(MEESHO_FLIGHT_PRODUCT)
+
+        async def _fetch_page(self, url: str) -> str:
+            raise AssertionError("markdown is not needed once the browser found the product")
+
+    result = asyncio.run(StubScraper(SETTINGS).scrape("https://www.meesho.com/floral-kurti/p/4xk2lm", "IN"))
+    assert calls and result.data.title == "Floral Kurti" and result.data.price.amount == 299
+    assert result.data.image_urls[0].startswith("https://images.meesho.com/")
+
+
+def test_a_store_that_blocks_every_fetch_gets_a_clear_message() -> None:
+    import asyncio
+
+    import pytest
+
+    from app.scraper import BrightDataScraper, ScrapeProviderError
+
+    class Walled(BrightDataScraper):
+        async def _fetch_html_via_unlocker(self, url: str) -> str | None:
+            return None
+
+        async def _fetch_html_directly(self, url: str) -> str | None:
+            return None
+
+        async def _fetch_html_via_browser(self, url: str) -> str | None:
+            return None
+
+        async def _fetch_page(self, url: str) -> str:
+            raise ScrapeProviderError("upstream 403 from zone")
+
+    with pytest.raises(ScrapeProviderError) as caught:
+        asyncio.run(Walled(SETTINGS).scrape("https://www.meesho.com/floral-kurti/p/4xk2lm", "IN"))
+    assert caught.value.code == "store_blocked" and caught.value.args[0].startswith("Meesho didn't let us read")

@@ -92,6 +92,7 @@ async function api(path, opts = {}, auth = true){
     throw Error('Could not reach MyDripCheck. Check your connection and try again.');
   }
   const payload = res.status === 204 ? {} : await res.json().catch(() => ({}));
+  if (res.status === 503 && payload?.detail?.code === 'maintenance') showMaintenance({maintenance: true, maintenance_message: payload.detail.message});
   if (!res.ok){ const e = Error(apiError(payload, `Something went wrong (${res.status}). Please try again.`)); e.status = res.status; e.code = payload?.detail?.code; throw e; }
   return payload;
 }
@@ -1298,10 +1299,33 @@ async function sendHelp(){
   } catch (err){ fail(err.message, '#helpMessage'); }
 }
 function showSiteBanner(site){
+  if (!site) return;
   state.site = site;
-  const el = $('#siteBanner'); if (!el || !site) return;
-  const text = site.maintenance ? site.maintenance_message : site.announcement;
-  el.hidden = !text; el.textContent = text || ''; el.classList.toggle('warn', Boolean(site.maintenance));
+  const el = $('#siteBanner');
+  if (el){ el.hidden = !site.announcement || site.maintenance; el.textContent = site.announcement || ''; }
+  showMaintenance(site.maintenance ? site : null);
+}
+/* Full-screen maintenance page. It checks /v1/site every 20 seconds and steps aside as soon as the site is back. */
+function showMaintenance(site){
+  const el = $('#maint'); if (!el) return;
+  const on = Boolean(site);
+  if (on){
+    $('#maintText').textContent = site.maintenance_message || 'MyDripCheck is getting an upgrade. New looks are paused for a few minutes.';
+    const mail = site.support_email || state.site?.support_email;
+    $('#maintContact').hidden = !mail;
+    if (mail){ $('#maintEmail').textContent = mail; $('#maintEmail').href = 'mailto:' + mail; }
+    if (el.hidden){ el.hidden = false; document.body.classList.add('maint-on'); setTimeout(() => $('#maintTitle')?.focus(), 50); }
+  } else if (!el.hidden){
+    el.hidden = true; document.body.classList.remove('maint-on'); toast("We're back. Thanks for waiting.");
+  }
+  clearTimeout(showMaintenance.timer);
+  showMaintenance.timer = setTimeout(checkSite, on ? 20000 : 120000);
+}
+function checkSite(){
+  return fetch(apiUrl('/v1/site'), {cache:'no-store'}).then(r => r.ok ? r.json() : null).then(site => {
+    if (site) showSiteBanner(site);
+    else showMaintenance.timer = setTimeout(checkSite, 30000);
+  }).catch(() => { showMaintenance.timer = setTimeout(checkSite, 30000); });
 }
 
 /* ---------- Sheets ---------- */
@@ -1333,7 +1357,7 @@ function renderAdd(){
       ${slotSelect('importSlot', i.slot, 'import-slot')}
       ${i.sizes.length ? `<div style="display:grid;gap:6px"><p class="small" style="font-weight:800">Your size <span class="muted" style="font-weight:600">· optional for now</span></p>${sizesHtml(i, state.draftSize, 'draft-size')}</div>` : ''}
       <div style="display:flex;gap:10px"><button class="btn" style="flex:1" data-act="confirm-add">${icon('plus','s')} Add to look</button><button class="btn ghost" data-act="add-reset">Back</button></div>`;
-    } else body = `<form id="addForm" novalidate style="display:grid;gap:10px"><label class="field" for="addLink">Link from any store<input class="input" id="addLink" type="text" inputmode="url" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="Paste a Myntra, Amazon, AJIO or Nike link" aria-describedby="addError addTip"></label><p class="error" id="addError" role="alert">${esc(state.importError)}</p><button class="btn wide" type="submit">Find product</button></form>
+    } else body = `<form id="addForm" novalidate style="display:grid;gap:10px"><label class="field" for="addLink">Link from any store<input class="input" id="addLink" type="text" inputmode="url" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="Paste a Myntra, Amazon, AJIO or Nike link" aria-describedby="addError addTip"></label><p class="error" id="addError" role="alert">${esc(state.importError)}</p>${state.importError && state.importBlocked ? `<button class="btn quiet wide" type="button" data-act="add-by-photo">${icon('camera','s')} Add it with a photo instead</button>` : ''}<button class="btn wide" type="submit">Find product</button></form>
       <p class="tiny muted" id="addTip">Tip: in the store's app, tap Share, then Copy link.</p>`;
   } else if (state.addTab === 'wardrobe'){
     if (!state.wardrobe){ if (!state.wardrobeLoading && !state.wardrobeError) setTimeout(loadWardrobe, 0); }
@@ -1405,12 +1429,12 @@ async function importLink(raw, inSheet){
     return;
   }
   if (inSheet){
-    Object.assign(state, {importing:true, importError:'', draftSize:null}); renderAdd();
+    Object.assign(state, {importing:true, importError:'', importBlocked:false, draftSize:null}); renderAdd();
     try {
       const item = await scrape(url);
       if (state.addSlot && item.detected == null) item.slot = state.addSlot;
       state.imported = item;
-    } catch (err){ state.importError = err.message; }
+    } catch (err){ state.importError = err.message; state.importBlocked = err.code === 'store_blocked'; }
     finally { state.importing = false; if ($('#addSheet').open){ renderAdd(); if (state.importError){ $('#addLink').value = url; } } }
     return;
   }
@@ -1422,7 +1446,10 @@ async function importLink(raw, inSheet){
     go('builder');
     toast(`${short(item)} added from ${item.store}`, {action:{label:'Add more', run:() => openAdd(openSlots()[0]?.key || 'bottom')}});
   } catch (err){
-    if ($('#homeError')){ $('#homeError').textContent = err.message; btn.disabled = false; btn.textContent = 'Add'; }
+    if ($('#homeError')){
+      $('#homeError').innerHTML = esc(err.message) + (err.code === 'store_blocked' ? ` <button class="link" type="button" data-act="add-by-photo">Add it with a photo</button>` : '');
+      btn.disabled = false; btn.textContent = 'Add';
+    }
   }
 }
 function openPhoto(){
@@ -1598,6 +1625,8 @@ document.addEventListener('click', e => {
       toast(`${w.name} added from your wardrobe`); break;
     }
     case 'upload-item': $('#itemFile').click(); break;
+    case 'maint-check': $('#maintStatus').textContent = 'Checking…'; checkSite().then(() => { if (!$('#maint').hidden) $('#maintStatus').textContent = "Still upgrading. This page reopens by itself when we're back."; }); break;
+    case 'add-by-photo': if ($('#addSheet').open){ state.addTab = 'photo'; renderAdd(); } else { openAdd(openSlots()[0]?.key || 'top'); state.addTab = 'photo'; renderAdd(); } break;
     case 'wtab': state.wardrobeTab = t.dataset.tab; render(); break;
     case 'wfilter': state.wardrobeFilter = t.dataset.filter; render(); break;
     case 'wardrobe-retry': state.wardrobeError = ''; loadWardrobe(true); break;
@@ -1687,7 +1716,7 @@ document.querySelectorAll('dialog.sheet').forEach(d => {
   fetch(apiUrl('/health'), {cache:'no-store'}).catch(() => {});
   render();
   if (location.hash === '#help') setTimeout(openHelp, 300);
-  fetch(apiUrl('/v1/site')).then(r => r.ok ? r.json() : null).then(showSiteBanner).catch(() => {});
+  checkSite();
   fetch(apiUrl('/v1/billing/config')).then(r => r.ok ? r.json() : null).then(cfg => { state.billingCfg = cfg; if (state.view === 'pricing') render(); }).catch(() => {});
   session().catch(() => {}).then(() => { refreshAccount(); if (!state.balance) loadBalance(); syncPendingOrder(); });
 })();

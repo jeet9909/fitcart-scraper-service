@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     max_concurrent_scrapes: int = Field(default=5, ge=1, le=100)
     allowed_product_hosts_csv: str = Field(default="", validation_alias="ALLOWED_PRODUCT_HOSTS")
     unlimited_emails_csv: str = Field(default="", validation_alias="UNLIMITED_EMAILS")
+    maintenance_mode: bool = Field(default=False, validation_alias="MAINTENANCE_MODE", description="Emergency switch: pauses try-ons even when the database is unreachable")
     look_limits_enabled: bool = True
     free_looks_per_month: int = Field(default=2, ge=0, le=100)
     razorpay_key_id: str = ""

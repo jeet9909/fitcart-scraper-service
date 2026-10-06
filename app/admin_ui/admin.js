@@ -305,6 +305,8 @@ const VIEWS = {
     const toggle = (key, t, sub) => `<label class="setting"><span><b>${t}</b><small>${sub}</small></span><input class="switch" type="checkbox" name="${key}" ${s[key] ? 'checked' : ''}></label>`;
     return title('WORKSPACE PREFERENCES', 'Settings', 'Switches that change the live site, and who changed what.')
       + (d.setup_needed ? setupNote('saved settings and the audit log') : '')
+      + (d.maintenance_forced ? `<div class="alert bad">${ico('warn')}<p><b>Maintenance is forced on from Render</b>MAINTENANCE_MODE is true in Render's environment, so the switch below cannot turn it off. Set it to false in Render to reopen the site.</p></div>` : '')
+      + (Object.keys(d.backup?.tables_on_backup || {}).length ? `<div class="alert">${ico('info')}<p><b>Running on backup storage</b>Supabase's API cannot use ${esc(Object.keys(d.backup.tables_on_backup).join(', '))}, so these are saved in the private <code>${esc(d.backup.bucket)}</code> storage bucket instead. Everything here still works. To move them back, run <code>supabase/schema.sql</code> in the Supabase SQL editor.${d.backup.storage_error ? ' Backup storage also failed, so changes last until the next deploy: ' + esc(d.backup.storage_error) : ''}</p></div>` : '')
       + `<div class="two"><section class="panel"><h2>Live site controls</h2><p class="sub">Saved to the database and picked up by the API within 30 seconds.</p>
         ${toggle('maintenance', 'Maintenance mode', 'Pause new looks, 360° views and poses for everyone. Browsing and payments keep working.')}
         <label class="field">Maintenance message<input id="setMaintenanceMessage" maxlength="300" value="${esc(s.maintenance_message)}"></label>

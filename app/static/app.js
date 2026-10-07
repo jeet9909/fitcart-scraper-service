@@ -559,13 +559,10 @@ function buildSteps(){
     {label:'Final touches', ms:0},
   ];
 }
+/* While a look is drawn, the page already has the result's shape: the photo frosted behind moving scan lines
+   where the look will appear, and skeletons where the shop list, actions, poses and feedback will be. */
 function generating(){
   const g = state.gen;
-  const confetti = Array.from({length:18}, (_, i) => {
-    const a = (i / 18) * Math.PI * 2, d = 110 + (i % 3) * 40;
-    const colors = ['var(--accent)','var(--gold)','var(--teal)','var(--accent-line)'];
-    return `<i style="--x:${Math.round(Math.cos(a) * d)}px;--y:${Math.round(Math.sin(a) * d)}px;--r:${(i * 47) % 360}deg;--c:${colors[i % 4]};--d:${(i % 6) * 25}ms"></i>`;
-  }).join('');
   if (g.error){
     return `<section class="gen" aria-labelledby="genTitle">
       <div class="gen-stage"><div class="gen-visual" aria-hidden="true"><div class="layer l-photo"><img src="${state.photo || ''}" alt=""></div></div></div>
@@ -577,26 +574,34 @@ function generating(){
       </div>
     </section>`;
   }
-  return `<section class="gen" aria-labelledby="genTitle">
-    <div class="gen-stage">
-      <div class="gen-visual p1" id="genVisual" aria-hidden="true">
+  const bar = (w, h = 12) => `<span class="sk" style="width:${w};height:${h}px"></span>`;
+  const pieces = orderedLook();
+  return `<section class="result generating" aria-labelledby="genTitle" aria-busy="true">
+    <div class="result-head"><div><p class="eyebrow">Your look</p><h1 id="genTitle" style="margin-top:4px">Putting your look together</h1></div>
+      <div class="gen-pills" aria-hidden="true"><span class="sk-pill ok">${icon('lock','s')}${bar('70px', 10)}</span><span class="sk-pill gold">${icon('body','s')}${bar('70px', 10)}</span></div></div>
+    <div class="result-visual">
+      <div class="gen-visual gen-frame p1" id="genVisual" aria-hidden="true">
         <div class="layer l-photo"><img src="${state.photo || ''}" alt=""></div>
-        <div class="layer l-aura"><i></i><i></i><i></i></div>
         <div class="layer l-glass"></div>
+        <div class="layer l-lines"><i class="h"></i><i class="v"></i></div>
+        <div class="layer l-divider"><span class="gen-knob">${icon('swap')}</span></div>
         <div class="layer l-shutter" id="genShutter"></div>
         <div class="layer l-sharp"><img id="genSharp" alt=""></div>
         <div class="layer l-scan"></div>
-        <div class="confetti">${confetti}</div>
       </div>
-      ${privatePill('Your photo stays private')}
-    </div>
-    <div class="gen-side">
-      <h1 class="gen-title" id="genTitle">Creating your look</h1>
-      <ol class="stages" id="genStages">${g.steps.map((s, i) => `<li data-i="${i}"><span class="dot"></span><span>${esc(s.label)}</span></li>`).join('')}</ol>
-      <div class="gen-foot">
+      <div class="gen-status">
+        <p class="gen-step" id="genStep" role="status">Preparing your preview</p>
         <div class="progress" role="progressbar" aria-label="Try-on progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="genBar"><i></i></div>
-        <div class="gen-foot-row"><span class="small muted">Usually 20 to 45 seconds</span><button class="btn ghost small" data-act="cancel">Cancel</button></div>
+        <div class="gen-foot-row"><span class="tiny muted">Usually 20 to 45 seconds. ${privatePill('Your photo stays private')}</span><button class="btn ghost small" data-act="cancel">Cancel</button></div>
       </div>
+    </div>
+    <div class="gen-skeleton" aria-hidden="true">
+      <div class="card shop">${bar('52%', 22)}${bar('38%')}${pieces.map(() => `<div class="shop-row"><span class="sk sk-thumb"></span><div style="display:grid;gap:8px">${bar('82%', 14)}${bar('46%')}</div><span></span></div>`).join('')}</div>
+      <div class="actions">${['share','redo','edit','body'].map(i => `<div class="action">${icon(i)}${bar('58%', 10)}</div>`).join('')}</div>
+      <div class="card spin-card"><div class="spin-card-art">${icon('spin')}</div><div style="display:grid;gap:8px">${bar('70%', 14)}${bar('92%')}</div>${bar('96px', 34)}</div>
+      <div class="card poses-card">${bar('46%', 16)}${bar('88%')}<div class="pose-chips">${SOCIAL_POSES.map(() => `<span class="pose-chip">${icon('body','s')}${bar('64px', 10)}</span>`).join('')}</div></div>
+      <div class="card feedback">${bar('40%', 14)}<div class="thumbs"><span class="btn ghost small">${icon('up','s')}${bar('26px', 10)}</span><span class="btn ghost small">${icon('down','s')}${bar('34px', 10)}</span></div></div>
+      ${bar('100%', 10)}
     </div>
   </section>`;
 }
@@ -664,6 +669,8 @@ function startGeneration(){
 function later(fn, ms){ const t = setTimeout(fn, ms); state.gen?.timers.push(t); return t; }
 function paintGen(){
   const g = state.gen; if (!g) return;
+  const label = $('#genStep');
+  if (label && g.at < g.steps.length) label.textContent = `${g.steps[g.at].label} · step ${g.at + 1} of ${g.steps.length}`;
   document.querySelectorAll('#genStages li').forEach(li => {
     const i = Number(li.dataset.i);
     li.className = i < g.at ? 'done' : i === g.at ? 'now' : '';
@@ -672,7 +679,7 @@ function paintGen(){
   });
   const frac = g.at / g.steps.length;
   const v = $('#genVisual');
-  if (v && !v.classList.contains('p4')) v.className = 'gen-visual ' + (frac < .2 ? 'p1' : frac < .55 ? 'p2' : 'p3');
+  if (v && !v.classList.contains('p4')) v.className = 'gen-visual gen-frame ' + (frac < .2 ? 'p1' : frac < .55 ? 'p2' : 'p3');
 }
 function setBar(fraction, ms){
   const bar = $('#genBar'); if (!bar) return;
@@ -710,8 +717,9 @@ async function finishGeneration(){
   shutter.style.setProperty('--img', `url("${url.replace(/"/g, '%22')}")`);
   shutter.innerHTML = Array.from({length:8}, (_, i) => `<i style="--i:${i}"></i>`).join('');
   const v = $('#genVisual');
-  v.className = 'gen-visual p4';
+  v.className = 'gen-visual gen-frame p4';
   $('#genTitle').textContent = 'Your look is ready';
+  if ($('#genStep')) $('#genStep').textContent = 'Your look is ready';
   announce('Your look is ready');
   later(() => v.classList.add('done'), REDUCED.matches ? 0 : 1650);  // after the eight slats and the final settle
   later(() => {
@@ -988,6 +996,10 @@ async function askStylist(occasion){
   finally { state.ideasLoading = false; if (state.view === 'wardrobe') render(); }
 }
 function wardrobe(){
+  if (!state.account) return `<section style="display:grid;gap:18px;padding-top:8px">
+    <div class="page-head" style="padding-top:0"><div><p class="eyebrow">Wardrobe</p><h1>Your clothes</h1></div></div>
+    <div class="empty">${EMPTY_ART}<h2>Sign in to build your wardrobe</h2><p class="muted">Save clothes you own and pieces from stores, then let the AI stylist mix them into outfits. Your wardrobe is kept in your account, on every device.</p><button class="btn brand" data-act="signin-wardrobe">${icon('user','s')} Log in or create an account</button></div>
+  </section>`;
   if (!state.wardrobe && !state.wardrobeLoading && !state.wardrobeError) setTimeout(() => loadWardrobe(), 0);
   const all = state.wardrobe || [];
   const list = all.filter(w => w.collection === state.wardrobeTab && (state.wardrobeFilter === 'all' || w.slot === state.wardrobeFilter));
@@ -1080,7 +1092,7 @@ function renderSignin(){
   } else {
     const signup = s.mode === 'signup';
     body = `<form id="signinForm" novalidate style="display:grid;gap:14px">
-      ${s.reason === 'free' ? `<div class="notice">${icon('user')}<span>Sign in to get <strong>${state.balance?.free_looks_per_month ?? 3} free looks every month</strong>. Your looks and wardrobe are saved to your account.</span></div>` : s.reason === 'buy' ? `<div class="notice">${icon('lock')}<span>Sign in first so your pass or plan is added to your account.</span></div>` : ''}
+      ${s.reason === 'free' ? `<div class="notice">${icon('user')}<span>Sign in to get <strong>${state.balance?.free_looks_per_month ?? 2} free looks every month</strong>. Your looks and wardrobe are saved to your account.</span></div>` : s.reason === 'wardrobe' ? `<div class="notice">${icon('hanger')}<span>Sign in to save clothes. Your wardrobe is kept in your account, so it follows you to every device.</span></div>` : s.reason === 'buy' ? `<div class="notice">${icon('lock')}<span>Sign in first so your pass or plan is added to your account.</span></div>` : ''}
       <div class="seg" role="tablist" aria-label="Sign in or create an account"><button type="button" role="tab" aria-selected="${!signup}" data-act="signin-mode" data-mode="login">Log in</button><button type="button" role="tab" aria-selected="${signup}" data-act="signin-mode" data-mode="signup">Create account</button></div>
       <label class="field" for="signinEmail">Email<input class="input" id="signinEmail" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com" value="${esc(s.email)}" required></label>
       <label class="field" for="signinPassword">Password<span class="pw-wrap"><input class="input" id="signinPassword" type="password" autocomplete="${signup ? 'new-password' : 'current-password'}" minlength="8" maxlength="72" placeholder="${signup ? 'At least 8 characters' : 'Your password'}" required><button type="button" class="pw-toggle" data-act="toggle-password" aria-label="Show password">Show</button></span></label>
@@ -1109,6 +1121,7 @@ async function submitSignin(rawEmail, password){
 }
 function signedIn(payload){
   startAccountSession(payload);
+  Object.assign(state, {wardrobe:null, wardrobeError:'', ideas:[], ideasError:'', gallery:null});
   closeSheet($('#signinSheet'));
   state.balance = null;
   render();
@@ -1508,7 +1521,10 @@ function renderItemSheet(){
       closeSheet($('#itemSheet'));
       if (d.addAfter){ addToLook(fromWardrobe(w)); closeSheet($('#addSheet')); if (state.view !== 'builder') go('builder'); else render(); toast(`${w.name} added to your look and wardrobe`); }
       else { state.wardrobeTab = 'home'; render(); toast(`${w.name} saved to My clothes`); }
-    } catch (err){ d.saving = false; d.error = err.message; renderItemSheet(); }
+    } catch (err){
+      if (err.code === 'sign_in_required'){ closeSheet($('#itemSheet')); openSignin('wardrobe'); return; }
+      d.saving = false; d.error = err.message; renderItemSheet();
+    }
   };
 }
 async function saveToWardrobe(index){
@@ -1531,7 +1547,10 @@ async function saveToWardrobe(index){
     i.wardrobeId = w.id;
     if (state.wardrobe) state.wardrobe.unshift(w);
     toast('Saved to your wardrobe', {action:{label:'Open', run:() => { state.wardrobeTab = 'store'; go('wardrobe'); }}});
-  } catch (err){ toast(err.message, {kind:'error'}); }
+  } catch (err){
+    if (err.code === 'sign_in_required') openSignin('wardrobe');
+    else toast(err.message, {kind:'error', action:err.code === 'wardrobe_full' ? {label:'See plans', run:() => go('pricing')} : undefined});
+  }
   finally { i.saving = false; render(); }
 }
 
@@ -1539,8 +1558,9 @@ async function saveToWardrobe(index){
 function loadImage(src){ return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(Error('This image could not be opened. Try another photo.')); i.src = src; }); }
 async function readPhoto(file, maxSide = 1600){
   if (!file) throw Error('Choose a photo.');
-  if (!['image/jpeg','image/png','image/webp'].includes(file.type)) throw Error('Use a JPG, PNG or WebP photo.');
-  if (file.size > 10 * 1024 * 1024) throw Error('That photo is over 10 MB. Try a smaller one.');
+  if (!['image/jpeg','image/png','image/webp'].includes(file.type)) throw Error(`${/\.(heic|heif)$/i.test(file.name) ? 'HEIC photos are not supported yet.' : "That file isn't a photo we can use."} Use a JPG, PNG or WebP photo.`);
+  // Photos are shrunk here before upload, so big phone photos are fine; this only stops files too big to open.
+  if (file.size > 30 * 1024 * 1024) throw Error('That photo is over 30 MB. Try a smaller one.');
   const raw = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(Error('This file could not be read.')); r.readAsDataURL(file); });
   const im = await loadImage(raw);
   if (im.naturalWidth * im.naturalHeight > 50000000) throw Error('Please use a photo under 50 megapixels.');
@@ -1609,7 +1629,8 @@ document.addEventListener('click', e => {
       go('builder'); toast('Sample look loaded. Add real pieces from any store link.'); break;
     case 'add': openAdd(t.dataset.slot); break;
     case 'remove': removeAt(Number(t.dataset.index)); break;
-    case 'save-piece': saveToWardrobe(Number(t.dataset.index)); break;
+    case 'save-piece': if (!state.account){ openSignin('wardrobe'); break; } saveToWardrobe(Number(t.dataset.index)); break;
+    case 'signin-wardrobe': openSignin('wardrobe'); break;
     case 'size': { const p = state.look[Number(t.dataset.index)]; p.size = p.size === t.dataset.size ? null : t.dataset.size; render(); document.querySelector(`[data-act="size"][data-index="${t.dataset.index}"][data-size="${CSS.escape(t.dataset.size)}"]`)?.focus(); break; }
     case 'open-photo': openPhoto(); break;
     case 'pick-photo': $('#photoFile').click(); break;
@@ -1637,7 +1658,7 @@ document.addEventListener('click', e => {
       if (state.view !== 'builder') go('builder'); else render();
       toast(`${w.name} added from your wardrobe`); break;
     }
-    case 'upload-item': $('#itemFile').click(); break;
+    case 'upload-item': if (!state.account){ closeSheet($('#addSheet')); openSignin('wardrobe'); break; } $('#itemFile').click(); break;
     case 'maint-check': $('#maintStatus').textContent = 'Checking…'; checkSite().then(() => { if (!$('#maint').hidden) $('#maintStatus').textContent = "Still upgrading. This page reopens by itself when we're back."; }); break;
     case 'add-by-photo': if ($('#addSheet').open){ state.addTab = 'photo'; renderAdd(); } else { openAdd(openSlots()[0]?.key || 'top'); state.addTab = 'photo'; renderAdd(); } break;
     case 'wtab': state.wardrobeTab = t.dataset.tab; render(); break;

@@ -841,6 +841,45 @@ textarea.input{font-family:inherit;resize:vertical}
 }
 @keyframes sweep{0%,100%{--pos:50%}30%{--pos:82%}65%{--pos:20%}}
 @keyframes underline{from{transform:scaleX(0)}}
+
+/* Generating: the result page's shape, still loading. The photo sits frosted behind fine scan lines; everything
+   else is a skeleton until the look arrives, then the shutter reveal plays and the real page fills in. */
+.generating .gen-frame{width:100%;min-width:0;aspect-ratio:3/4;box-shadow:var(--shadow);border-radius:var(--r-l)}
+.generating .gen-frame .l-photo{filter:blur(16px) saturate(.8) brightness(1.05);transform:scale(1.1)}
+.generating .gen-frame.p2 .l-photo{filter:blur(12px) saturate(.85) brightness(1.04)}
+.generating .gen-frame.p3 .l-photo{filter:blur(8px) saturate(.9) brightness(1.02)}
+.generating .gen-frame.p4 .l-photo{filter:none;transform:none}
+.generating .gen-frame .l-glass{opacity:1;background:color-mix(in srgb,var(--surface) 30%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,#fff 45%,transparent)}
+.l-lines{overflow:hidden;background-image:linear-gradient(to right,color-mix(in srgb,#fff 22%,transparent) 1px,transparent 1px),linear-gradient(to bottom,color-mix(in srgb,#fff 22%,transparent) 1px,transparent 1px);background-size:12.5% 9.375%}
+.l-lines i{position:absolute;background:#fff;opacity:.9;box-shadow:0 0 14px 2px color-mix(in srgb,var(--accent) 40%,transparent)}
+.l-lines .h{left:0;right:0;height:1px;top:8%;animation:gen-y 3.2s ease-in-out infinite alternate}
+.l-lines .v{top:0;bottom:0;width:1px;left:10%;animation:gen-x 4.4s ease-in-out infinite alternate}
+@keyframes gen-y{to{top:92%}}
+@keyframes gen-x{to{left:90%}}
+.l-divider{display:grid;place-items:center}
+.l-divider::before{content:"";position:absolute;top:0;bottom:0;left:50%;width:1px;background:color-mix(in srgb,#fff 80%,transparent)}
+.gen-knob{position:relative;width:52px;height:52px;border-radius:50%;display:grid;place-items:center;background:color-mix(in srgb,#fff 70%,transparent);border:2px solid var(--accent);color:var(--ink)}
+.gen-knob svg{width:22px;height:22px}
+.gen-frame.p4 .l-lines,.gen-frame.p4 .l-divider,.gen-frame.p4 .l-glass{opacity:0;transition:opacity .4s var(--ease)}
+.gen-status{display:grid;gap:10px;justify-items:stretch;text-align:center}
+.gen-step{font-weight:700;color:var(--ink-2);min-height:1.5em}
+.gen-status .gen-foot-row{text-align:left}
+.gen-status .private{margin-left:6px;vertical-align:middle}
+.gen-skeleton{display:grid;gap:14px;align-content:start}
+.gen-skeleton .action{color:var(--muted)}
+.gen-skeleton .action .sk,.gen-skeleton .pose-chip .sk,.gen-skeleton .btn .sk,.sk-pill .sk,.sk-seg .sk{display:inline-block}
+.gen-skeleton .pose-chip{pointer-events:none;color:var(--muted)}
+.gen-skeleton .btn{pointer-events:none}
+.sk-thumb{width:56px;aspect-ratio:3/4}
+.gen-pills{display:flex;gap:8px}
+.sk-pill{display:inline-flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;background:var(--surface-2);color:var(--muted)}
+.sk-pill.ok{background:var(--ok-soft);color:var(--ok)}
+.sk-pill.gold{background:var(--gold-soft);color:var(--gold)}
+.sk-seg{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;border-radius:8px;background:var(--surface-2)}
+.sk-seg span{display:flex;align-items:center;justify-content:center;gap:10px;min-height:44px;border-radius:6px;color:var(--muted)}
+.sk-seg span.on{background:var(--surface)}
+@media (min-width:960px){.generating .result-visual .gen-frame{height:min(calc(100vh - 230px),760px);min-height:520px;width:auto;max-width:100%;margin-inline:auto}}
+@media (prefers-reduced-motion:reduce){.l-lines i{animation:none}.l-lines .h{top:50%}.l-lines .v{left:50%}}
 </style>
 </head>
 <body>

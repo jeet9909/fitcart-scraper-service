@@ -292,12 +292,12 @@ function bindCompare(el){
 const PLANS = [
   {key:'free', name:'Free', for:'Try MyDripCheck on your next outfit.', monthly:0, yearly:0, looks:2, quality:'Standard', imports:15, stylist:1, wardrobe:25, cta:'Start free',
    perks:['2 looks a month','Standard quality','25 wardrobe items','1 AI stylist idea','Last 5 looks saved']},
-  {key:'pass', name:'Occasion Pass', for:'One-time pack for a wedding, festival or trip. Pay once, stacks on any plan.', once:129, listOnce:149, days:7, looks:7, quality:'HD', imports:30, stylist:5, wardrobe:25, cta:'Buy the pass',
-   perks:['7 looks for 7 days','HD quality','25 wardrobe items','5 AI stylist ideas','Last 5 looks saved']},
-  {key:'plus', name:'Plus', for:'For people who shop online every month.', monthly:349, listMonthly:399, yearly:3299, looks:18, quality:'HD', imports:150, stylist:20, wardrobe:200, cta:'Get Plus', popular:true,
-   perks:['18 looks a month','HD quality','200 wardrobe items','20 AI stylist ideas','Full looks history','3 social-ready poses']},
-  {key:'pro', name:'Pro', for:'For stylists, creators and big wardrobes.', monthly:799, listMonthly:999, yearly:7499, looks:40, quality:'HD', imports:300, stylist:40, wardrobe:1000, cta:'Get Pro',
-   perks:['40 looks a month','HD quality','1,000 wardrobe items','40 AI stylist ideas','Full looks history','All 8 social-ready poses','360° view of every look','Priority generation']},
+  {key:'pass', name:'Occasion Pass', for:'One-time pack for a wedding, festival or trip. Pay once, stacks on any plan.', once:129, listOnce:149, days:7, looks:7, quality:'4K', imports:30, stylist:5, wardrobe:25, cta:'Buy the pass',
+   perks:['7 looks for 7 days','4K quality','25 wardrobe items','5 AI stylist ideas','Last 5 looks saved']},
+  {key:'plus', name:'Plus', for:'For people who shop online every month.', monthly:349, listMonthly:399, yearly:3299, looks:18, quality:'4K', imports:150, stylist:20, wardrobe:200, cta:'Get Plus', popular:true,
+   perks:['18 looks a month','4K quality','200 wardrobe items','20 AI stylist ideas','Full looks history','3 social-ready poses']},
+  {key:'pro', name:'Pro', for:'For stylists, creators and big wardrobes.', monthly:799, listMonthly:999, yearly:7499, looks:40, quality:'4K', imports:300, stylist:40, wardrobe:1000, cta:'Get Pro',
+   perks:['40 looks a month','4K quality','1,000 wardrobe items','40 AI stylist ideas','Full looks history','All 8 social-ready poses','360° view of every look','Priority generation']},
 ];
 // Shown price, crossed-out list price and the discount between them. Yearly plans compare the
 // monthly equivalent with the monthly list price.

@@ -205,7 +205,7 @@ def test_swagger_double_bearer_format_is_accepted() -> None:
             )
         # Authentication succeeded; gallery configuration is intentionally absent.
         assert response.status_code == 503
-        assert response.json()["detail"].startswith("Try-on service is not configured")
+        assert response.json()["detail"].startswith("MyDripCheck is being set up")  # the log names the missing setting
     finally:
         app.dependency_overrides.clear()
 
@@ -2388,3 +2388,42 @@ def test_a_store_that_blocks_every_fetch_gets_a_clear_message() -> None:
     with pytest.raises(ScrapeProviderError) as caught:
         asyncio.run(Walled(SETTINGS).scrape("https://www.meesho.com/floral-kurti/p/4xk2lm", "IN"))
     assert caught.value.code == "store_blocked" and caught.value.args[0].startswith("Meesho didn't let us read")
+
+
+def test_wardrobe_space_follows_the_plan() -> None:
+    from app.wardrobe import wardrobe_limit
+
+    assert wardrobe_limit(set()) == 25 and wardrobe_limit({"free", "pass"}) == 25
+    assert wardrobe_limit({"pass", "plus"}) == 200 and wardrobe_limit({"pro"}) == 1000 and wardrobe_limit({"*"}) == 1000
+
+
+def test_full_wardrobe_says_how_much_the_plan_holds() -> None:
+    import asyncio
+
+    import httpx as _httpx
+    import pytest
+
+    from app.tryon import TryOnError
+    from app.wardrobe import WardrobeService
+
+    class Storage:
+        async def rest(self, method, table, **kwargs):
+            return _httpx.Response(200, headers={"content-range": "0-24/25"}, request=_httpx.Request(method, "https://x"))
+
+    with pytest.raises(TryOnError) as full:
+        asyncio.run(WardrobeService(Storage()).add("u", "home", "top", "Tee", (b"x", "image/png", "png"), limit=25))
+    assert full.value.status_code == 409 and "holds 25 items" in str(full.value) and "Plus holds 200" in str(full.value)
+
+
+def test_guests_are_asked_to_sign_in_before_saving_clothes() -> None:
+    from app.anonymous_auth import create_anonymous_session
+
+    app.dependency_overrides[get_runtime_settings] = lambda: LIMIT_SETTINGS
+    try:
+        with TestClient(app) as client:
+            guest = create_anonymous_session(LIMIT_SETTINGS).access_token
+            response = client.post("/v1/wardrobe", data={"collection": "home", "slot": "top"},
+                                   files={"image": ("t.png", _sample("tee"), "image/jpeg")}, headers={"Authorization": f"Bearer {guest}"})
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 403 and response.json()["detail"]["code"] == "sign_in_required"

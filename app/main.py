@@ -50,7 +50,7 @@ from app.models import (
 from app.scraper import BrightDataScraper, ScrapeProviderError
 from app.security import UnsafeUrlError, extract_url, validate_public_url
 from app.tryon import MAX_OUTFIT_PIECES, SOCIAL_POSES, OutfitPiece, TryOnError, TryOnService, validate_image
-from app.wardrobe import SLOT_LABELS, WardrobeService
+from app.wardrobe import SLOT_LABELS, WardrobeService, wardrobe_limit
 
 
 # Show the app's own INFO logs (face lock decisions, look grants) next to uvicorn's in the Render log.
@@ -540,7 +540,7 @@ async def list_wardrobe(
     if collection not in (None, "store", "home"):
         raise HTTPException(status_code=400, detail="collection must be store or home")
     try:
-        service.ensure_configured()
+        service.ensure_configured(needs_ai=False)
         return WardrobeResponse(items=await wardrobe.list_items(user_id, collection))
     except TryOnError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
@@ -562,17 +562,22 @@ async def add_wardrobe_item(
     store: str | None = Form(None, max_length=120),
     product_url: str | None = Form(None, max_length=2000),
     notes: str | None = Form(None, max_length=500),
-    user_id: str = Depends(get_anonymous_user),
+    claims: dict = Depends(get_session_claims),
     settings: Settings = Depends(get_runtime_settings),
     service: TryOnService = Depends(get_tryon_service),
     wardrobe: WardrobeService = Depends(get_wardrobe_service),
+    ledger: LookLedger = Depends(get_ledger),
 ) -> WardrobeItem:
+    user_id = claims["sub"]
+    if settings.look_limits_enabled and settings.supabase_url and not claims.get("email") and not settings.is_unlimited(claims.get("email")):
+        # A guest's wardrobe would be lost at sign-in (the account has its own id), so saving needs an account.
+        raise HTTPException(status_code=403, detail={"code": "sign_in_required", "message": "Sign in to save clothes to your wardrobe."})
     if collection not in ("store", "home"):
         raise HTTPException(status_code=400, detail="collection must be store or home")
     if (image is None) == (image_url is None):
         raise HTTPException(status_code=400, detail="Provide exactly one of image or image_url")
     try:
-        service.ensure_configured()
+        service.ensure_configured(needs_ai=False)
         if image is not None:
             picture = validate_image(await image.read(), image.content_type, settings.max_image_bytes)
         else:
@@ -582,11 +587,13 @@ async def add_wardrobe_item(
             brand=brand, color=color, price=price, currency=currency.upper() if currency else None,
             sizes=[size.strip()[:40] for size in (sizes or "").split(",") if size.strip()], selected_size=selected_size,
             store=store, product_url=validate_public_url(product_url) if product_url else None,
-            source_image_url=image_url, notes=notes,
+            source_image_url=image_url, notes=notes, limit=wardrobe_limit(await ledger.plan_kinds(claims)),
         )
     except UnsafeUrlError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except TryOnError as exc:
+        if exc.status_code == 409:
+            raise HTTPException(status_code=409, detail={"code": "wardrobe_full", "message": str(exc)}) from exc
         log.warning("Try-on failed (%s): %s", exc.status_code, exc)
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except httpx.HTTPError as exc:
@@ -602,7 +609,7 @@ async def delete_wardrobe_item(
     wardrobe: WardrobeService = Depends(get_wardrobe_service),
 ) -> None:
     try:
-        service.ensure_configured()
+        service.ensure_configured(needs_ai=False)
         await wardrobe.delete(user_id, item_id)
     except TryOnError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
@@ -632,7 +639,7 @@ async def get_gallery(
     service: TryOnService = Depends(get_tryon_service),
 ) -> GalleryResponse:
     try:
-        service.ensure_configured()
+        service.ensure_configured(needs_ai=False)
         return GalleryResponse(items=await service.list_gallery(user_id))
     except TryOnError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc

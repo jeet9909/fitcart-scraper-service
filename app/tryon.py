@@ -452,14 +452,17 @@ class TryOnService:
                 self._pool = None
         raise AssertionError("unreachable")
 
-    def ensure_configured(self) -> None:
+    def ensure_configured(self, needs_ai: bool = True) -> None:
+        """Fail fast when Render is missing a setting. Storage-only features (wardrobe, gallery) pass needs_ai=False,
+        so they keep working without the image model. Shoppers get a plain message; the log names the setting."""
         missing = []
-        if not self.settings.gemini_api_key.get_secret_value(): missing.append("GEMINI_API_KEY")
+        if needs_ai and not self.settings.gemini_api_key.get_secret_value(): missing.append("GEMINI_API_KEY")
         if not self.settings.supabase_url: missing.append("SUPABASE_URL")
         if not self.settings.supabase_service_role_key.get_secret_value(): missing.append("SUPABASE_SERVICE_ROLE_KEY")
         if not self.settings.anonymous_token_secret.get_secret_value(): missing.append("ANONYMOUS_TOKEN_SECRET")
         if missing:
-            raise TryOnError(f"Try-on service is not configured: {', '.join(missing)}", 503)
+            log.error("Not configured, set in Render: %s", ", ".join(missing))
+            raise TryOnError("MyDripCheck is being set up right now. Please try again in a few minutes.", 503)
 
     async def fetch_image(self, url: str) -> tuple[bytes, str, str]:
         try:

@@ -291,13 +291,13 @@ function bindCompare(el){
 /* ---------- Plans (prices include 18% GST) ---------- */
 const PLANS = [
   {key:'free', name:'Free', for:'Try MyDripCheck on your next outfit.', monthly:0, yearly:0, looks:2, quality:'Standard', imports:15, stylist:1, wardrobe:25, cta:'Start free',
-   perks:[['2 looks a month',1],['Standard quality',1],['Social-ready poses',0],['360° view',0],['Wardrobe up to 25 items',1],['1 AI stylist idea',1],['Looks history: last 5',1],['Priority generation',0]]},
+   perks:['2 looks a month','Standard quality','25 wardrobe items','1 AI stylist idea','Last 5 looks saved']},
   {key:'pass', name:'Occasion Pass', for:'One-time pack for a wedding, festival or trip. Pay once, stacks on any plan.', once:129, listOnce:149, days:7, looks:7, quality:'HD', imports:30, stylist:5, wardrobe:25, cta:'Buy the pass',
-   perks:[['7 looks, valid for 7 days',1],['HD quality',1],['Social-ready poses',0],['360° view',0],['Wardrobe up to 25 items',1],['5 AI stylist ideas',1],['Looks history: last 5',1],['Priority generation',0]]},
+   perks:['7 looks for 7 days','HD quality','25 wardrobe items','5 AI stylist ideas','Last 5 looks saved']},
   {key:'plus', name:'Plus', for:'For people who shop online every month.', monthly:349, listMonthly:399, yearly:3299, looks:18, quality:'HD', imports:150, stylist:20, wardrobe:200, cta:'Get Plus', popular:true,
-   perks:[['18 looks a month',1],['HD quality',1],['3 social-ready poses',1],['360° view',0],['Wardrobe up to 200 items',1],['20 AI stylist ideas',1],['Full Looks history and HD downloads',1],['Priority generation',0]]},
+   perks:['18 looks a month','HD quality','200 wardrobe items','20 AI stylist ideas','Full looks history','3 social-ready poses']},
   {key:'pro', name:'Pro', for:'For stylists, creators and big wardrobes.', monthly:799, listMonthly:999, yearly:7499, looks:40, quality:'HD', imports:300, stylist:40, wardrobe:1000, cta:'Get Pro',
-   perks:[['40 looks a month',1],['HD quality',1],['All 8 social-ready poses',1],['360° view',1],['Wardrobe up to 1,000 items',1],['40 AI stylist ideas',1],['Full Looks history and HD downloads',1],['Priority generation',1]]},
+   perks:['40 looks a month','HD quality','1,000 wardrobe items','40 AI stylist ideas','Full looks history','All 8 social-ready poses','360° view of every look','Priority generation']},
 ];
 // Shown price, crossed-out list price and the discount between them. Yearly plans compare the
 // monthly equivalent with the monthly list price.
@@ -324,7 +324,7 @@ function pricingHtml(){
       <div><div class="amt">${pr.was ? `<s class="was num" aria-label="Was ₹${pr.was.toLocaleString('en-IN')}">₹${pr.was.toLocaleString('en-IN')}</s>` : ''}<b>₹${pr.amt.toLocaleString('en-IN')}</b><span>${pr.unit}</span></div>
         <p style="display:flex;gap:8px;flex-wrap:wrap;min-height:24px">${pr.off ? `<span class="save-badge num">${pr.off}% off</span>` : '<span class="per">No card needed</span>'}</p></div>
       <button class="btn ${p.popular ? 'brand' : p.key === 'free' ? 'glassy' : ''} wide" data-act="choose-plan" data-plan="${p.key}" ${locked || state.checkingOut ? 'disabled' : ''}>${state.checkingOut === p.key ? '<span class="spin" aria-hidden="true"></span> Opening checkout…' : cta}</button>
-      <ul>${[...p.perks.filter(([, ok]) => ok), ...p.perks.filter(([, ok]) => !ok)].map(([x, ok]) => ok ? `<li>${esc(x)}</li>` : `<li class="no"><span class="sr">Not included: </span>${esc(x)}</li>`).join('')}</ul>
+      <ul class="perks">${p.perks.map(x => `<li><svg class="tick" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="1.5" width="13" height="13" rx="3"/><path d="m5 8.2 2 2 4-4.4"/></svg>${esc(x)}</li>`).join('')}</ul>
     </article>`;
   }).join('');
   const rows = [

@@ -48,6 +48,31 @@ def validate_image(data: bytes, content_type: str | None, max_bytes: int) -> tup
 
 
 MODEL_IMAGE_MAX_SIDE = 1024
+GENERATED_IMAGE_MAX_BYTES = 80_000_000  # a 4K PNG from Gemini can be 20 to 40 MB before it is stored as JPEG
+# Paid looks end with one pass that returns the finished photo at full resolution. It runs after the face,
+# skin-tone and size fixes, which work on the normal-size image (on a 4K image they would need too much memory).
+UPSCALE_PROMPT = (
+    "Image 1 is a finished fashion photo. Return exactly the same photo at high resolution: the identical person, face, "
+    "eyes, hair, skin tone, glasses, body, pose, size and position in the frame, the identical outfit, colours, prints, "
+    "fabric, fit, sleeve length and shoes, and the identical background, framing and lighting. Only add true fine detail "
+    "such as fabric weave, stitching, hair strands and natural skin texture. Do not change, move, add or remove anything. "
+    "Photorealistic, one person, no text, no watermark, no borders."
+)
+ASPECT_RATIOS = {"1:1": 1.0, "2:3": 2 / 3, "3:2": 1.5, "3:4": 0.75, "4:3": 4 / 3, "4:5": 0.8, "5:4": 1.25, "9:16": 9 / 16, "16:9": 16 / 9}
+
+
+def _aspect_of(image: tuple[bytes, str, str]) -> str:
+    with Image.open(io.BytesIO(image[0])) as picture:
+        ratio = picture.width / max(picture.height, 1)
+    return min(ASPECT_RATIOS, key=lambda name: abs(ASPECT_RATIOS[name] - ratio))
+
+
+def _as_jpeg(image: tuple[bytes, str, str]) -> tuple[bytes, str, str]:
+    """Store full-resolution results as high-quality JPEG: a few MB instead of tens."""
+    with Image.open(io.BytesIO(image[0])) as picture:
+        out = io.BytesIO()
+        picture.convert("RGB").save(out, format="JPEG", quality=92, optimize=True)
+    return out.getvalue(), "image/jpeg", "jpg"
 GEMINI_RETRY_MAX_SECONDS = 20
 
 
@@ -573,6 +598,29 @@ class TryOnService:
                  ", ".join("n/a" if x is None else f"{x:.3f}" for x in scores), "n/a" if best_score is None else f"{best_score:.3f}")
         return best
 
+    @property
+    def full_size(self) -> str | None:
+        """The imageSize for paid output ("4K"), or None when the final full-resolution pass is switched off."""
+        size = self.settings.paid_image_size.strip().upper()
+        return size if size in ("2K", "4K") else None
+
+    async def upscale(self, image: tuple[bytes, str, str], label: str = "look") -> tuple[bytes, str, str]:
+        """The paid plans' final pass: the same finished photo returned at full resolution (4K) and stored as JPEG.
+        Never loses a look: if the pass fails, the normal-resolution image is kept."""
+        size = self.full_size
+        if not size:
+            return image
+        payload = {"contents": [{"role": "user", "parts": [{"text": UPSCALE_PROMPT}, self._inline_part(image)]}],
+                   "generationConfig": {"responseModalities": ["TEXT", "IMAGE"], "imageConfig": {"aspectRatio": _aspect_of(image), "imageSize": size}}}
+        try:
+            sharp = await self._generated_image(payload, f"Gemini {size} pass failed")
+            result = await asyncio.to_thread(_as_jpeg, sharp)
+        except Exception as exc:  # a failed polish step keeps the finished look
+            log.warning("%s pass for the %s failed, keeping the normal-resolution image: %r", size, label, exc)
+            return image
+        log.info("%s %s ready: %d KB", size, label, len(result[0]) // 1024)
+        return result
+
     async def _facts(self, parts: list[dict[str, Any]], label: str) -> list[str]:
         """Plain facts about garments (sleeve length, tucked or not...) read by the text model, to pin them in an image prompt.
         Optional: on any failure the image is drawn without them."""
@@ -594,7 +642,7 @@ class TryOnService:
             "contents": [{"role": "user", "parts": [
                 {"text": spin_prompt(angle, facts)}, self._inline_part(look), self._inline_part(person), self._inline_part(product),
             ]}],
-            "generationConfig": {"responseModalities": ["TEXT", "IMAGE"], "imageConfig": {"aspectRatio": "3:4"}},
+            "generationConfig": {"responseModalities": ["TEXT", "IMAGE"], "imageConfig": {"aspectRatio": "3:4", **({"imageSize": self.full_size} if self.full_size else {})}},
         }
         try:
             return await self._generated_image(payload, "Gemini 360 view failed")
@@ -617,6 +665,7 @@ class TryOnService:
         if face and self.settings.face_refine_enabled:
             # A new pose redraws the whole person, so the face drifts the same way as in the standard pose.
             image = await self._refine_face(image, person, face, "4:5", f"pose {pose.key}", check=True, keep_head_size=True)
+        image = await self.upscale(image, f"pose {pose.key}")  # poses are a Plus and Pro feature: always full resolution
         path = f"{user_id}/{row['id']}/pose_{pose.key}_{uuid4().hex[:8]}.{image[2]}"
         await self._upload(path, image)
         shots = [shot for shot in row.get("pose_shots") or [] if shot.get("pose") != pose.key] + [{"pose": pose.key, "path": path}]
@@ -645,7 +694,7 @@ class TryOnService:
         if await asyncio.to_thread(identity.is_plain_backdrop, look[0]):
             return None
         payload = {"contents": [{"role": "user", "parts": [{"text": FRONT_BACKDROP_PROMPT}, self._inline_part(look)]}],
-                   "generationConfig": {"responseModalities": ["TEXT", "IMAGE"], "imageConfig": {"aspectRatio": "3:4"}}}
+                   "generationConfig": {"responseModalities": ["TEXT", "IMAGE"], "imageConfig": {"aspectRatio": "3:4", **({"imageSize": self.full_size} if self.full_size else {})}}}
         try:
             return await self._generated_image(payload, "Gemini 360 backdrop failed")
         except TryOnError as exc:
@@ -669,6 +718,9 @@ class TryOnService:
         right = await asyncio.to_thread(_face_the_right_way, right, 90)
         left = await asyncio.to_thread(_mirror, right)
         views = [right, back, left]  # the order of SPIN_ANGLES: 90, 180, 270
+        if self.full_size:  # full-resolution views are stored as JPEG
+            views = list(await asyncio.gather(*(asyncio.to_thread(_as_jpeg, view) for view in views)))
+            new_front = await asyncio.to_thread(_as_jpeg, new_front) if new_front else None
         prefix = f"{user_id}/{row['id']}"
         paths = [f"{prefix}/spin_{angle}_{uuid4().hex[:8]}.{view[2]}" for angle, view in zip(SPIN_ANGLES, views)]
         front_path = f"{prefix}/spin_0_{uuid4().hex[:8]}.{new_front[2]}" if new_front else None
@@ -699,7 +751,7 @@ class TryOnService:
             data = base64.b64decode(image["data"], validate=True)
         except (KeyError, ValueError) as exc:
             raise TryOnError("Gemini returned an invalid image") from exc
-        return validate_image(data, image.get("mime_type") or image.get("mimeType") or "image/png", 20_000_000)
+        return validate_image(data, image.get("mime_type") or image.get("mimeType") or "image/png", GENERATED_IMAGE_MAX_BYTES)
 
     async def generate_json(self, parts: list[dict[str, Any]], schema: dict[str, Any], temperature: float = 0.7) -> Any:
         """Ask the Gemini text model for JSON that matches ``schema``."""

@@ -2427,3 +2427,66 @@ def test_guests_are_asked_to_sign_in_before_saving_clothes() -> None:
     finally:
         app.dependency_overrides.clear()
     assert response.status_code == 403 and response.json()["detail"]["code"] == "sign_in_required"
+
+
+def _png(size) -> tuple[bytes, str, str]:
+    import io as _io
+
+    from PIL import Image as _Image
+
+    out = _io.BytesIO()
+    _Image.new("RGB", size, (180, 160, 140)).save(out, format="PNG")
+    return out.getvalue(), "image/png", "png"
+
+
+def test_paid_looks_get_a_final_4k_pass_stored_as_jpeg(monkeypatch) -> None:
+    import asyncio
+
+    from app import tryon
+
+    service = tryon.TryOnService(LIMIT_SETTINGS.model_copy(update={"paid_image_size": "4K"}))
+    sent = {}
+
+    async def generated(payload, failure):
+        sent.update(payload["generationConfig"]["imageConfig"])
+        assert "high resolution" in payload["contents"][0]["parts"][0]["text"]
+        return _png((300, 400))  # stands in for the 4K drawing
+
+    monkeypatch.setattr(service, "_generated_image", generated)
+    sharp = asyncio.run(service.upscale(_png((90, 120))))
+    assert sent == {"aspectRatio": "3:4", "imageSize": "4K"} and sharp[1] == "image/jpeg" and sharp[0][:2] == b"\xff\xd8"
+    assert tryon._aspect_of(_png((80, 100))) == "4:5" and tryon._aspect_of(_png((100, 100))) == "1:1"
+
+    async def broken(payload, failure):
+        raise tryon.TryOnError("quota", 429)
+
+    monkeypatch.setattr(service, "_generated_image", broken)
+    original = _png((90, 120))
+    assert asyncio.run(service.upscale(original)) is original  # a failed pass never loses the look
+    off = tryon.TryOnService(LIMIT_SETTINGS.model_copy(update={"paid_image_size": "1K"}))
+    assert off.full_size is None and asyncio.run(off.upscale(original)) is original
+
+
+def test_free_looks_are_watermarked_and_paid_looks_upscaled(monkeypatch) -> None:
+    import asyncio
+
+    from app import main as app_main
+
+    class Service:
+        async def upscale(self, image):
+            return b"4k", "image/jpeg", "jpg"
+
+    async def free(claims, ledger):
+        return False, True
+
+    async def paid(claims, ledger):
+        return True, False
+
+    async def draw(check):
+        return _png((90, 120))
+
+    monkeypatch.setattr(app_main, "plan_features", paid)
+    assert asyncio.run(app_main.draw_look({}, None, draw, Service()))[0] == b"4k"
+    monkeypatch.setattr(app_main, "plan_features", free)
+    marked = asyncio.run(app_main.draw_look({}, None, draw, Service()))
+    assert marked[0] != b"4k"  # the free plan keeps the normal size, with the watermark

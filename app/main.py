@@ -183,11 +183,15 @@ async def plan_features(claims: dict, ledger: LookLedger) -> tuple[bool, bool]:
     return "*" in kinds or bool(kinds & {"plus", "pro"}), not paid
 
 
-async def draw_look(claims: dict, ledger: LookLedger, draw) -> tuple[bytes, str, str]:
-    """Run a try-on drawing with the account's plan features, and watermark free-plan results."""
+async def draw_look(claims: dict, ledger: LookLedger, draw, service: TryOnService | None = None) -> tuple[bytes, str, str]:
+    """Run a try-on drawing with the account's plan features: free-plan results get the watermark, paid-plan
+    results (Pass, Plus, Pro, unlimited) get the final full-resolution (4K) pass."""
     face_check, marked = await plan_features(claims, ledger)
     result = await draw(face_check)
-    return await asyncio.to_thread(watermark, result) if marked else result
+    if marked:
+        return await asyncio.to_thread(watermark, result)
+    upscale = getattr(service, "upscale", None)  # stand-in services in tests have no upscale
+    return await upscale(result) if upscale else result
 
 
 def require_email(claims: dict = Depends(get_session_claims)) -> dict:
@@ -367,7 +371,7 @@ async def create_tryon(
         category = category.strip()[:80] or "clothing"
         activity.note(pose=pose, pieces=1 + len(extras), product=name, store=admin._store_of(source_url), source=product_source)
         if not extras:
-            result = await draw_look(claims, ledger, lambda check: service.generate(person, product, category, product_name=name, pose=pose, face_check=check))
+            result = await draw_look(claims, ledger, lambda check: service.generate(person, product, category, product_name=name, pose=pose, face_check=check), service)
             return await service.save(user_id, person, product, result, category, product_source, source_url)
 
         async def extra_image(item: OutfitExtraItem) -> tuple[bytes, str, str]:
@@ -379,7 +383,7 @@ async def create_tryon(
         images = await asyncio.gather(*(extra_image(item) for item in extras))
         pieces = [OutfitPiece(image=product, category=category, label=name)]
         pieces += [OutfitPiece(image=image, category=SLOT_LABELS[item.slot], label=item.name.strip() or None) for item, image in zip(extras, images)]
-        result = await draw_look(claims, ledger, lambda check: service.generate_outfit(person, pieces, pose=pose, face_check=check))
+        result = await draw_look(claims, ledger, lambda check: service.generate_outfit(person, pieces, pose=pose, face_check=check), service)
         summary = [{"slot": None, "category": category, "name": name, "product_url": source_url}]
         summary += [
             {"slot": item.slot, "name": item.name, "store": item.store, "price": item.price, "size": item.size,
@@ -436,7 +440,7 @@ async def create_outfit_tryon(
         person = validate_image(await person_image.read(), person_image.content_type, settings.max_image_bytes)
         pieces, summary = await wardrobe.outfit_pieces(user_id, [item.strip() for item in item_ids.split(",") if item.strip()])
         activity.note(pose=pose, pieces=len(pieces), product=" + ".join(filter(None, (item.get("name") for item in summary)))[:200] or None, source="wardrobe")
-        result = await draw_look(claims, ledger, lambda check: service.generate_outfit(person, pieces, pose=pose, face_check=check))
+        result = await draw_look(claims, ledger, lambda check: service.generate_outfit(person, pieces, pose=pose, face_check=check), service)
         category = " + ".join(item["slot"] for item in summary)[:80]
         product_url = next((item["product_url"] for item in summary if item.get("product_url")), None)
         return await service.save(user_id, person, pieces[0].image, result, category, "wardrobe", product_url, items=summary)

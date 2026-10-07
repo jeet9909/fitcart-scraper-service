@@ -845,22 +845,24 @@ textarea.input{font-family:inherit;resize:vertical}
 /* Generating: the result page's shape, still loading. The photo sits frosted behind fine scan lines; everything
    else is a skeleton until the look arrives, then the shutter reveal plays and the real page fills in. */
 .generating .gen-frame{width:100%;min-width:0;aspect-ratio:3/4;box-shadow:var(--shadow);border-radius:var(--r-l)}
-.generating .gen-frame .l-photo{filter:blur(16px) saturate(.8) brightness(1.05);transform:scale(1.1)}
-.generating .gen-frame.p2 .l-photo{filter:blur(12px) saturate(.85) brightness(1.04)}
-.generating .gen-frame.p3 .l-photo{filter:blur(8px) saturate(.9) brightness(1.02)}
+.generating .gen-frame .l-photo{filter:blur(28px) saturate(.55) brightness(1.1);transform:scale(1.2)}
+.generating .gen-frame.p2 .l-photo{filter:blur(24px) saturate(.6) brightness(1.08)}
+.generating .gen-frame.p3 .l-photo{filter:blur(20px) saturate(.65) brightness(1.06)}
 .generating .gen-frame.p4 .l-photo{filter:none;transform:none}
-.generating .gen-frame .l-glass{opacity:1;background:color-mix(in srgb,var(--surface) 30%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,#fff 45%,transparent)}
-.l-lines{overflow:hidden;background-image:linear-gradient(to right,color-mix(in srgb,#fff 22%,transparent) 1px,transparent 1px),linear-gradient(to bottom,color-mix(in srgb,#fff 22%,transparent) 1px,transparent 1px);background-size:12.5% 9.375%}
-.l-lines i{position:absolute;background:#fff;opacity:.9;box-shadow:0 0 14px 2px color-mix(in srgb,var(--accent) 40%,transparent)}
-.l-lines .h{left:0;right:0;height:1px;top:8%;animation:gen-y 3.2s ease-in-out infinite alternate}
-.l-lines .v{top:0;bottom:0;width:1px;left:10%;animation:gen-x 4.4s ease-in-out infinite alternate}
-@keyframes gen-y{to{top:92%}}
-@keyframes gen-x{to{left:90%}}
-.l-divider{display:grid;place-items:center}
-.l-divider::before{content:"";position:absolute;top:0;bottom:0;left:50%;width:1px;background:color-mix(in srgb,#fff 80%,transparent)}
-.gen-knob{position:relative;width:52px;height:52px;border-radius:50%;display:grid;place-items:center;background:color-mix(in srgb,#fff 70%,transparent);border:2px solid var(--accent);color:var(--ink)}
-.gen-knob svg{width:22px;height:22px}
-.gen-frame.p4 .l-lines,.gen-frame.p4 .l-divider,.gen-frame.p4 .l-glass{opacity:0;transition:opacity .4s var(--ease)}
+.generating .gen-frame .l-glass{opacity:1;background:color-mix(in srgb,var(--surface) 55%,transparent)}
+/* A camera finding focus: four thin corners that breathe, one fine line gliding down, a slim ring in the middle. */
+.l-focus{--inset:22px}
+.l-focus .c{position:absolute;width:30px;height:30px;border:1.5px solid color-mix(in srgb,var(--ink) 55%,transparent);animation:gen-breathe 2.4s ease-in-out infinite}
+.l-focus .tl{top:var(--inset);left:var(--inset);border-right:0;border-bottom:0}
+.l-focus .tr{top:var(--inset);right:var(--inset);border-left:0;border-bottom:0}
+.l-focus .bl{bottom:var(--inset);left:var(--inset);border-right:0;border-top:0}
+.l-focus .br{bottom:var(--inset);right:var(--inset);border-left:0;border-top:0}
+.l-focus .tl{--dx:6px;--dy:6px}.l-focus .tr{--dx:-6px;--dy:6px}.l-focus .bl{--dx:6px;--dy:-6px}.l-focus .br{--dx:-6px;--dy:-6px}
+@keyframes gen-breathe{50%{transform:translate(var(--dx),var(--dy));opacity:.6}}
+.l-focus .line{position:absolute;left:calc(var(--inset) + 10px);right:calc(var(--inset) + 10px);top:12%;height:1px;background:color-mix(in srgb,var(--accent) 70%,#fff);opacity:.75;animation:gen-glide 3.6s ease-in-out infinite}
+@keyframes gen-glide{0%{top:12%;opacity:0}12%{opacity:.75}88%{opacity:.75}100%{top:88%;opacity:0}}
+.l-focus .ring{position:absolute;left:50%;top:50%;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;border:2px solid color-mix(in srgb,#fff 45%,transparent);border-top-color:var(--accent);border-right-color:var(--accent);animation:spin 1s linear infinite}
+.gen-frame.p4 .l-focus,.gen-frame.p4 .l-glass{opacity:0;transition:opacity .4s var(--ease)}
 .gen-status{display:grid;gap:10px;justify-items:stretch;text-align:center}
 .gen-step{font-weight:700;color:var(--ink-2);min-height:1.5em}
 .gen-status .gen-foot-row{text-align:left}
@@ -879,7 +881,7 @@ textarea.input{font-family:inherit;resize:vertical}
 .sk-seg span{display:flex;align-items:center;justify-content:center;gap:10px;min-height:44px;border-radius:6px;color:var(--muted)}
 .sk-seg span.on{background:var(--surface)}
 @media (min-width:960px){.generating .result-visual .gen-frame{height:min(calc(100vh - 230px),760px);min-height:520px;width:auto;max-width:100%;margin-inline:auto}}
-@media (prefers-reduced-motion:reduce){.l-lines i{animation:none}.l-lines .h{top:50%}.l-lines .v{left:50%}}
+@media (prefers-reduced-motion:reduce){.l-focus .c,.l-focus .line{animation:none}.l-focus .line{top:50%}.l-focus .ring{animation-duration:2.4s}}
 </style>
 </head>
 <body>

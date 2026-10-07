@@ -583,8 +583,7 @@ function generating(){
       <div class="gen-visual gen-frame p1" id="genVisual" aria-hidden="true">
         <div class="layer l-photo"><img src="${state.photo || ''}" alt=""></div>
         <div class="layer l-glass"></div>
-        <div class="layer l-lines"><i class="h"></i><i class="v"></i></div>
-        <div class="layer l-divider"><span class="gen-knob">${icon('swap')}</span></div>
+        <div class="layer l-focus"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><i class="line"></i><span class="ring"></span></div>
         <div class="layer l-shutter" id="genShutter"></div>
         <div class="layer l-sharp"><img id="genSharp" alt=""></div>
         <div class="layer l-scan"></div>

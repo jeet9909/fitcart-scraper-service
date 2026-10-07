@@ -188,6 +188,7 @@ function announce(text){ const a = $('#announcer'); a.textContent = ''; requestA
 
 /* ---------- Navigation ---------- */
 function go(view){
+  if (view === 'tryon') view = state.look.length ? 'builder' : 'home';  // the outfit in progress, or a fresh start
   if (state.view === 'generating' && view !== 'result') stopGeneration();
   state.view = view;
   render(true);
@@ -202,18 +203,21 @@ function addToLook(item, size = null){
   state.look = state.look.filter(p => !clash(p.item));
   if (state.look.length >= MAX_PIECES) state.look.shift();
   state.look.push({item, size});
-  const c = $('#lookCount'); c.classList.remove('bump'); void c.offsetWidth; c.classList.add('bump');
+  ['#tryCount', '#tabCount'].forEach(id => { const c = $(id); if (!c) return; c.classList.remove('bump'); void c.offsetWidth; c.classList.add('bump'); });
 }
 
 function render(enter = false){
   document.querySelectorAll('.toptabs [data-view], .tabbar [data-view]').forEach(b => {
     const v = b.dataset.view;
-    const current = v === state.view || (v === 'home' && ['builder','generating','result'].includes(state.view));
+    const current = v === state.view || (v === 'tryon' && ['home','builder','generating','result'].includes(state.view));
     b.setAttribute('aria-current', current ? 'page' : 'false');
   });
   const n = state.look.length;
-  $('#lookCount').textContent = n;
+  // Try on carries the outfit being built; "My looks" counts the saved looks in the gallery.
+  $('#tryCount').textContent = n; $('#tryCount').hidden = !n;
   $('#tabCount').textContent = n; $('#tabCount').hidden = !n;
+  const saved = state.account ? state.savedLooks : null;
+  $('#lookCount').textContent = saved ?? 0; $('#lookCount').hidden = saved == null;
   const acct = $('#accountBtn');
   acct.classList.toggle('signed', Boolean(state.account));
   acct.setAttribute('aria-label', state.account ? `Account: ${state.account.email}` : 'Sign in');
@@ -724,6 +728,7 @@ async function finishGeneration(){
     if (Number.isFinite(state.balance?.remaining)) state.balance.remaining = Math.max(0, state.balance.remaining - 1);
     loadBalance();
     state.gallery = null;
+    if (Number.isFinite(state.savedLooks)) state.savedLooks += 1; else loadGallery();
     state.gen = null;
     go('result');
     const left = looksLeft();
@@ -1029,12 +1034,16 @@ function wardrobe(){
 }
 
 /* ---------- Looks ---------- */
+function updateLooksPill(){
+  const c = $('#lookCount'), saved = state.account ? state.savedLooks : null;
+  c.textContent = saved ?? 0; c.hidden = saved == null;
+}
 async function loadGallery(){
   if (state.galleryLoading) return;
   state.galleryLoading = true; state.galleryError = '';
-  try { state.gallery = (await api('/v1/gallery')).items || []; }
+  try { state.gallery = (await api('/v1/gallery')).items || []; state.savedLooks = state.gallery.length; }
   catch (err){ state.galleryError = err.message; }
-  finally { state.galleryLoading = false; if (state.view === 'looks') render(); }
+  finally { state.galleryLoading = false; if (state.view === 'looks') render(); else updateLooksPill(); }
 }
 function galleryTitle(g){
   const names = (g.items || []).map(i => i.name).filter(Boolean);
@@ -1115,7 +1124,8 @@ async function submitSignin(rawEmail, password){
 }
 function signedIn(payload){
   startAccountSession(payload);
-  Object.assign(state, {wardrobe:null, wardrobeError:'', ideas:[], ideasError:'', gallery:null});
+  Object.assign(state, {wardrobe:null, wardrobeError:'', ideas:[], ideasError:'', gallery:null, savedLooks:null});
+  loadGallery();
   closeSheet($('#signinSheet'));
   state.balance = null;
   render();
@@ -1275,7 +1285,7 @@ async function confirmPayment(response, attempt = 0){
 function signOut(){
   try { localStorage.removeItem(SESSION_KEY); } catch {}
   setAccount(null);
-  state.wardrobe = null; state.gallery = null; state.ideas = []; state.balance = null;
+  state.wardrobe = null; state.gallery = null; state.savedLooks = null; state.ideas = []; state.balance = null;
   closeSheet($('#signinSheet'));
   session(true).then(loadBalance).catch(() => {});
   render();
@@ -1746,5 +1756,5 @@ document.querySelectorAll('dialog.sheet').forEach(d => {
   if (location.hash === '#help') setTimeout(openHelp, 300);
   checkSite();
   fetch(apiUrl('/v1/billing/config')).then(r => r.ok ? r.json() : null).then(cfg => { state.billingCfg = cfg; if (state.view === 'pricing') render(); }).catch(() => {});
-  session().catch(() => {}).then(() => { refreshAccount(); if (!state.balance) loadBalance(); syncPendingOrder(); });
+  session().catch(() => {}).then(() => { refreshAccount(); if (!state.balance) loadBalance(); if (state.account) loadGallery(); syncPendingOrder(); });
 })();

@@ -589,11 +589,6 @@ function generating(){
         <div class="layer l-sharp"><img id="genSharp" alt=""></div>
         <div class="layer l-scan"></div>
       </div>
-      <div class="gen-status">
-        <p class="gen-step" id="genStep" role="status">Preparing your preview</p>
-        <div class="progress" role="progressbar" aria-label="Try-on progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="genBar"><i></i></div>
-        <div class="gen-foot-row"><span class="tiny muted">Usually 20 to 45 seconds. ${privatePill('Your photo stays private')}</span><button class="btn ghost small" data-act="cancel">Cancel</button></div>
-      </div>
     </div>
     <div class="gen-skeleton" aria-hidden="true">
       <div class="card shop">${bar('52%', 22)}${bar('38%')}${pieces.map(() => `<div class="shop-row"><span class="sk sk-thumb"></span><div style="display:grid;gap:8px">${bar('82%', 14)}${bar('46%')}</div><span></span></div>`).join('')}</div>

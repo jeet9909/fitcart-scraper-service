@@ -253,13 +253,13 @@ function bindCompare(el){
 /* ---------- Plans (prices include 18% GST) ---------- */
 const PLANS = [
   {key:'free', name:'Free', for:'Try MyDripCheck on your next outfit.', monthly:0, yearly:0, looks:2, quality:'Standard', imports:15, stylist:1, wardrobe:25, cta:'Start free',
-   perks:['2 looks a month, any mix of stores','Standard quality','Wardrobe up to 25 items','1 AI stylist idea'], missing:['HD looks','Full Looks history','Social-ready poses','360° view']},
-  {key:'pass', name:'Occasion Pass', for:'One-time pack for a wedding, festival or trip.', once:129, listOnce:149, days:7, looks:7, quality:'HD', imports:30, stylist:5, wardrobe:25, cta:'Buy the pass',
-   perks:['7 HD looks for 7 days','No autopay, pay once with UPI','5 AI stylist ideas','Stacks on any plan'], missing:['Social-ready poses','360° view']},
+   perks:[['2 looks a month',1],['Standard quality',1],['Social-ready poses',0],['360° view',0],['Wardrobe up to 25 items',1],['1 AI stylist idea',1],['Looks history: last 5',1],['Priority generation',0]]},
+  {key:'pass', name:'Occasion Pass', for:'One-time pack for a wedding, festival or trip. Pay once, stacks on any plan.', once:129, listOnce:149, days:7, looks:7, quality:'HD', imports:30, stylist:5, wardrobe:25, cta:'Buy the pass',
+   perks:[['7 looks, valid for 7 days',1],['HD quality',1],['Social-ready poses',0],['360° view',0],['Wardrobe up to 25 items',1],['5 AI stylist ideas',1],['Looks history: last 5',1],['Priority generation',0]]},
   {key:'plus', name:'Plus', for:'For people who shop online every month.', monthly:349, listMonthly:399, yearly:3299, looks:18, quality:'HD', imports:150, stylist:20, wardrobe:200, cta:'Get Plus', popular:true,
-   perks:['18 HD looks every month','3 social-ready poses for your posts','Standard pose, head to toe','Wardrobe up to 200 items','20 AI stylist ideas','Full Looks history and HD downloads'], missing:['360° view']},
+   perks:[['18 looks a month',1],['HD quality',1],['3 social-ready poses',1],['360° view',0],['Wardrobe up to 200 items',1],['20 AI stylist ideas',1],['Full Looks history and HD downloads',1],['Priority generation',0]]},
   {key:'pro', name:'Pro', for:'For stylists, creators and big wardrobes.', monthly:799, listMonthly:999, yearly:7499, looks:40, quality:'HD', imports:300, stylist:40, wardrobe:1000, cta:'Get Pro',
-   perks:['360° view: spin your look to see the side and back','All 8 social-ready poses','40 HD looks every month','Priority generation','Wardrobe up to 1,000 items','40 AI stylist ideas'], missing:[]},
+   perks:[['40 looks a month',1],['HD quality',1],['All 8 social-ready poses',1],['360° view',1],['Wardrobe up to 1,000 items',1],['40 AI stylist ideas',1],['Full Looks history and HD downloads',1],['Priority generation',1]]},
 ];
 // Shown price, crossed-out list price and the discount between them. Yearly plans compare the
 // monthly equivalent with the monthly list price.
@@ -286,7 +286,7 @@ function pricingHtml(){
       <div><div class="amt">${pr.was ? `<s class="was num" aria-label="Was ₹${pr.was.toLocaleString('en-IN')}">₹${pr.was.toLocaleString('en-IN')}</s>` : ''}<b>₹${pr.amt.toLocaleString('en-IN')}</b><span>${pr.unit}</span></div>
         <p style="display:flex;gap:8px;flex-wrap:wrap;min-height:24px">${pr.off ? `<span class="save-badge num">${pr.off}% off</span>` : '<span class="per">No card needed</span>'}</p></div>
       <button class="btn ${p.popular ? 'brand' : p.key === 'free' ? 'glassy' : ''} wide" data-act="choose-plan" data-plan="${p.key}" ${locked || state.checkingOut ? 'disabled' : ''}>${state.checkingOut === p.key ? '<span class="spin" aria-hidden="true"></span> Opening checkout…' : cta}</button>
-      <ul>${p.perks.map(x => `<li>${esc(x)}</li>`).join('')}${p.missing.map(x => `<li class="no"><span class="sr">Not included: </span>${esc(x)}</li>`).join('')}</ul>
+      <ul>${p.perks.map(([x, ok]) => ok ? `<li>${esc(x)}</li>` : `<li class="no"><span class="sr">Not included: </span>${esc(x)}</li>`).join('')}</ul>
     </article>`;
   }).join('');
   const rows = [
@@ -340,8 +340,8 @@ function landing(){
     <div class="md-heading reveal"><div><p class="eyebrow">How it works</p><h2>From three tabs<br>to <em>one outfit.</em></h2></div><p>No more guessing how pieces from different stores will look together on you.</p></div>
     <ol class="md-steps">
       <li class="reveal"><div class="md-step-art pieces"><img src="${img('shirt')}" alt="Linen shirt from Myntra"><img src="${img('jeans')}" alt="Jeans from Amazon"><img src="${img('sneakers')}" alt="Sneakers from AJIO"></div><span class="num">01</span><h3>Paste your finds</h3><p>Drop product links or upload images. We pull the real price, sizes and photos.</p></li>
-      <li class="reveal"><div class="md-step-art"><img src="${img('before')}" alt="A clear full-body photo"><span class="tag-on">Your photo</span></div><span class="num">02</span><h3>Add one photo</h3><p>Any clear full-body shot. We keep your face, hair and skin tone exactly as they are.</p></li>
-      <li class="reveal"><div class="md-step-art"><img src="${img('after')}" alt="The full look on you"><span class="tag-on">Myntra · Amazon · AJIO</span></div><span class="num">03</span><h3>See it, then buy</h3><p>Preview the full look of your outfit, then jump to each store to buy.</p></li>
+      <li class="reveal"><div class="md-step-art full"><img src="${img('before')}" alt="A clear full-body photo"><span class="tag-on">Your photo</span></div><span class="num">02</span><h3>Add one photo</h3><p>Any clear full-body shot. We keep your face, hair and skin tone exactly as they are.</p></li>
+      <li class="reveal"><div class="md-step-art full"><img src="${img('after')}" alt="The full look on you"><span class="tag-on">Myntra · Amazon · AJIO</span></div><span class="num">03</span><h3>See it, then buy</h3><p>Preview the full look of your outfit, then jump to each store to buy.</p></li>
     </ol>
   </section>
   <section class="lp-section" aria-labelledby="demoTitle">
@@ -359,14 +359,6 @@ function landing(){
       <li class="reveal"><span class="n">02</span><div><h3>Built to keep you, you</h3><p>Face, hair, glasses and skin tone stay true to your photo. No generic models.</p></div></li>
       <li class="reveal"><span class="n">03</span><div><h3>Your wardrobe, online</h3><p>Save looks, mix new finds with clothes you own, and build a collection that travels with you across stores.</p></div></li>
     </ol>
-  </section>
-  <section class="lp-section">
-    <div class="md-heading reveal"><div><p class="eyebrow">The inspiration edit</p><h2>A mood for every day.<br><em>A look for every you.</em></h2></div><p>Start with a little inspiration. Make every piece feel like your own.</p></div>
-    <div class="md-edit">
-      <article class="reveal"><p class="eyebrow">01 / Effortlessly everyday</p><div class="photo"><img src="${img('after')}" alt="Sage linen shirt with straight jeans and white sneakers"><button class="btn small light" data-act="demo">Try this look ${icon('arrow','s')}</button></div><h3>Everyday ease</h3><p>A soft linen shirt, straight jeans, clean sneakers.</p></article>
-      <article class="reveal"><p class="eyebrow">02 / Simple and sharp</p><div class="photo"><img src="${img('before')}" alt="White tee with straight jeans and white sneakers"><button class="btn small light" data-act="go" data-view="home">Start yours ${icon('arrow','s')}</button></div><h3>The white tee edit</h3><p>A crisp tee and good denim. Never out of style.</p></article>
-      <article class="reveal"><p class="eyebrow">03 / Mix your own</p><div class="photo collage"><img src="${img('shirt')}" alt="Linen shirt"><img src="${img('jeans')}" alt="Jeans"><img src="${img('sneakers')}" alt="Sneakers"><button class="btn small light" data-act="go" data-view="home">Paste a link ${icon('arrow','s')}</button></div><h3>Three stores, one outfit</h3><p>Pick each piece wherever it is cheapest.</p></article>
-    </div>
   </section>
   <section class="md-dark reveal">
     <p class="eyebrow">Style has no single definition</p>

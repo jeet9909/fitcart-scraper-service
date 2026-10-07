@@ -17,7 +17,16 @@ SLOT_LABELS = {
     "top": "top", "bottom": "bottom wear", "dress": "dress or one-piece", "outerwear": "jacket or layer",
     "footwear": "footwear", "jewelry": "jewelry", "accessory": "accessory", "other": "wearable item",
 }
-MAX_WARDROBE_ITEMS = 300
+MAX_WARDROBE_ITEMS = 1000  # the most any plan holds (Pro); reads are capped here too
+# Wardrobe space per plan, as listed on the pricing page.
+WARDROBE_LIMITS = {"free": 25, "pass": 25, "plus": 200, "pro": 1000}
+
+
+def wardrobe_limit(plan_kinds: set[str]) -> int:
+    """The biggest wardrobe among the account's active plans. "*" (unlimited accounts, no look limits) gets the most."""
+    if "*" in plan_kinds:
+        return MAX_WARDROBE_ITEMS
+    return max([WARDROBE_LIMITS["free"], *(WARDROBE_LIMITS[kind] for kind in plan_kinds if kind in WARDROBE_LIMITS)])
 MAX_SUGGESTION_ITEMS = 40
 SUGGESTION_THUMBNAIL = 384
 
@@ -85,6 +94,7 @@ class WardrobeService:
         product_url: str | None = None,
         source_image_url: str | None = None,
         notes: str | None = None,
+        limit: int = MAX_WARDROBE_ITEMS,
     ) -> WardrobeItem:
         if slot not in SLOTS:
             raise TryOnError(f"Category must be one of: {', '.join(SLOTS)}", 400)
@@ -92,8 +102,9 @@ class WardrobeService:
         total = count.headers.get("content-range", "").rpartition("/")[2]
         if count.status_code >= 400:
             raise TryOnError(self._table_error(count), 503)
-        if total.isdigit() and int(total) >= MAX_WARDROBE_ITEMS:
-            raise TryOnError(f"Your wardrobe is full ({MAX_WARDROBE_ITEMS} items). Remove some items first.", 409)
+        if total.isdigit() and int(total) >= limit:
+            more = next((f" {name} holds {room:,}." for name, room in (("Plus", 200), ("Pro", 1000)) if room > limit), "")
+            raise TryOnError(f"Your wardrobe is full: your plan holds {limit:,} items. Remove a few to add more.{more}", 409)
         item_id = str(uuid4())
         image_path = f"{user_id}/wardrobe/{item_id}.{image[2]}"
         await self.storage.upload(image_path, image)

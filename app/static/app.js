@@ -324,7 +324,7 @@ function pricingHtml(){
       <div><div class="amt">${pr.was ? `<s class="was num" aria-label="Was ₹${pr.was.toLocaleString('en-IN')}">₹${pr.was.toLocaleString('en-IN')}</s>` : ''}<b>₹${pr.amt.toLocaleString('en-IN')}</b><span>${pr.unit}</span></div>
         <p style="display:flex;gap:8px;flex-wrap:wrap;min-height:24px">${pr.off ? `<span class="save-badge num">${pr.off}% off</span>` : '<span class="per">No card needed</span>'}</p></div>
       <button class="btn ${p.popular ? 'brand' : p.key === 'free' ? 'glassy' : ''} wide" data-act="choose-plan" data-plan="${p.key}" ${locked || state.checkingOut ? 'disabled' : ''}>${state.checkingOut === p.key ? '<span class="spin" aria-hidden="true"></span> Opening checkout…' : cta}</button>
-      <ul>${p.perks.map(([x, ok]) => ok ? `<li>${esc(x)}</li>` : `<li class="no"><span class="sr">Not included: </span>${esc(x)}</li>`).join('')}</ul>
+      <ul>${[...p.perks.filter(([, ok]) => ok), ...p.perks.filter(([, ok]) => !ok)].map(([x, ok]) => ok ? `<li>${esc(x)}</li>` : `<li class="no"><span class="sr">Not included: </span>${esc(x)}</li>`).join('')}</ul>
     </article>`;
   }).join('');
   const rows = [
@@ -364,7 +364,7 @@ function landing(){
         <h1>Wear it <em>before</em><br>buy it.</h1>
         <p class="lede">Paste pieces from Myntra, Amazon, AJIO and more. See the full outfit on you, then buy only what feels right.</p>
         <div class="lp-ctas"><button class="btn brand big" data-act="go" data-view="home">${state.account ? 'Start a new look' : 'Try it free'} ${icon('arrow','s')}</button><button class="btn ghost big" data-act="scroll" data-target="lpPricing">${state.account && !['free', undefined].includes(state.balance?.plan) ? 'My plan' : 'See plans'}</button></div>
-        <p class="lp-trust">${heroTrust()}</p>
+        ${state.account ? '' : '<p class="lp-trust">2 free looks a month. Your photo stays private. Real store prices.</p>'}
       </div>
       <div class="stage">
         <div class="device glass">${compareHtml('before','after','You','New look', true)}</div>
@@ -1164,14 +1164,6 @@ async function refreshAccount(){
     setAccount(me.email ? me : null);
     render();
   } catch {}
-}
-/* Under the hero buttons: the offer for visitors, the account's own looks once signed in. */
-function heroTrust(){
-  if (!state.account) return '2 free looks a month. Your photo stays private. Real store prices.';
-  const left = looksLeft();
-  if (left === Infinity) return 'Unlimited looks on your account. Your photo stays private.';
-  if (left == null) return 'Welcome back. Your photo stays private.';
-  return `Welcome back. ${left} look${left === 1 ? '' : 's'} left on your plan.`;
 }
 function looksLeft(){
   if (unlimited()) return Infinity;

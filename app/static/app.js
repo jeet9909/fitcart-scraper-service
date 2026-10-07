@@ -32,9 +32,29 @@ const CATALOG = {
 function readStore(key, fallback){ try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } }
 function persist(key, value){ try { localStorage.setItem(key, JSON.stringify(value)); } catch {} }
 
+/* The outfit being built is kept on this device, so a refresh or a closed tab does not lose it. Your own photo is
+   never stored: it stays in memory only. */
+const LOOK_KEY = 'mdc-look-v1';
+function restoreLook(){
+  const saved = readStore(LOOK_KEY, []);
+  return Array.isArray(saved) ? saved.filter(p => p && p.item && typeof p.item.name === 'string' && p.item.img && p.item.slot).slice(0, 5) : [];
+}
+let savedLook = '';
+function saveLook(){
+  const clean = state.look.map(p => ({item:Object.fromEntries(Object.entries(p.item).filter(([k]) => k !== 'saving')), size:p.size ?? null}));
+  const text = JSON.stringify(clean);
+  if (text === savedLook) return;
+  savedLook = text;
+  try { localStorage.setItem(LOOK_KEY, text); }
+  catch {
+    // Storage full (large uploaded item photos): keep the pieces that come from links, which are small.
+    try { localStorage.setItem(LOOK_KEY, JSON.stringify(clean.filter(p => !String(p.item.img).startsWith('data:')))); } catch {}
+  }
+}
+
 const state = {
   view:'landing', billing:'monthly', balance:null, billingCfg:null, pending:null, checkingOut:null,
-  look:[],
+  look:restoreLook(),
   wardrobe:null, wardrobeLoading:false, wardrobeError:'', wardrobeTab:'home', wardrobeFilter:'all', confirmDelete:null,
   occasion:null, ideas:[], ideasLoading:false, ideasError:'',
   gallery:null, galleryLoading:false, galleryError:'',
@@ -207,6 +227,7 @@ function addToLook(item, size = null){
 }
 
 function render(enter = false){
+  saveLook();
   document.querySelectorAll('.toptabs [data-view], .tabbar [data-view]').forEach(b => {
     const v = b.dataset.view;
     const current = v === state.view || (v === 'tryon' && ['home','builder','generating','result'].includes(state.view));

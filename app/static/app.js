@@ -223,6 +223,19 @@ function render(enter = false){
   if (enter && !REDUCED.matches){ view.classList.remove('view-enter'); void view.offsetWidth; view.classList.add('view-enter'); }
   bindView();
   setupReveal();
+  if (state.view === 'landing') playHero();
+}
+function playHero(){
+  if (!$('.f-look b') || playHero.done || REDUCED.matches) return;
+  playHero.done = true;  // later renders (sign-in, balance) show the hero settled, without replaying
+  const to = 5897, start = performance.now() + 1100, length = 900;
+  const step = now => {
+    const t = Math.min(1, Math.max(0, (now - start) / length));
+    const total = $('.f-look b');  // looked up each frame: a re-render replaces the element
+    if (total) total.textContent = inr(Math.round(to * (1 - Math.pow(1 - t, 3))));
+    if (t < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
 }
 
 /* ---------- Compare ---------- */
@@ -318,15 +331,15 @@ function pricingPage(){
 function landing(){
   const fl = (cls, key, store, price) => { const i = CATALOG[key]; return `<div class="floater glass ${cls}"><img src="${img(i.img)}" alt=""><div><small>${store}</small>${esc(short(i))}<br><span class="p num">${inr(price)}</span></div></div>`; };
   const contact = window.MDC_CONTACT_EMAIL || '';
-  return `<div class="landing md">
+  return `<div class="landing md${playHero.done ? ' played' : ''}">
   <section class="lp-hero">
     <div class="lp-grid">
       <div class="lp-copy">
         <p class="eyebrow wine">A fitting room for the whole internet</p>
         <h1>Wear it <em>before</em><br>buy it.</h1>
         <p class="lede">Paste pieces from Myntra, Amazon, AJIO and more. See the full outfit on you, then buy only what feels right.</p>
-        <div class="lp-ctas"><button class="btn brand big" data-act="go" data-view="home">Try it free ${icon('arrow','s')}</button><button class="btn ghost big" data-act="scroll" data-target="lpPricing">See plans</button></div>
-        <p class="lp-trust">2 free looks a month. Your photo stays private. Real store prices.</p>
+        <div class="lp-ctas"><button class="btn brand big" data-act="go" data-view="home">${state.account ? 'Start a new look' : 'Try it free'} ${icon('arrow','s')}</button><button class="btn ghost big" data-act="scroll" data-target="lpPricing">${state.account && !['free', undefined].includes(state.balance?.plan) ? 'My plan' : 'See plans'}</button></div>
+        <p class="lp-trust">${heroTrust()}</p>
       </div>
       <div class="stage">
         <div class="device glass">${compareHtml('before','after','You','New look', true)}</div>
@@ -422,7 +435,7 @@ function home(){
   return `<section class="hero">
     <div class="hero-copy">
       <p class="eyebrow">Your AI fitting room</p>
-      <h1>See the whole outfit on you <em>before you buy it.</em></h1>
+      <h1>See the whole outfit on you <em>before buy it.</em></h1>
       <p class="lede">Paste links from any store. Mix a top from Myntra with jeans from Amazon and shoes from AJIO, then see yourself wearing all of it.</p>
       <form class="linkbox" id="linkForm" novalidate>
         <label for="homeLink" class="small" style="font-weight:800">Product link</label>
@@ -1113,6 +1126,14 @@ async function refreshAccount(){
     setAccount(me.email ? me : null);
     render();
   } catch {}
+}
+/* Under the hero buttons: the offer for visitors, the account's own looks once signed in. */
+function heroTrust(){
+  if (!state.account) return '2 free looks a month. Your photo stays private. Real store prices.';
+  const left = looksLeft();
+  if (left === Infinity) return 'Unlimited looks on your account. Your photo stays private.';
+  if (left == null) return 'Welcome back. Your photo stays private.';
+  return `Welcome back. ${left} look${left === 1 ? '' : 's'} left on your plan.`;
 }
 function looksLeft(){
   if (unlimited()) return Infinity;

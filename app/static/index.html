@@ -818,6 +818,29 @@ textarea.input{font-family:inherit;resize:vertical}
 .md-demo figcaption{font-size:14px;color:var(--muted)}
 .md-demo figcaption b{color:var(--ink)}
 @media (max-width:640px){.md-demo{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:72%;overflow-x:auto;scroll-snap-type:x mandatory;padding-bottom:6px}.md-demo figure{scroll-snap-align:start}}
+
+/* Motion, used sparingly: the hero assembles itself once, sections ease in as you scroll, presses give feedback.
+   Nothing bobs, lifts or loops, and none of it runs with reduced motion. */
+.md .lp-copy h1 em{position:relative;display:inline-block}
+.md .lp-copy h1 em::after{content:"";position:absolute;left:.04em;right:.08em;bottom:.02em;height:.06em;background:var(--accent);transform-origin:left;opacity:.35}
+@media (prefers-reduced-motion:no-preference){
+  .landing:not(.played) .lp-copy>*{animation:viewin .6s var(--ease) both}
+  .landing:not(.played) .lp-copy>:nth-child(2){animation-delay:.08s}
+  .landing:not(.played) .lp-copy>:nth-child(3){animation-delay:.16s}
+  .landing:not(.played) .lp-copy>:nth-child(4){animation-delay:.24s}
+  .landing:not(.played) .lp-copy>:nth-child(5){animation-delay:.32s}
+  .landing:not(.played) .floater{animation:float-in .6s var(--ease) both!important;animation-delay:calc(var(--d,0s) + .25s)!important}
+  .landing:not(.played) .device{animation:viewin .7s var(--ease) both!important}
+  .landing:not(.played) .compare.nudge{animation:sweep 2.6s var(--ease) 1.3s 1 both}
+  .landing:not(.played) .lp-copy h1 em::after{animation:underline .7s var(--ease) .7s both}
+  .md-steps li.reveal:nth-child(2),.md-points li.reveal:nth-child(2),.tiers .tier.reveal:nth-child(2){transition-delay:.08s}
+  .md-steps li.reveal:nth-child(3),.md-points li.reveal:nth-child(3),.tiers .tier.reveal:nth-child(3){transition-delay:.16s}
+  .tiers .tier.reveal:nth-child(4){transition-delay:.24s}
+  .btn{transition:filter .2s var(--ease),background-color .2s var(--ease),transform .12s var(--ease)}
+  .btn:active:not(:disabled){transform:scale(.97)}
+}
+@keyframes sweep{0%,100%{--pos:50%}30%{--pos:82%}65%{--pos:20%}}
+@keyframes underline{from{transform:scaleX(0)}}
 </style>
 </head>
 <body>

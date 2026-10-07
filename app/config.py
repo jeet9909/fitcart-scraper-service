@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     gemini_image_model: str = "gemini-3.1-flash-image-preview"  # gemini-2.5-flash-image shuts down on 2 Oct 2026
     gemini_text_model: str = "gemini-2.5-flash"
     face_refine_enabled: bool = Field(default=True, description="Standard pose: a second, edit-only Gemini pass that makes the head match the real person")
+    garment_facts_enabled: bool = Field(default=True, description="Read sleeve length, tuck and similar facts from the product photos and lock them into the image prompts")
     vertex_tryon_enabled: bool = Field(default=True, description="Use Google Vertex AI Virtual Try-On for looks in the person's own pose when a service account is set")
     vertex_tryon_model: str = "virtual-try-on-001"
     vertex_location: str = "us-central1"

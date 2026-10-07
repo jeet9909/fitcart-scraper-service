@@ -1643,8 +1643,10 @@ def test_pro_look_gets_a_360_view_for_two_looks(monkeypatch) -> None:
     urls = response.json()["spin_image_urls"]
     assert len(urls) == 4 and "result.jpg" in urls[0]  # the saved front view comes first
     prompts = [c[2]["contents"][0]["parts"][0]["text"] for c in calls if c[2] and "contents" in c[2]]
-    assert len(prompts) == len(SPIN_ANGLES) == 3
-    assert any("directly from behind" in p for p in prompts) and sum("full profile" in p for p in prompts) == 2
+    # Two drawings: the right side and the back. The left side is the right side mirrored, and the plain
+    # studio front needs no backdrop swap.
+    assert len(prompts) == 2 and len(SPIN_ANGLES) == 3
+    assert any("directly from behind" in p for p in prompts) and sum("full profile" in p for p in prompts) == 1
     patch = next(c for c in calls if c[0] == "PATCH")
     assert patch[2]["spin_paths"][0] == "u/l/result.jpg" and len(patch[2]["spin_paths"]) == 4
     assert [c[1] for c in calls].count("/rest/v1/rpc/consume_look") == 2
@@ -2122,13 +2124,101 @@ def test_360_side_views_are_mirrored_when_drawn_facing_the_wrong_way(monkeypatch
     assert tryon._face_the_right_way(view, 90) is view  # no face found: keep the drawing
 
 
-def test_360_prompt_keeps_the_background_and_names_the_direction() -> None:
+def test_360_prompt_uses_a_plain_backdrop_and_locks_the_styling() -> None:
     from app.tryon import spin_prompt
 
-    right, left = spin_prompt(90), spin_prompt(270)
+    right, left = spin_prompt(90, ["The shirt is left out over the jeans"]), spin_prompt(270)
     assert "RIGHT edge of the picture" in right and "LEFT edge of the picture" in left
-    assert "camera does not move" in right and "same background as image 1" in left
-    assert "studio background" not in right
+    assert "camera does not move" in right and "plain, seamless studio backdrop" in left and "no room, walls" in left
+    assert "left out at the back and sides too" in right and "full-length sleeves reach the wrists" in right
+    assert "The shirt is left out over the jeans." in right and "must stay true" not in left  # facts only when known
+
+
+def test_360_left_side_mirrors_the_right_and_a_busy_front_gets_a_plain_backdrop(monkeypatch) -> None:
+    import asyncio
+    import io as _io
+
+    from PIL import Image as _Image, ImageOps as _ImageOps
+
+    from app import identity, tryon
+
+    service = tryon.TryOnService(LIMIT_SETTINGS)
+    drawn: dict[int, tuple] = {}
+    uploads: dict[str, bytes] = {}
+
+    def png(colour, size=(60, 80)):
+        out = _io.BytesIO()
+        image = _Image.new("RGB", size, colour)
+        image.paste((0, 0, 0), (0, 0, 20, 80))  # a dark band on the left, so mirroring is visible
+        image.save(out, format="PNG")
+        return out.getvalue(), "image/png", "png"
+
+    async def download(path):
+        return png((200, 180, 160))
+
+    async def view(look, person, product, angle, facts=None):
+        drawn[angle] = (look, facts)
+        return png((10 * angle % 255, 90, 90))
+
+    async def upload(path, image):
+        uploads[path] = image[0]
+
+    async def generated(payload, failure):
+        return png((230, 230, 230))
+
+    async def facts(parts, label):
+        return ["The shirt is left out over the jeans"]
+
+    async def rest(method, table, **kwargs):
+        import httpx as _httpx
+        return _httpx.Response(200, json=[{"id": "l", **(kwargs.get("json_body") or {})}], request=_httpx.Request(method, "https://x"))
+
+    async def to_item(row):
+        return row
+
+    monkeypatch.setattr(service, "download", download)
+    monkeypatch.setattr(service, "generate_spin_view", view)
+    monkeypatch.setattr(service, "_upload", upload)
+    monkeypatch.setattr(service, "_generated_image", generated)
+    monkeypatch.setattr(service, "_facts", facts)
+    monkeypatch.setattr(service, "rest", rest)
+    monkeypatch.setattr(service, "_to_item", to_item)
+    monkeypatch.setattr(identity, "is_plain_backdrop", lambda data: False)  # a look on a real background
+    monkeypatch.setattr(tryon, "_face_the_right_way", lambda view, angle: view)
+
+    row = {"id": "l", "result_path": "u/l/result.png", "person_path": "u/l/p.png", "product_path": "u/l/q.png"}
+    saved = asyncio.run(service.create_spin("u", row))
+    spin = saved["spin_paths"]
+    assert sorted(drawn) == [90, 180] and all(f == ["The shirt is left out over the jeans"] for _, f in drawn.values())
+    assert spin[0].startswith("u/l/spin_0_") and len(spin) == 4  # the plain-backdrop front leads the spin
+    right = _Image.open(_io.BytesIO(uploads[spin[1]])).convert("RGB")
+    left = _Image.open(_io.BytesIO(uploads[spin[3]])).convert("RGB")
+    assert list(_ImageOps.mirror(right).getdata()) == list(left.getdata())
+
+
+def test_product_facts_are_read_and_locked_into_the_prompt(monkeypatch) -> None:
+    import asyncio
+
+    from app import tryon
+
+    service = tryon.TryOnService(LIMIT_SETTINGS.model_copy(update={"garment_facts_enabled": True}))
+
+    async def answer(parts, schema, temperature=0.7):
+        assert temperature == 0 and "sleeve length" in parts[0]["text"]
+        return {"facts": ["The shirt has full-length sleeves reaching the wrists", " ", 3]}
+
+    monkeypatch.setattr(service, "generate_json", answer)
+    facts = asyncio.run(service._facts([{"text": tryon.PRODUCT_FACTS_PROMPT.format(pieces="image 1 is the top")}], "product"))
+    assert facts == ["The shirt has full-length sleeves reaching the wrists"]
+    prompt = tryon.tryon_prompt([tryon.OutfitPiece((b"", "image/png", "png"), "top", "Linen shirt")], facts=facts)
+    assert "never shorten, lengthen or roll up sleeves" in prompt
+    assert "must be true in the result: The shirt has full-length sleeves reaching the wrists." in prompt
+
+    async def broken(parts, schema, temperature=0.7):
+        raise tryon.TryOnError("down")
+
+    monkeypatch.setattr(service, "generate_json", broken)
+    assert asyncio.run(service._facts([], "product")) == []  # the look is still drawn without facts
 
 
 def test_standard_pose_prompt_keeps_the_photo_size() -> None:

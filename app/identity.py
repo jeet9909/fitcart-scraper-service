@@ -11,6 +11,7 @@ the result is returned untouched rather than risking a bad paste.
 """
 
 import logging
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -54,9 +55,17 @@ class Face:
 
 _detector = None
 _recognizer = None
+# One detector and one recognizer are shared by every request, and OpenCV's networks are not thread-safe:
+# two looks checked at the same moment crashed inside forward(). Calls take turns (each is a few milliseconds).
+_model_lock = threading.RLock()
 
 
 def _detect(image: np.ndarray) -> Face | None:
+    with _model_lock:
+        return _detect_unlocked(image)
+
+
+def _detect_unlocked(image: np.ndarray) -> Face | None:
     global _detector
     if _detector is None:
         _detector = cv2.FaceDetectorYN.create(str(MODEL_PATH), "", (320, 320), MIN_SCORE)
@@ -188,10 +197,11 @@ def face_signature(image_bytes: bytes) -> np.ndarray | None:
         face = _detect(image)
         if face is None or face.eye_distance < MIN_EYE_DISTANCE_PX:
             return None
-        if _recognizer is None:
-            _recognizer = cv2.FaceRecognizerSF.create(str(RECOGNIZER_PATH), "")
         row = np.concatenate([face.box, face.points.reshape(-1), [face.score]]).astype(np.float32)
-        return _recognizer.feature(_recognizer.alignCrop(image, row)).copy()
+        with _model_lock:
+            if _recognizer is None:
+                _recognizer = cv2.FaceRecognizerSF.create(str(RECOGNIZER_PATH), "")
+            return _recognizer.feature(_recognizer.alignCrop(image, row)).copy()
     except cv2.error:
         log.exception("Face signature failed")
         return None
@@ -204,7 +214,8 @@ def face_match(real: np.ndarray | None, image_bytes: bytes) -> float | None:
     other = face_signature(image_bytes)
     if other is None or _recognizer is None:
         return None
-    return float(_recognizer.match(real, other, cv2.FaceRecognizerSF_FR_COSINE))
+    with _model_lock:
+        return float(_recognizer.match(real, other, cv2.FaceRecognizerSF_FR_COSINE))
 
 
 def facing(image_bytes: bytes) -> str | None:
@@ -270,6 +281,15 @@ def shrink_to_share(image_bytes: bytes, share_now: float, share_wanted: float) -
     out = backdrop * (1 - mask) + pasted * mask
     ok, encoded = cv2.imencode(".png", np.clip(out, 0, 255).astype(np.uint8))
     return encoded.tobytes() if ok else None
+
+
+def is_plain_backdrop(image_bytes: bytes) -> bool:
+    """True when the picture's left and right edges are a smooth studio backdrop rather than a real place."""
+    image = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        return False
+    band = max(4, round(min(image.shape[:2]) * 0.05))
+    return _edge_roughness(image, band) <= PLAIN_BACKDROP_ROUGHNESS
 
 
 PLAIN_BACKDROP_ROUGHNESS = 1.5  # studio backdrops measure about 0.6, real places (plants, walls, bikes) 3 and up

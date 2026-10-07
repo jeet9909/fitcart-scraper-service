@@ -121,7 +121,40 @@ FACE_ACCESSORIES = (
 )
 
 
-def tryon_prompt(pieces: list["OutfitPiece"], pose: str = "standard", face_reference: bool = False, person_share: float | None = None) -> str:
+# The image model tends to "restyle" garments: long sleeves come out as half sleeves, a shirt gets tucked in one view
+# and not the next. These rules, plus facts read from the product photos (see TryOnService._facts), pin them down.
+GARMENT_RULES = (
+    "Garment construction comes from the product photo and must not change: keep the exact sleeve length (a full-sleeve or "
+    "long-sleeve product keeps its sleeves all the way down to the wrists; a half-sleeve stays above the elbow; sleeveless stays "
+    "sleeveless; never shorten, lengthen or roll up sleeves), the exact hem length, neckline and collar, cuffs, the number and "
+    "position of buttons, pockets and seams, and the fit. "
+)
+PRODUCT_FACTS_PROMPT = (
+    "These are product photos for a virtual try-on: {pieces}. For each product, write short plain sentences stating the construction "
+    "facts an artist must copy exactly: sleeve length (sleeveless, short above the elbow, elbow, three-quarter, or full length to the "
+    "wrist) and the cuffs; where the hem falls on the body (waist, hip, thigh, knee, calf, ankle); the neckline or collar; the "
+    "closure (buttons, zip, none); whether a top is worn tucked in or left out in the photo; the fit (slim, regular, relaxed, "
+    "oversized); and any print or pattern. Describe only the listed product, never other clothes the model wears. Start each "
+    "sentence with the product, e.g. 'The shirt has full-length sleeves reaching the wrists, with buttoned cuffs.' At most 6 "
+    "sentences per product."
+)
+SPIN_STYLE_PROMPT = (
+    "Image 1 is a fashion photo of a person. Write short plain sentences describing exactly how the outfit is built and worn, so the "
+    "same outfit can be drawn from the side and the back without any change: whether each top is tucked in, half-tucked or left out "
+    "(and over which garment); the sleeve length (to the wrist, elbow, above the elbow, none) and whether sleeves or cuffs are rolled; "
+    "whether buttons or zips are done up or open; where each hem falls on the body; what is layered over what; the trouser, skirt or "
+    "dress length and leg shape; and the shoes. Describe only what is visible. At most 10 sentences."
+)
+FACTS_SCHEMA = {"type": "object", "properties": {"facts": {"type": "array", "items": {"type": "string"}}}, "required": ["facts"]}
+MAX_FACTS = 20
+
+
+def _facts_text(facts: list[str] | None, lead: str) -> str:
+    return (lead + " ".join(fact.rstrip(".") + "." for fact in facts) + " ") if facts else ""
+
+
+def tryon_prompt(pieces: list["OutfitPiece"], pose: str = "standard", face_reference: bool = False, person_share: float | None = None,
+                 facts: list[str] | None = None) -> str:
     """Instruction for the image model. Image 1 is the person, then an optional face close-up, then the products in order."""
     first_product = 3 if face_reference else 2
     areas = ", ".join(dict.fromkeys(piece.category for piece in pieces))
@@ -139,7 +172,9 @@ def tryon_prompt(pieces: list["OutfitPiece"], pose: str = "standard", face_refer
         "Product photos may show a model wearing other clothes or accessories; take only the listed product from each photo and ignore everything else. "
         f"Dress the person in {'this product' if len(pieces) == 1 else 'all of these products at the same time'}, replacing what they wear in the {areas} area. "
         "Reproduce each product exactly: same color, fabric texture, print, pattern, logo, collar, sleeves, length, fit and design details. "
-        "Do not add clothing, jewelry or accessories that were not provided; the person's own glasses and face accessories stay as they are. "
+        + GARMENT_RULES
+        + _facts_text(facts, "Facts about the products that must be true in the result: ")
+        + "Do not add clothing, jewelry or accessories that were not provided; the person's own glasses and face accessories stay as they are. "
     )
     quality = "Photorealistic, natural fabric folds and fit, anatomically correct hands with five fingers each. One single person, no text, no watermark, no collage, no borders."
     if pose == "keep":
@@ -288,15 +323,20 @@ def social_pose_prompt(pose: SocialPose) -> str:
     )
 
 
-def spin_prompt(angle: int) -> str:
+def spin_prompt(angle: int, facts: list[str] | None = None) -> str:
     return (
         "Image 1 is a finished fashion photo of a person. Redraw the same photo with the person " + SPIN_VIEWS[angle] + ". "
-        "The person turns on the spot; the camera does not move. Keep exactly the same background as image 1: the same place, "
-        "walls, objects, floor, light and shadows, in the same position and size, as if only the person rotated in front of it. "
+        "The person turns on the spot; the camera does not move. Background: the same plain, seamless studio backdrop as image 1, "
+        "the same flat colour and brightness from edge to edge, with nothing in it: no room, walls, furniture, props, scenery or floor "
+        "pattern, only a faint soft shadow at the feet. "
         "Keep the same person, body size and proportions, height, hairstyle, skin tone, glasses and accessories, and exactly the same "
         "outfit, colours, prints, fabric, fit, length and shoes. "
-        "Image 2 is the person's own photo and image 3 is a product reference; use them for details that image 1 does not show, "
-        "such as the back of a garment, but never change what image 1 already shows. "
+        "The outfit is styled exactly as in image 1 from every side: a top left out at the front is left out at the back and sides too, "
+        "a tucked-in top is tucked in all the way round, and sleeves keep the same length on both arms (full-length sleeves reach the "
+        "wrists; never shorten or roll them). Buttons, collars, cuffs, hems and layers stay as they are in image 1. "
+        + _facts_text(facts, "How the outfit is built and worn in image 1, which must stay true in this view: ")
+        + "Image 2 is the person's own photo and image 3 is a product reference; use them only for details that image 1 does not show, "
+        "such as the back of a garment, never for how the garment is worn, and never change what image 1 already shows. "
         "Keep the same camera height and distance and the same framing: the whole body from the top of the head to the soles of the "
         "shoes, the same size and position in the frame as in image 1, standing upright with arms relaxed at the sides. "
         "Photorealistic, one person, no text, no watermark, no collage."
@@ -324,6 +364,21 @@ def _keep_person_size(result: tuple[bytes, str, str], target: float) -> tuple[by
     except Exception:  # sizing is a polish step; never lose a finished look over it
         log.warning("Could not check the person's size in the look", exc_info=True)
         return result
+
+
+FRONT_BACKDROP_PROMPT = (
+    "Image 1 is a fashion photo of a person. Return the same photo with only the background replaced by a plain, seamless, light "
+    "warm-grey studio backdrop, flat and even from edge to edge, with a faint soft shadow at the feet. Change nothing about the "
+    "person: the same face, hair, body, pose, size and position in the frame, and the same outfit, colours, fit, sleeve length, how "
+    "each garment is tucked or buttoned, and the shoes. Photorealistic, one person, no text, no watermark, no borders."
+)
+
+
+def _mirror(view: tuple[bytes, str, str]) -> tuple[bytes, str, str]:
+    with Image.open(io.BytesIO(view[0])) as image:
+        out = io.BytesIO()
+        ImageOps.mirror(image.convert("RGB")).save(out, format="PNG")
+    return out.getvalue(), "image/png", "png"
 
 
 def _face_the_right_way(view: tuple[bytes, str, str], angle: int) -> tuple[bytes, str, str]:
@@ -434,11 +489,19 @@ class TryOnService:
                 return await self.vertex.dress_outfit(person, [(piece.image, piece.category) for piece in pieces])
             except (VertexTryOnError, httpx.HTTPError) as exc:
                 log.warning("Vertex try-on failed, using Gemini instead: %s", exc)
-        face = await asyncio.to_thread(identity.face_reference, person[0]) if self.settings.face_lock_enabled else None
-        # How big the person is in their own photo; the standard pose keeps them that size instead of zooming in.
-        share = await asyncio.to_thread(identity.person_height_share, person[0]) if pose == "standard" else None
+        async def nothing() -> None:
+            return None
+
+        # The face reference, how big the person is in their own photo (the standard pose keeps them that size instead
+        # of zooming in) and the products' construction facts (sleeve length and the like) are read side by side.
+        face, share, facts = await asyncio.gather(
+            asyncio.to_thread(identity.face_reference, person[0]) if self.settings.face_lock_enabled else nothing(),
+            asyncio.to_thread(identity.person_height_share, person[0]) if pose == "standard" else nothing(),
+            self._facts([{"text": PRODUCT_FACTS_PROMPT.format(pieces=_describe_pieces(pieces, 1))}, *(self._inline_part(piece.image) for piece in pieces)],
+                        "product"),
+        )
         target = min(share, MAX_PERSON_SHARE) if share and MIN_PERSON_SHARE <= share <= 1.0 else None
-        prompt = tryon_prompt(pieces, pose, face_reference=face is not None, person_share=target)
+        prompt = tryon_prompt(pieces, pose, face_reference=face is not None, person_share=target, facts=facts)
         face_part = [self._inline_part((face[0], face[1], "jpg"))] if face else []
         payload = {
             "contents": [{
@@ -507,11 +570,26 @@ class TryOnService:
                  ", ".join("n/a" if x is None else f"{x:.3f}" for x in scores), "n/a" if best_score is None else f"{best_score:.3f}")
         return best
 
-    async def generate_spin_view(self, look: tuple[bytes, str, str], person: tuple[bytes, str, str], product: tuple[bytes, str, str], angle: int) -> tuple[bytes, str, str]:
+    async def _facts(self, parts: list[dict[str, Any]], label: str) -> list[str]:
+        """Plain facts about garments (sleeve length, tucked or not...) read by the text model, to pin them in an image prompt.
+        Optional: on any failure the image is drawn without them."""
+        if not self.settings.garment_facts_enabled:
+            return []
+        try:
+            result = await asyncio.wait_for(self.generate_json(parts, FACTS_SCHEMA, temperature=0), timeout=30)
+        except Exception as exc:
+            log.info("No %s facts for the image prompt: %r", label, exc)
+            return []
+        facts = [fact.strip() for fact in (result.get("facts") if isinstance(result, dict) else None) or [] if isinstance(fact, str) and fact.strip()]
+        log.info("%s facts: %s", label.capitalize(), " | ".join(facts[:MAX_FACTS]))
+        return facts[:MAX_FACTS]
+
+    async def generate_spin_view(self, look: tuple[bytes, str, str], person: tuple[bytes, str, str], product: tuple[bytes, str, str], angle: int,
+                                 facts: list[str] | None = None) -> tuple[bytes, str, str]:
         """Draw one side or back view of a finished look, for the 360° viewer. Retries once, since one bad view breaks the spin."""
         payload = {
             "contents": [{"role": "user", "parts": [
-                {"text": spin_prompt(angle)}, self._inline_part(look), self._inline_part(person), self._inline_part(product),
+                {"text": spin_prompt(angle, facts)}, self._inline_part(look), self._inline_part(person), self._inline_part(product),
             ]}],
             "generationConfig": {"responseModalities": ["TEXT", "IMAGE"], "imageConfig": {"aspectRatio": "3:4"}},
         }
@@ -558,16 +636,44 @@ class TryOnService:
             raise TryOnError("This look was not found", 404)
         return rows[0]
 
+    async def _plain_front(self, look: tuple[bytes, str, str]) -> tuple[bytes, str, str] | None:
+        """The 360° view turns on a plain studio backdrop. A look on a real background gets a front view with the
+        backdrop swapped (None when it is already plain, or the swap failed: then the look itself is the front)."""
+        if await asyncio.to_thread(identity.is_plain_backdrop, look[0]):
+            return None
+        payload = {"contents": [{"role": "user", "parts": [{"text": FRONT_BACKDROP_PROMPT}, self._inline_part(look)]}],
+                   "generationConfig": {"responseModalities": ["TEXT", "IMAGE"], "imageConfig": {"aspectRatio": "3:4"}}}
+        try:
+            return await self._generated_image(payload, "Gemini 360 backdrop failed")
+        except TryOnError as exc:
+            if exc.status_code == 429:
+                raise
+            log.warning("Could not put the 360 front on a plain backdrop: %s", exc)
+            return None
+
     async def create_spin(self, user_id: str, row: dict[str, Any]) -> GalleryItem:
-        """Draw the right, back and left views of a saved look and store them next to it."""
+        """Draw the right, back and left views of a saved look and store them next to it.
+
+        Strict on consistency: all views stand on one plain backdrop, the way the outfit is worn (tucked, sleeves,
+        buttons) is read from the front once and locked into every view, and the left side is the right side
+        mirrored, so the two sides always face opposite ways."""
         look, person, product = await asyncio.gather(
             self.download(row["result_path"]), self.download(row["person_path"]), self.download(row["product_path"]))
-        views = await asyncio.gather(*(self.generate_spin_view(look, person, product, angle) for angle in SPIN_ANGLES))
-        views = list(await asyncio.gather(*(asyncio.to_thread(_face_the_right_way, view, angle) for view, angle in zip(views, SPIN_ANGLES))))
+        new_front, facts = await asyncio.gather(
+            self._plain_front(look), self._facts([{"text": SPIN_STYLE_PROMPT}, self._inline_part(look)], "360 styling"))
+        front = new_front or look
+        right, back = await asyncio.gather(*(self.generate_spin_view(front, person, product, angle, facts) for angle in (90, 180)))
+        right = await asyncio.to_thread(_face_the_right_way, right, 90)
+        left = await asyncio.to_thread(_mirror, right)
+        views = [right, back, left]  # the order of SPIN_ANGLES: 90, 180, 270
         prefix = f"{user_id}/{row['id']}"
         paths = [f"{prefix}/spin_{angle}_{uuid4().hex[:8]}.{view[2]}" for angle, view in zip(SPIN_ANGLES, views)]
-        await asyncio.gather(*(self._upload(path, view) for path, view in zip(paths, views)))
-        spin = [row["result_path"], *paths]
+        front_path = f"{prefix}/spin_0_{uuid4().hex[:8]}.{new_front[2]}" if new_front else None
+        uploads = [*zip(paths, views), *([(front_path, new_front)] if new_front else [])]
+        await asyncio.gather(*(self._upload(path, view) for path, view in uploads))
+        if front_path:
+            paths.append(front_path)  # cleaned up with the others if saving fails
+        spin = [front_path or row["result_path"], *paths[:3]]
         response = await self.rest(
             "PATCH", "try_on_gallery", params={"id": f"eq.{row['id']}", "anonymous_user_id": f"eq.{user_id}"},
             json_body={"spin_paths": spin}, prefer="return=representation")
@@ -592,11 +698,11 @@ class TryOnService:
             raise TryOnError("Gemini returned an invalid image") from exc
         return validate_image(data, image.get("mime_type") or image.get("mimeType") or "image/png", 20_000_000)
 
-    async def generate_json(self, parts: list[dict[str, Any]], schema: dict[str, Any]) -> Any:
+    async def generate_json(self, parts: list[dict[str, Any]], schema: dict[str, Any], temperature: float = 0.7) -> Any:
         """Ask the Gemini text model for JSON that matches ``schema``."""
         payload = {
             "contents": [{"role": "user", "parts": parts}],
-            "generationConfig": {"responseMimeType": "application/json", "responseSchema": schema, "temperature": 0.7},
+            "generationConfig": {"responseMimeType": "application/json", "responseSchema": schema, "temperature": temperature},
         }
         body = await self._call_gemini(self.settings.gemini_text_model, payload, "Gemini outfit suggestions failed")
         texts = [

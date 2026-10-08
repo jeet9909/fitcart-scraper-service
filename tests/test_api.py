@@ -2490,3 +2490,38 @@ def test_free_looks_are_watermarked_and_paid_looks_upscaled(monkeypatch) -> None
     monkeypatch.setattr(app_main, "plan_features", free)
     marked = asyncio.run(app_main.draw_look({}, None, draw, Service()))
     assert marked[0] != b"4k"  # the free plan keeps the normal size, with the watermark
+
+
+def test_4k_images_are_handled_one_at_a_time_and_a_refused_size_falls_back(monkeypatch) -> None:
+    import asyncio
+
+    from app import tryon
+
+    service = tryon.TryOnService(LIMIT_SETTINGS.model_copy(update={"paid_image_size": "4K"}))
+    running, peak, seen = [0], [0], []
+
+    async def decoded(payload, failure):
+        seen.append(payload["generationConfig"]["imageConfig"].get("imageSize"))
+        running[0] += 1
+        peak[0] = max(peak[0], running[0])
+        await asyncio.sleep(0.02)
+        running[0] -= 1
+        return _png((60, 80))
+
+    monkeypatch.setattr(service, "_decoded_image", decoded)
+    big = {"contents": [], "generationConfig": {"imageConfig": {"aspectRatio": "3:4", "imageSize": "4K"}}}
+
+    async def two_at_once():
+        return await asyncio.gather(service._generated_image(big, "x"), service._generated_image(big, "x"))
+
+    first, second = asyncio.run(two_at_once())
+    assert peak[0] == 1 and first[1] == "image/jpeg"  # never two 4K images in memory together, stored as JPEG
+
+    async def refused(payload, failure):
+        if "imageSize" in payload["generationConfig"]["imageConfig"]:
+            raise tryon.TryOnError("Gemini 360 view failed (400: Invalid value for imageSize)", 400)
+        return _png((60, 80))
+
+    monkeypatch.setattr(service, "_decoded_image", refused)
+    assert asyncio.run(service._generated_image(big, "x"))[1] == "image/png"  # drawn at the normal size instead
+    assert service.full_size is None  # and later requests stop asking for 4K

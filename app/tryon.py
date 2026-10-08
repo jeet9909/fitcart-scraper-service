@@ -67,8 +67,18 @@ def _aspect_of(image: tuple[bytes, str, str]) -> str:
     return min(ASPECT_RATIOS, key=lambda name: abs(ASPECT_RATIOS[name] - ratio))
 
 
+FULL_RES_TIMEOUT_SECONDS = 300  # 4K drawings take longer than the normal 3 minutes allow
+
+
+def _without_size(payload: dict[str, Any]) -> dict[str, Any]:
+    config = {k: v for k, v in payload["generationConfig"]["imageConfig"].items() if k != "imageSize"}
+    return {**payload, "generationConfig": {**payload["generationConfig"], "imageConfig": config}}
+
+
 def _as_jpeg(image: tuple[bytes, str, str]) -> tuple[bytes, str, str]:
     """Store full-resolution results as high-quality JPEG: a few MB instead of tens."""
+    if image[1] == "image/jpeg":
+        return image
     with Image.open(io.BytesIO(image[0])) as picture:
         out = io.BytesIO()
         picture.convert("RGB").save(out, format="JPEG", quality=92, optimize=True)
@@ -400,10 +410,12 @@ FRONT_BACKDROP_PROMPT = (
 
 
 def _mirror(view: tuple[bytes, str, str]) -> tuple[bytes, str, str]:
+    """The view flipped left to right, kept in its own format (a 4K view as PNG would be about 20 MB)."""
+    jpeg = view[1] == "image/jpeg"
     with Image.open(io.BytesIO(view[0])) as image:
         out = io.BytesIO()
-        ImageOps.mirror(image.convert("RGB")).save(out, format="PNG")
-    return out.getvalue(), "image/png", "png"
+        ImageOps.mirror(image.convert("RGB")).save(out, format="JPEG" if jpeg else "PNG", **({"quality": 92} if jpeg else {}))
+    return (out.getvalue(), "image/jpeg", "jpg") if jpeg else (out.getvalue(), "image/png", "png")
 
 
 def _face_the_right_way(view: tuple[bytes, str, str], angle: int) -> tuple[bytes, str, str]:
@@ -416,12 +428,8 @@ def _face_the_right_way(view: tuple[bytes, str, str], angle: int) -> tuple[bytes
         drawn = identity.facing(view[0])
         if drawn is None or drawn == expected:
             return view
-        with Image.open(io.BytesIO(view[0])) as image:
-            mirrored = ImageOps.mirror(image.convert("RGB"))
-            out = io.BytesIO()
-            mirrored.save(out, format="PNG")
         log.info("360 view %s faced %s instead of %s; mirrored it", angle, drawn, expected)
-        return out.getvalue(), "image/png", "png"
+        return _mirror(view)
     except Exception:  # a failed check must never lose a finished view
         log.warning("Could not check which way 360 view %s faces", angle, exc_info=True)
         return view
@@ -451,6 +459,10 @@ class TryOnService:
         self.vertex = VertexTryOn(settings)
         self._pool: tuple[asyncio.AbstractEventLoop, httpx.AsyncClient] | None = None
         self.backup = BackupTables(self)
+        # One full-resolution image at a time, server-wide: a 4K answer arrives as 30 to 40 MB of base64 text and
+        # is several copies of that in memory while it is decoded, so two at once could exhaust a small server.
+        self._full_res = asyncio.Semaphore(1)
+        self._full_size_refused = False
 
     @asynccontextmanager
     async def _supabase(self) -> AsyncIterator[httpx.AsyncClient]:
@@ -601,6 +613,8 @@ class TryOnService:
     @property
     def full_size(self) -> str | None:
         """The imageSize for paid output ("4K"), or None when the final full-resolution pass is switched off."""
+        if self._full_size_refused:
+            return None
         size = self.settings.paid_image_size.strip().upper()
         return size if size in ("2K", "4K") else None
 
@@ -740,6 +754,24 @@ class TryOnService:
         return await self._to_item(response.json()[0])
 
     async def _generated_image(self, payload: dict[str, Any], failure: str) -> tuple[bytes, str, str]:
+        config = (payload.get("generationConfig") or {}).get("imageConfig") or {}
+        if "imageSize" not in config:
+            return await self._decoded_image(payload, failure)
+        if self._full_size_refused:
+            return await self._decoded_image(_without_size(payload), failure)
+        async with self._full_res:
+            try:
+                image = await self._decoded_image(payload, failure)
+            except TryOnError as exc:
+                if exc.status_code == 400 or "imageSize" in str(exc) or "image_size" in str(exc).lower():
+                    # The model refused the size: draw at the normal size from now on rather than fail every request.
+                    self._full_size_refused = True
+                    log.error("Gemini refused imageSize=%s, using the normal size from now on: %s", config["imageSize"], exc)
+                    return await self._decoded_image(_without_size(payload), failure)
+                raise
+            return await asyncio.to_thread(_as_jpeg, image)  # a few MB instead of tens, before the next one starts
+
+    async def _decoded_image(self, payload: dict[str, Any], failure: str) -> tuple[bytes, str, str]:
         body = await self._call_gemini(self.settings.gemini_image_model, payload, failure)
         image = self._find_image(body)
         if not image:
@@ -751,7 +783,9 @@ class TryOnService:
             data = base64.b64decode(image["data"], validate=True)
         except (KeyError, ValueError) as exc:
             raise TryOnError("Gemini returned an invalid image") from exc
-        return validate_image(data, image.get("mime_type") or image.get("mimeType") or "image/png", GENERATED_IMAGE_MAX_BYTES)
+        mime = image.get("mime_type") or image.get("mimeType") or "image/png"
+        del body, image  # drop the base64 text before decoding the picture
+        return validate_image(data, mime, GENERATED_IMAGE_MAX_BYTES)
 
     async def generate_json(self, parts: list[dict[str, Any]], schema: dict[str, Any], temperature: float = 0.7) -> Any:
         """Ask the Gemini text model for JSON that matches ``schema``."""
@@ -775,7 +809,8 @@ class TryOnService:
         return result
 
     async def _call_gemini(self, model: str, payload: dict[str, Any], failure: str) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=180) as client:
+        big = "imageSize" in ((payload.get("generationConfig") or {}).get("imageConfig") or {})
+        async with httpx.AsyncClient(timeout=FULL_RES_TIMEOUT_SECONDS if big else 180) as client:
             for attempt in range(2):
                 self.usage.requests += 1
                 activity.count_call("gemini_image" if model == self.settings.gemini_image_model else "gemini_text")

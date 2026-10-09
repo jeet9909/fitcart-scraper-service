@@ -810,7 +810,7 @@ class TryOnService:
         async with httpx.AsyncClient(timeout=FULL_RES_TIMEOUT_SECONDS if big else 180) as client:
             for attempt in range(2):
                 self.usage.requests += 1
-                activity.count_call("gemini_image" if model == self.settings.gemini_image_model else "gemini_text")
+                activity.count_call(("gemini_image_4k" if big else "gemini_image") if model == self.settings.gemini_image_model else "gemini_text")
                 try:
                     response = await client.post(
                         f"{self._model_url(model)}:generateContent",

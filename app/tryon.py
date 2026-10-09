@@ -619,7 +619,8 @@ class TryOnService:
         return size if size in ("2K", "4K") else None
 
     async def upscale(self, image: tuple[bytes, str, str], label: str = "look") -> tuple[bytes, str, str]:
-        """The paid plans' final pass: the same finished photo returned at full resolution (4K) and stored as JPEG.
+        """The paid plans' final pass for try-on looks: the same finished photo returned at full resolution (4K) and
+        stored as JPEG. 360° views and social poses stay at the normal size: drawn at 4K they failed on the server.
         Never loses a look: if the pass fails, the normal-resolution image is kept."""
         size = self.full_size
         if not size:
@@ -656,7 +657,7 @@ class TryOnService:
             "contents": [{"role": "user", "parts": [
                 {"text": spin_prompt(angle, facts)}, self._inline_part(look), self._inline_part(person), self._inline_part(product),
             ]}],
-            "generationConfig": {"responseModalities": ["TEXT", "IMAGE"], "imageConfig": {"aspectRatio": "3:4", **({"imageSize": self.full_size} if self.full_size else {})}},
+            "generationConfig": {"responseModalities": ["TEXT", "IMAGE"], "imageConfig": {"aspectRatio": "3:4"}},
         }
         try:
             return await self._generated_image(payload, "Gemini 360 view failed")
@@ -679,7 +680,6 @@ class TryOnService:
         if face and self.settings.face_refine_enabled:
             # A new pose redraws the whole person, so the face drifts the same way as in the standard pose.
             image = await self._refine_face(image, person, face, "4:5", f"pose {pose.key}", check=True, keep_head_size=True)
-        image = await self.upscale(image, f"pose {pose.key}")  # poses are a Plus and Pro feature: always full resolution
         path = f"{user_id}/{row['id']}/pose_{pose.key}_{uuid4().hex[:8]}.{image[2]}"
         await self._upload(path, image)
         shots = [shot for shot in row.get("pose_shots") or [] if shot.get("pose") != pose.key] + [{"pose": pose.key, "path": path}]
@@ -708,7 +708,7 @@ class TryOnService:
         if await asyncio.to_thread(identity.is_plain_backdrop, look[0]):
             return None
         payload = {"contents": [{"role": "user", "parts": [{"text": FRONT_BACKDROP_PROMPT}, self._inline_part(look)]}],
-                   "generationConfig": {"responseModalities": ["TEXT", "IMAGE"], "imageConfig": {"aspectRatio": "3:4", **({"imageSize": self.full_size} if self.full_size else {})}}}
+                   "generationConfig": {"responseModalities": ["TEXT", "IMAGE"], "imageConfig": {"aspectRatio": "3:4"}}}
         try:
             return await self._generated_image(payload, "Gemini 360 backdrop failed")
         except TryOnError as exc:
@@ -732,9 +732,6 @@ class TryOnService:
         right = await asyncio.to_thread(_face_the_right_way, right, 90)
         left = await asyncio.to_thread(_mirror, right)
         views = [right, back, left]  # the order of SPIN_ANGLES: 90, 180, 270
-        if self.full_size:  # full-resolution views are stored as JPEG
-            views = list(await asyncio.gather(*(asyncio.to_thread(_as_jpeg, view) for view in views)))
-            new_front = await asyncio.to_thread(_as_jpeg, new_front) if new_front else None
         prefix = f"{user_id}/{row['id']}"
         paths = [f"{prefix}/spin_{angle}_{uuid4().hex[:8]}.{view[2]}" for angle, view in zip(SPIN_ANGLES, views)]
         front_path = f"{prefix}/spin_0_{uuid4().hex[:8]}.{new_front[2]}" if new_front else None

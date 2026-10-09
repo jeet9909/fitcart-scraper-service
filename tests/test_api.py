@@ -2525,3 +2525,24 @@ def test_4k_images_are_handled_one_at_a_time_and_a_refused_size_falls_back(monke
     monkeypatch.setattr(service, "_decoded_image", refused)
     assert asyncio.run(service._generated_image(big, "x"))[1] == "image/png"  # drawn at the normal size instead
     assert service.full_size is None  # and later requests stop asking for 4K
+
+
+def test_360_views_and_poses_stay_normal_size_when_looks_are_4k(monkeypatch) -> None:
+    from app import tryon
+
+    row, calls, handler = _spin_backend([PRO_GRANT])
+    four_k = LIMIT_SETTINGS.model_copy(update={"paid_image_size": "4K"})
+    monkeypatch.setattr(tryon.identity, "is_plain_backdrop", lambda data: False)  # also draws the backdrop front
+    _install_fakes(monkeypatch, supabase=handler)
+    app.dependency_overrides[get_runtime_settings] = lambda: four_k
+    service = TryOnService(four_k)
+    app.dependency_overrides[get_tryon_service] = lambda: service
+    try:
+        with TestClient(app) as client:
+            spin = client.post(f"/v1/try-ons/{row['id']}/spin", headers={"Authorization": f"Bearer {_email_token('buyer@example.com')}"})
+            pose = _pose(client, row, "street-walk")
+    finally:
+        app.dependency_overrides.clear()
+    assert spin.status_code == 200 and pose.status_code == 200, (spin.text, pose.text)
+    drawn = [c[2]["generationConfig"]["imageConfig"] for c in calls if c[2] and "imageConfig" in c[2].get("generationConfig", {})]
+    assert drawn and all("imageSize" not in config for config in drawn)

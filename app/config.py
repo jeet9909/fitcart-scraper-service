@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     admin_emails_csv: str = Field(default="", validation_alias="ADMIN_EMAILS", description="Comma-separated emails that may sign in to the admin dashboard at /admin")
     admin_session_hours: int = Field(default=12, ge=1, le=168)
     cost_gemini_image_inr: float = Field(default=6.40, ge=0, description="Estimated cost of one Gemini image call, for the admin dashboard")
+    cost_gemini_4k_inr: float = Field(default=12.80, ge=0, description="Estimated cost of one 4K Gemini image (the Pro final pass); Google charges more for 4K than for a normal picture")
     cost_vertex_tryon_inr: float = Field(default=5.30, ge=0, description="Estimated cost of one Vertex Virtual Try-On call")
     cost_gemini_text_inr: float = Field(default=0.10, ge=0, description="Estimated cost of one Gemini text call (stylist ideas)")
     monthly_fixed_costs_inr: float = Field(default=0, ge=0, description="Hosting, email, scraping and other fixed costs per month, for the admin profit view")

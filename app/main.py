@@ -174,23 +174,23 @@ async def spend_look(claims: dict = Depends(get_session_claims), ledger: LookLed
         raise
 
 
-async def plan_features(claims: dict, ledger: LookLedger) -> tuple[bool, bool]:
-    """(face_check, watermark) for a try-on. Plus and Pro get the identity check and extra face redraw;
-    the free plan gets the MyDripCheck watermark. Unlimited accounts count as Pro. Asked only right before
-    drawing, so rejected requests cost no extra database calls."""
+async def plan_features(claims: dict, ledger: LookLedger) -> tuple[bool, bool, bool]:
+    """(face_check, watermark, full_res) for a try-on. Plus and Pro get the identity check and extra face redraw;
+    the free plan gets the MyDripCheck watermark; Pro gets the final 4K pass. Unlimited accounts count as Pro.
+    Asked only right before drawing, so rejected requests cost no extra database calls."""
     kinds = await ledger.plan_kinds(claims)
     paid = "*" in kinds or bool(kinds & {"pass", "plus", "pro"})
-    return "*" in kinds or bool(kinds & {"plus", "pro"}), not paid
+    return "*" in kinds or bool(kinds & {"plus", "pro"}), not paid, "*" in kinds or "pro" in kinds
 
 
 async def draw_look(claims: dict, ledger: LookLedger, draw, service: TryOnService | None = None) -> tuple[bytes, str, str]:
-    """Run a try-on drawing with the account's plan features: free-plan results get the watermark, paid-plan
-    results (Pass, Plus, Pro, unlimited) get the final full-resolution (4K) pass."""
-    face_check, marked = await plan_features(claims, ledger)
+    """Run a try-on drawing with the account's plan features: free-plan results get the watermark, Pro results
+    (and unlimited accounts) get the final full-resolution (4K) pass; Pass and Plus stay at the regular size."""
+    face_check, marked, full_res = await plan_features(claims, ledger)
     result = await draw(face_check)
     if marked:
         return await asyncio.to_thread(watermark, result)
-    upscale = getattr(service, "upscale", None)  # stand-in services in tests have no upscale
+    upscale = getattr(service, "upscale", None) if full_res else None  # stand-in services in tests have no upscale
     return await upscale(result) if upscale else result
 
 

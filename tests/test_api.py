@@ -2467,29 +2467,33 @@ def test_paid_looks_get_a_final_4k_pass_stored_as_jpeg(monkeypatch) -> None:
     assert off.full_size is None and asyncio.run(off.upscale(original)) is original
 
 
-def test_free_looks_are_watermarked_and_paid_looks_upscaled(monkeypatch) -> None:
+def test_only_pro_looks_get_4k_and_free_looks_are_watermarked(monkeypatch) -> None:
     import asyncio
 
+    from app import activity
     from app import main as app_main
 
     class Service:
         async def upscale(self, image):
             return b"4k", "image/jpeg", "jpg"
 
-    async def free(claims, ledger):
-        return False, True
-
-    async def paid(claims, ledger):
-        return True, False
+    def plan(face_check, marked, full_res):
+        async def features(claims, ledger):
+            return face_check, marked, full_res
+        return features
 
     async def draw(check):
         return _png((90, 120))
 
-    monkeypatch.setattr(app_main, "plan_features", paid)
+    monkeypatch.setattr(app_main, "plan_features", plan(True, False, True))  # Pro
     assert asyncio.run(app_main.draw_look({}, None, draw, Service()))[0] == b"4k"
-    monkeypatch.setattr(app_main, "plan_features", free)
-    marked = asyncio.run(app_main.draw_look({}, None, draw, Service()))
-    assert marked[0] != b"4k"  # the free plan keeps the normal size, with the watermark
+    monkeypatch.setattr(app_main, "plan_features", plan(True, False, False))  # Plus (and Pass): regular size
+    assert asyncio.run(app_main.draw_look({}, None, draw, Service()))[0] != b"4k"
+    monkeypatch.setattr(app_main, "plan_features", plan(False, True, False))  # Free: regular size, watermark
+    assert asyncio.run(app_main.draw_look({}, None, draw, Service()))[0] != b"4k"
+    # A 4K picture is counted at its own price on the admin dashboard.
+    cost = activity.estimated_cost({"gemini_image": 2, "gemini_image_4k": 1, "gemini_text": 1}, LIMIT_SETTINGS)
+    assert cost == round(2 * LIMIT_SETTINGS.cost_gemini_image_inr + LIMIT_SETTINGS.cost_gemini_4k_inr + LIMIT_SETTINGS.cost_gemini_text_inr, 2)
 
 
 def test_4k_images_are_handled_one_at_a_time_and_a_refused_size_falls_back(monkeypatch) -> None:

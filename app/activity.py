@@ -40,7 +40,7 @@ def tracked_kind(method: str, path: str) -> str | None:
 
 
 def count_call(provider: str) -> None:
-    """Called by the try-on service for every billable model call ('gemini_image', 'gemini_text' or 'vertex')."""
+    """Called by the try-on service for every billable model call ('gemini_image', 'gemini_image_4k', 'gemini_text' or 'vertex')."""
     current = _current.get()
     if current is not None:
         current["calls"][provider] = current["calls"].get(provider, 0) + 1
@@ -64,6 +64,7 @@ def note_error(message: Any) -> None:
 def estimated_cost(calls: dict[str, int], settings: Settings) -> float:
     return round(
         calls.get("gemini_image", 0) * settings.cost_gemini_image_inr
+        + calls.get("gemini_image_4k", 0) * settings.cost_gemini_4k_inr
         + calls.get("vertex", 0) * settings.cost_vertex_tryon_inr
         + calls.get("gemini_text", 0) * settings.cost_gemini_text_inr,
         2,
@@ -115,7 +116,7 @@ async def middleware(request: Request, call_next):
             "email": claims.get("email"),
             "error": context["error"] if status_code >= 400 else None,
             "duration_ms": elapsed,
-            "image_calls": context["calls"].get("gemini_image", 0),
+            "image_calls": context["calls"].get("gemini_image", 0) + context["calls"].get("gemini_image_4k", 0),
             "vertex_calls": context["calls"].get("vertex", 0),
             "cost_inr": estimated_cost(context["calls"], settings),
             "meta": context["meta"],

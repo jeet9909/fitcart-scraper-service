@@ -1643,10 +1643,10 @@ def test_pro_look_gets_a_360_view_for_two_looks(monkeypatch) -> None:
     urls = response.json()["spin_image_urls"]
     assert len(urls) == 4 and "result.jpg" in urls[0]  # the saved front view comes first
     prompts = [c[2]["contents"][0]["parts"][0]["text"] for c in calls if c[2] and "contents" in c[2]]
-    # Two drawings: the right side and the back. The left side is the right side mirrored, and the plain
-    # studio front needs no backdrop swap.
-    assert len(prompts) == 2 and len(SPIN_ANGLES) == 3
-    assert any("directly from behind" in p for p in prompts) and sum("full profile" in p for p in prompts) == 1
+    # Three drawings, each its own: right side, back and left side (the plain studio front needs no backdrop swap).
+    drawings = [p for p in prompts if "Redraw the same photo" in p]
+    assert len(drawings) == len(SPIN_ANGLES) == 3
+    assert any("directly from behind" in p for p in drawings) and sum("full profile" in p for p in drawings) == 2
     patch = next(c for c in calls if c[0] == "PATCH")
     assert patch[2]["spin_paths"][0] == "u/l/result.jpg" and len(patch[2]["spin_paths"]) == 4
     assert [c[1] for c in calls].count("/rest/v1/rpc/consume_look") == 2
@@ -2106,22 +2106,51 @@ def test_flipkart_share_text_becomes_a_clean_product_link() -> None:
     assert extract_url(shared.split("\n")[1]) == clean
 
 
-def test_360_side_views_are_mirrored_when_drawn_facing_the_wrong_way(monkeypatch) -> None:
-    from app import identity, tryon
+def test_360_views_facing_the_wrong_way_are_redrawn_then_flipped_as_a_last_resort(monkeypatch) -> None:
+    import asyncio
 
-    image = Image.new("RGB", (4, 2), "white")
-    image.putpixel((0, 0), (255, 0, 0))
-    buffer = BytesIO()
-    image.save(buffer, format="PNG")
-    view = (buffer.getvalue(), "image/png", "png")
+    from app import tryon
 
-    monkeypatch.setattr(identity, "facing", lambda data: "left")
-    right = tryon._face_the_right_way(view, 90)  # right side should face right: mirrored
-    assert Image.open(BytesIO(right[0])).getpixel((3, 0)) == (255, 0, 0)
-    assert tryon._face_the_right_way(view, 270) is view  # left side already faces left
-    assert tryon._face_the_right_way(view, 180) is view  # back view is never touched
-    monkeypatch.setattr(identity, "facing", lambda data: None)
-    assert tryon._face_the_right_way(view, 90) is view  # no face found: keep the drawing
+    service = tryon.TryOnService(LIMIT_SETTINGS)
+    drawn, strict_calls = [], []
+    answers = {}
+
+    def png(tag):
+        out = BytesIO()
+        image = Image.new("RGB", (4, 2), "white")
+        image.putpixel((0, 0), (tag, 0, 0))
+        image.save(out, format="PNG")
+        return out.getvalue(), "image/png", "png"
+
+    async def view(front, person, product, angle, facts=None, strict=False):
+        drawn.append(angle)
+        if strict:
+            strict_calls.append(angle)
+        return png(len(drawn))
+
+    async def facing(image):
+        return answers.pop(0) if isinstance(answers, list) else answers.get("all")
+
+    monkeypatch.setattr(service, "generate_spin_view", view)
+    monkeypatch.setattr(service, "_facing", facing)
+
+    answers = {"all": "right"}
+    first = asyncio.run(service._checked_spin_view(None, None, None, 90, None))
+    assert drawn == [90] and not strict_calls  # right side faced right: kept as drawn
+
+    drawn.clear(); answers = ["right", "left"]  # left side drawn facing right, the redraw faces left
+    asyncio.run(service._checked_spin_view(None, None, None, 270, None))
+    assert drawn == [270, 270] and strict_calls == [270]
+
+    drawn.clear(); strict_calls.clear(); answers = ["right", "right"]  # still wrong after the redraw: flipped
+    flipped = asyncio.run(service._checked_spin_view(None, None, None, 270, None))
+    assert Image.open(BytesIO(flipped[0])).getpixel((3, 0))[0] == 2  # the redraw, mirrored (its marker moved right)
+
+    drawn.clear(); answers = [None]  # direction unknown: the drawing is kept
+    asyncio.run(service._checked_spin_view(None, None, None, 90, None))
+    assert drawn == [90] and first[1] == "image/png"
+    assert "faced the wrong way" in tryon.spin_prompt(270, strict=True) and "LEFT edge" in tryon.spin_prompt(270, strict=True)
+    assert "face must not be visible" in tryon.spin_prompt(180, strict=True)
 
 
 def test_360_prompt_uses_a_plain_backdrop_and_locks_the_styling() -> None:
@@ -2134,7 +2163,7 @@ def test_360_prompt_uses_a_plain_backdrop_and_locks_the_styling() -> None:
     assert "The shirt is left out over the jeans." in right and "must stay true" not in left  # facts only when known
 
 
-def test_360_left_side_mirrors_the_right_and_a_busy_front_gets_a_plain_backdrop(monkeypatch) -> None:
+def test_360_draws_every_side_and_a_busy_front_gets_a_plain_backdrop(monkeypatch) -> None:
     import asyncio
     import io as _io
 
@@ -2184,16 +2213,19 @@ def test_360_left_side_mirrors_the_right_and_a_busy_front_gets_a_plain_backdrop(
     monkeypatch.setattr(service, "rest", rest)
     monkeypatch.setattr(service, "_to_item", to_item)
     monkeypatch.setattr(identity, "is_plain_backdrop", lambda data: False)  # a look on a real background
-    monkeypatch.setattr(tryon, "_face_the_right_way", lambda view, angle: view)
+    async def faces_right_way(image):
+        return None  # direction unknown: drawings are kept as they are
+
+    monkeypatch.setattr(service, "_facing", faces_right_way)
 
     row = {"id": "l", "result_path": "u/l/result.png", "person_path": "u/l/p.png", "product_path": "u/l/q.png"}
     saved = asyncio.run(service.create_spin("u", row))
     spin = saved["spin_paths"]
-    assert sorted(drawn) == [90, 180] and all(f == ["The shirt is left out over the jeans"] for _, f in drawn.values())
+    assert sorted(drawn) == [90, 180, 270] and all(f == ["The shirt is left out over the jeans"] for _, f in drawn.values())
     assert spin[0].startswith("u/l/spin_0_") and len(spin) == 4  # the plain-backdrop front leads the spin
     right = _Image.open(_io.BytesIO(uploads[spin[1]])).convert("RGB")
     left = _Image.open(_io.BytesIO(uploads[spin[3]])).convert("RGB")
-    assert list(_ImageOps.mirror(right).getdata()) == list(left.getdata())
+    assert list(_ImageOps.mirror(right).getdata()) != list(left.getdata())  # the left side is its own drawing
 
 
 def test_product_facts_are_read_and_locked_into_the_prompt(monkeypatch) -> None:

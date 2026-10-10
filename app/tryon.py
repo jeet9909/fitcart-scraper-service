@@ -299,8 +299,6 @@ SPIN_VIEWS = {
     270: "turned 90 degrees to their right, standing side-on so their nose, chest and toes point to the LEFT edge of the picture. "
          "The camera sees their left side in full profile: the left cheek, left ear, left arm and left shoulder",
 }
-# Which way the nose should point in the picture for each side view; a view drawn the wrong way round is mirrored.
-SPIN_FACING = {90: "right", 270: "left"}
 
 
 # Social-ready poses: the finished look redrawn in a pose and setting made for a feed post (4:5).
@@ -358,9 +356,27 @@ def social_pose_prompt(pose: SocialPose) -> str:
     )
 
 
-def spin_prompt(angle: int, facts: list[str] | None = None) -> str:
+# Asked of the text model about each drawn view: which way the person faces. Cheap, and far more reliable on full
+# profiles than the face detector (which often finds no face side-on); the detector is the fallback.
+FACING_PROMPT = (
+    "Look at the person in this photo. Which way are they facing? Answer 'right' if their nose and toes point to the "
+    "right edge of the picture, 'left' if to the left edge, 'camera' if they face the camera, 'away' if we see their "
+    "back and not their face, or 'unclear'."
+)
+FACING_SCHEMA = {"type": "object", "properties": {"facing": {"type": "string", "enum": ["right", "left", "camera", "away", "unclear"]}},
+                 "required": ["facing"]}
+SPIN_EXPECTED = {90: "right", 180: "away", 270: "left"}
+SPIN_VIEW_REDRAWS = 1  # a view facing the wrong way is drawn once more with a stricter instruction
+
+
+def spin_prompt(angle: int, facts: list[str] | None = None, strict: bool = False) -> str:
     return (
         "Image 1 is a finished fashion photo of a person. Redraw the same photo with the person " + SPIN_VIEWS[angle] + ". "
+        + (f"This is a redraw: the last drawing faced the wrong way. The person must face the {SPIN_EXPECTED[angle].upper()} "
+           "edge of the picture; do not draw them facing the camera or the other way. " if strict and angle in (90, 270) else "")
+        + ("This is a redraw: the last drawing showed the face. Show only the back of the head and body; the face must not "
+           "be visible. " if strict and angle == 180 else "")
+        + 
         "The person turns on the spot; the camera does not move. Background: the same plain, seamless studio backdrop as image 1, "
         "the same flat colour and brightness from edge to edge, with nothing in it: no room, walls, furniture, props, scenery or floor "
         "pattern, only a faint soft shadow at the feet. "
@@ -416,23 +432,6 @@ def _mirror(view: tuple[bytes, str, str]) -> tuple[bytes, str, str]:
         out = io.BytesIO()
         ImageOps.mirror(image.convert("RGB")).save(out, format="JPEG" if jpeg else "PNG", **({"quality": 92} if jpeg else {}))
     return (out.getvalue(), "image/jpeg", "jpg") if jpeg else (out.getvalue(), "image/png", "png")
-
-
-def _face_the_right_way(view: tuple[bytes, str, str], angle: int) -> tuple[bytes, str, str]:
-    """The image model often draws both side views facing the same way. Mirror a side view whose face points
-    the wrong way, so the right and left sides really are opposite. Front and back views are left alone."""
-    expected = SPIN_FACING.get(angle)
-    if expected is None:
-        return view
-    try:
-        drawn = identity.facing(view[0])
-        if drawn is None or drawn == expected:
-            return view
-        log.info("360 view %s faced %s instead of %s; mirrored it", angle, drawn, expected)
-        return _mirror(view)
-    except Exception:  # a failed check must never lose a finished view
-        log.warning("Could not check which way 360 view %s faces", angle, exc_info=True)
-        return view
 
 
 @dataclass
@@ -651,11 +650,11 @@ class TryOnService:
         return facts[:MAX_FACTS]
 
     async def generate_spin_view(self, look: tuple[bytes, str, str], person: tuple[bytes, str, str], product: tuple[bytes, str, str], angle: int,
-                                 facts: list[str] | None = None) -> tuple[bytes, str, str]:
+                                 facts: list[str] | None = None, strict: bool = False) -> tuple[bytes, str, str]:
         """Draw one side or back view of a finished look, for the 360° viewer. Retries once, since one bad view breaks the spin."""
         payload = {
             "contents": [{"role": "user", "parts": [
-                {"text": spin_prompt(angle, facts)}, self._inline_part(look), self._inline_part(person), self._inline_part(product),
+                {"text": spin_prompt(angle, facts, strict)}, self._inline_part(look), self._inline_part(person), self._inline_part(product),
             ]}],
             "generationConfig": {"responseModalities": ["TEXT", "IMAGE"], "imageConfig": {"aspectRatio": "3:4"}},
         }
@@ -717,21 +716,53 @@ class TryOnService:
             log.warning("Could not put the 360 front on a plain backdrop: %s", exc)
             return None
 
+    async def _facing(self, view: tuple[bytes, str, str]) -> str | None:
+        """Which way the person in a view faces: 'right', 'left', 'camera', 'away', or None when unknown."""
+        try:
+            answer = await asyncio.wait_for(
+                self.generate_json([{"text": FACING_PROMPT}, self._inline_part(view)], FACING_SCHEMA, temperature=0), timeout=30)
+            facing = answer.get("facing") if isinstance(answer, dict) else None
+            if facing in ("right", "left", "camera", "away"):
+                return facing
+        except Exception as exc:
+            log.info("Facing check by the text model failed, using the face detector: %r", exc)
+        return await asyncio.to_thread(identity.facing, view[0])
+
+    async def _checked_spin_view(self, front, person, product, angle: int, facts: list[str] | None) -> tuple[bytes, str, str]:
+        """Draw a view and make sure it faces the right way: redraw a wrong one once with a stricter instruction. A side
+        view still wrong after that is flipped; it is its own drawing, so the two sides never look like one copy."""
+        expected = SPIN_EXPECTED[angle]
+        view = await self.generate_spin_view(front, person, product, angle, facts)
+        facing = await self._facing(view)
+        for _ in range(SPIN_VIEW_REDRAWS):
+            if facing in (None, expected):
+                return view
+            log.info("360 view %s faced %s instead of %s; drawing it again", angle, facing, expected)
+            try:
+                view = await self.generate_spin_view(front, person, product, angle, facts, strict=True)
+            except TryOnError as exc:
+                if exc.status_code == 429:
+                    raise
+                log.warning("Redraw of 360 view %s failed, keeping the first drawing: %s", angle, exc)
+                break
+            facing = await self._facing(view)
+        if angle in (90, 270) and facing in ("right", "left") and facing != expected:
+            log.info("360 view %s still faced %s; flipping it", angle, facing)
+            return await asyncio.to_thread(_mirror, view)
+        return view
+
     async def create_spin(self, user_id: str, row: dict[str, Any]) -> GalleryItem:
         """Draw the right, back and left views of a saved look and store them next to it.
 
         Strict on consistency: all views stand on one plain backdrop, the way the outfit is worn (tucked, sleeves,
-        buttons) is read from the front once and locked into every view, and the left side is the right side
-        mirrored, so the two sides always face opposite ways."""
+        buttons) is read from the front once and locked into every view, and every view is drawn on its own and
+        checked for the way it faces (redrawn once if wrong), so the left side is a real left side, not a copy."""
         look, person, product = await asyncio.gather(
             self.download(row["result_path"]), self.download(row["person_path"]), self.download(row["product_path"]))
         new_front, facts = await asyncio.gather(
             self._plain_front(look), self._facts([{"text": SPIN_STYLE_PROMPT}, self._inline_part(look)], "360 styling"))
         front = new_front or look
-        right, back = await asyncio.gather(*(self.generate_spin_view(front, person, product, angle, facts) for angle in (90, 180)))
-        right = await asyncio.to_thread(_face_the_right_way, right, 90)
-        left = await asyncio.to_thread(_mirror, right)
-        views = [right, back, left]  # the order of SPIN_ANGLES: 90, 180, 270
+        views = list(await asyncio.gather(*(self._checked_spin_view(front, person, product, angle, facts) for angle in SPIN_ANGLES)))
         prefix = f"{user_id}/{row['id']}"
         paths = [f"{prefix}/spin_{angle}_{uuid4().hex[:8]}.{view[2]}" for angle, view in zip(SPIN_ANGLES, views)]
         front_path = f"{prefix}/spin_0_{uuid4().hex[:8]}.{new_front[2]}" if new_front else None

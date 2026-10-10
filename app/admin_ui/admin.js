@@ -35,7 +35,7 @@ const ICONS = {
 const ico = name => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="${ICONS[name]}"/></svg>`;
 const EVENTS = new Map();  // every event shown on screen, so "View" works from any list or dialog
 const KIND = {look: 'Look', outfit: 'Outfit', spin: '360° view', pose: 'Social pose', scrape: 'Product import'};
-const PLAN = {free: 'Free', pass: 'Pass', plus: 'Plus', pro: 'Pro', unlimited: 'Unlimited', bonus: 'Bonus'};
+const PLAN = {free: 'Free', pass: 'Festival Pass', plus: 'Plus', pro: 'Pro', unlimited: 'Unlimited', bonus: 'Bonus'};
 
 /* ---------- helpers ---------- */
 function load() { try { return JSON.parse(sessionStorage.getItem(KEY) || localStorage.getItem(KEY) || 'null'); } catch { return null; } }
@@ -228,9 +228,9 @@ const VIEWS = {
   users(d) {
     const rows = d.users.filter(u => matches(u) && (S.filter === 'All' || u.plan === S.filter || u.status === S.filter));
     return title('PEOPLE & ACCESS', 'Users & looks', 'Every MyDripCheck account, their plan and the looks they have left.', exportBtn('export-users'))
-      + stats([['Registered accounts', num(d.total), '<small>Email sign-ups, all time</small>'], ['Paying now', num(d.paying), '<small>Active Pass, Plus or Pro</small>'],
+      + stats([['Registered accounts', num(d.total), '<small>Email sign-ups, all time</small>'], ['Paying now', num(d.paying), '<small>Active Festival Pass, Plus or Pro</small>'],
         ['New this week', num(d.new_this_week), '<small>Last 7 days</small>'], ['Suspended', num(d.suspended), '<small>Blocked from creating looks</small>']])
-      + `<section class="panel flush">${toolbar('Search email or user ID…', [['All', 'All accounts'], ['free', 'Free'], ['pass', 'Pass'], ['plus', 'Plus'], ['pro', 'Pro'], ['unlimited', 'Unlimited'], ['suspended', 'Suspended']])}
+      + `<section class="panel flush">${toolbar('Search email or user ID…', [['All', 'All accounts'], ['free', 'Free'], ['pass', 'Festival Pass'], ['plus', 'Plus'], ['pro', 'Pro'], ['unlimited', 'Unlimited'], ['suspended', 'Suspended']])}
       <div class="table-wrap"><table><thead><tr><th>Account</th><th>Plan</th><th class="right">Looks left</th><th class="right">Looks made</th><th>Joined</th><th>Last sign-in</th><th>Status</th><th></th></tr></thead><tbody>${rows.slice(0, 500).map(u => `<tr>
         <td><div class="person"><span class="avatar">${initials(u.email)}</span><div><b>${esc(u.email)}</b>${u.admin ? ' ' + badge('admin', 'Admin') : ''}<small>${u.id}</small></div></div></td>
         <td>${badge(u.plan)}</td><td class="right">${u.looks_left == null ? 'Unlimited' : num(u.looks_left)}</td><td class="right">${num(u.looks_made)}</td>

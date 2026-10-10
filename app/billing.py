@@ -31,7 +31,7 @@ class Plan:
 
 # Prices include GST, in paise. Plus and Pro looks refresh every month, also on yearly billing.
 PLANS: dict[str, Plan] = {
-    "pass": Plan(name="MyDripCheck Occasion Pass", looks=7, once=12_900, days=7),
+    "pass": Plan(name="MyDripCheck Festival Pass", looks=7, once=12_900, days=7),
     "plus": Plan(name="MyDripCheck Plus", looks=18, monthly=34_900, yearly=329_900),
     "pro": Plan(name="MyDripCheck Pro", looks=40, monthly=79_900, yearly=749_900),
 }

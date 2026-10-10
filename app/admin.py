@@ -855,7 +855,8 @@ async def create_ticket(body: NewTicket, request: Request, credentials: HTTPAuth
                         service: TryOnService = Depends(get_service), settings: Settings = Depends(get_settings)) -> dict:
     """Send a message to the MyDripCheck team. Signed-in users are linked to their account."""
     _require_supabase(settings)
-    client = request.client.host if request.client else "unknown"
+    # Behind Render's or AWS's proxy every request comes from the proxy; the shopper's address is the first forwarded one.
+    client = request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (request.client.host if request.client else "unknown")
     now = time.monotonic()
     recent = [t for t in _ticket_times.get(client, []) if now - t < 3600]
     if len(recent) >= 5:

@@ -1,0 +1,50 @@
+name: Deploy API to AWS
+
+# Builds the API image, pushes it to Amazon ECR and rolls it out on ECS Fargate (docs/AWS_SETUP.md).
+# Does nothing until the AWS_ROLE_ARN repository variable is set, so it is safe to merge before AWS exists.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # lets GitHub sign in to AWS with a short-lived token: no AWS keys are stored here
+  contents: read
+
+concurrency:
+  group: deploy-aws
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: vars.AWS_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'mydripcheck-api' }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER || 'mydripcheck' }}
+      ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push the image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          docker build -t "$REGISTRY/$ECR_REPOSITORY:${GITHUB_SHA}" -t "$REGISTRY/$ECR_REPOSITORY:latest" .
+          docker push --all-tags "$REGISTRY/$ECR_REPOSITORY"
+
+      - name: Roll out on ECS
+        if: env.ECS_SERVICE != ''
+        run: |
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --force-new-deployment > /dev/null
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
+          echo "Deployed ${GITHUB_SHA} to $ECS_CLUSTER/$ECS_SERVICE"

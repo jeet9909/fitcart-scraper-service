@@ -13,5 +13,7 @@ RUN useradd --create-home appuser
 USER appuser
 
 EXPOSE 8000
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
+# Keep-alive longer than the load balancer's idle timeout (AWS ALB: 600 s), or the balancer can reuse a connection
+# the server just closed and the shopper gets a random 502. Proxy headers give the shopper's real address.
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --timeout-keep-alive 620 --proxy-headers --forwarded-allow-ips '*'"]
 

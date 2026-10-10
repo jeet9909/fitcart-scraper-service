@@ -135,7 +135,7 @@ Try-ons need an email sign-in. Each signed-in account gets `FREE_LOOKS_PER_MONTH
 
 | Plan | Price (incl. GST) | Looks |
 |---|---|---|
-| Occasion Pass | ₹129 once | 10, valid 7 days |
+| Festival Pass | ₹129 once | 7, valid 7 days |
 | Plus | ₹349/month or ₹3,299/year | 25 every month |
 | Pro | ₹799/month or ₹7,499/year | 60 every month |
 

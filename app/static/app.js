@@ -292,7 +292,7 @@ function bindCompare(el){
 const PLANS = [
   {key:'free', name:'Free', for:'Try MyDripCheck on your next outfit.', monthly:0, yearly:0, looks:2, quality:'Standard', imports:15, stylist:1, wardrobe:25, cta:'Start free',
    perks:['2 looks a month','Standard quality','25 wardrobe items','1 AI stylist idea','Last 5 looks saved']},
-  {key:'pass', name:'Occasion Pass', for:'One-time pack for a wedding, festival or trip. Pay once, stacks on any plan.', once:129, listOnce:149, days:7, looks:7, quality:'HD', imports:30, stylist:5, wardrobe:25, cta:'Buy the pass',
+  {key:'pass', name:'Festival Pass', for:'One-time pack for a festival, wedding or trip. Pay once, stacks on any plan.', once:129, listOnce:149, days:7, looks:7, quality:'HD', imports:30, stylist:5, wardrobe:25, cta:'Buy the pass',
    perks:['7 looks for 7 days','HD quality','25 wardrobe items','5 AI stylist ideas','Last 5 looks saved']},
   {key:'plus', name:'Plus', for:'For people who shop online every month.', monthly:349, listMonthly:399, yearly:3299, looks:18, quality:'HD', imports:150, stylist:20, wardrobe:200, cta:'Get Plus', popular:true,
    perks:['18 looks a month','HD quality','200 wardrobe items','20 AI stylist ideas','Full looks history','3 social-ready poses']},
@@ -416,7 +416,7 @@ function landing(){
       <details class="glass reveal"><summary>What counts as one look?</summary><p>One generated image of you. It can include up to five pieces from any mix of stores, and it still counts as one look.</p></details>
       <details class="glass reveal"><summary>Will my face change?</summary><p>Your face, hair, glasses and skin tone are kept from your photo and checked after every look. For the closest likeness, use a clear, front-facing photo in good light, or choose My pose. A look that fails is never counted.</p></details>
       <details class="glass reveal"><summary>Which stores work?</summary><p>Myntra, Amazon, AJIO, Flipkart and Nike links work today. For any other store, add the item with a photo.</p></details>
-      <details class="glass reveal"><summary>Can I cancel anytime?</summary><p>Plans are paid for a month or a year at a time, with no autopay, so there is nothing to cancel. The Occasion Pass never renews.</p></details>
+      <details class="glass reveal"><summary>Can I cancel anytime?</summary><p>Plans are paid for a month or a year at a time, with no autopay, so there is nothing to cancel. The Festival Pass never renews.</p></details>
     </div>
   </section>
   <section class="md-loop reveal" id="lpAgency">

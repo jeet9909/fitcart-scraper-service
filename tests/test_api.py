@@ -2582,3 +2582,28 @@ def test_360_views_and_poses_stay_normal_size_when_looks_are_4k(monkeypatch) -> 
     assert spin.status_code == 200 and pose.status_code == 200, (spin.text, pose.text)
     drawn = [c[2]["generationConfig"]["imageConfig"] for c in calls if c[2] and "imageConfig" in c[2].get("generationConfig", {})]
     assert drawn and all("imageSize" not in config for config in drawn)
+
+
+def test_product_imports_are_rate_limited_per_address_and_api_docs_are_hidden(monkeypatch) -> None:
+    from app import main as app_main
+    from app.models import Money, ProductData, ScrapeResponse
+
+    class Scraper:
+        async def scrape(self, url, country):
+            return ScrapeResponse(data=ProductData(source_url=url, title="Shirt", price=Money(amount=999, currency="INR"), image_urls=["https://x.test/a.jpg"]), scraped_at=datetime.now(UTC))
+
+    monkeypatch.setattr(app_main, "SCRAPE_LIMIT", 2)
+    monkeypatch.setattr(app_main, "validate_public_url", lambda url, hosts=(): url)
+    app_main._scrape_times.clear()
+    app.dependency_overrides[get_scraper] = lambda: Scraper()
+    try:
+        with TestClient(app) as client:
+            ask = lambda ip: client.post("/v1/products/scrape", json={"url": "https://www.myntra.com/shirts/1"}, headers={"X-Forwarded-For": ip})
+            codes = [ask("1.1.1.1").status_code for _ in range(3)]
+            other = ask("2.2.2.2").status_code
+            docs = client.get("/docs").status_code, client.get("/openapi.json").status_code
+    finally:
+        app.dependency_overrides.clear()
+        app_main._scrape_times.clear()
+    assert codes == [200, 200, 429] and other == 200
+    assert docs == (404, 404)

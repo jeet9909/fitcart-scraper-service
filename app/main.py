@@ -5,6 +5,7 @@ from typing import Literal
 import hmac
 import logging
 import os
+import time
 from uuid import UUID
 
 import httpx
@@ -69,12 +70,40 @@ async def lifespan(app: FastAPI):
     yield
 
 
+# The interactive API docs list every endpoint (admin ones included). Off in production; API_DOCS=true shows them.
+API_DOCS = os.environ.get("API_DOCS", "").strip().lower() in ("1", "true", "yes")
 app = FastAPI(
     title="MyDripCheck Product and Virtual Try-On API",
     version="0.4.0",
     description="Scrape product details and create private Gemini virtual try-on images.",
     lifespan=lifespan,
+    docs_url="/docs" if API_DOCS else None,
+    redoc_url="/redoc" if API_DOCS else None,
+    openapi_url="/openapi.json" if API_DOCS else None,
 )
+
+# Product imports are public (the storefront calls them before sign-in) and every new link is a paid Bright Data
+# request, so each address gets a generous allowance; Indian mobile networks put many shoppers behind one address.
+SCRAPE_LIMIT, SCRAPE_WINDOW_SECONDS = 60, 600
+_scrape_times: dict[str, list[float]] = {}
+
+
+def _client_address(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")  # Render's proxy puts the shopper's address first
+    return forwarded.split(",")[0].strip() or (request.client.host if request.client else "unknown")
+
+
+def _allow_scrape(request: Request) -> None:
+    now, address = time.monotonic(), _client_address(request)
+    recent = [t for t in _scrape_times.get(address, []) if now - t < SCRAPE_WINDOW_SECONDS]
+    if len(recent) >= SCRAPE_LIMIT:
+        _scrape_times[address] = recent
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                            detail={"code": "too_many_imports", "message": "You've added a lot of products quickly. Please wait a few minutes and try again."})
+    _scrape_times[address] = [*recent, now]
+    if len(_scrape_times) > 20_000:  # forget quiet addresses so the table cannot grow without end
+        for key in [k for k, times in _scrape_times.items() if not times or now - times[-1] > SCRAPE_WINDOW_SECONDS][:10_000]:
+            _scrape_times.pop(key, None)
 
 # Logs try-ons, 360° views, poses and product imports for the admin dashboard, and pauses them in maintenance mode.
 app.middleware("http")(activity.middleware)
@@ -215,9 +244,11 @@ async def ready(settings: Settings = Depends(get_runtime_settings)) -> HealthRes
 @app.post("/v1/products/scrape", response_model=ScrapeResponse, tags=["products"])
 async def scrape_product(
     payload: ScrapeRequest,
+    request: Request,
     scraper: BrightDataScraper = Depends(get_scraper),
     settings: Settings = Depends(get_runtime_settings),
 ) -> ScrapeResponse:
+    _allow_scrape(request)
     try:
         activity.note(store=admin._store_of(str(payload.url)))
         url = validate_public_url(str(payload.url), settings.allowed_product_hosts)

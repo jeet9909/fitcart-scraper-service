@@ -608,7 +608,7 @@ function generating(){
       <div class="gen-visual gen-frame p1" id="genVisual" aria-hidden="true">
         <div class="layer l-photo"><img src="${state.photo || ''}" alt=""></div>
         <div class="layer l-glass"></div>
-        <div class="layer l-beam"><span class="gen-tag">Generating</span><i class="beam"></i></div>
+        <div class="layer l-beam"><i class="beam"></i></div>
         <div class="layer l-shutter" id="genShutter"></div>
         <div class="layer l-sharp"><img id="genSharp" alt=""></div>
         <div class="layer l-scan"></div>

@@ -853,11 +853,8 @@ textarea.input{font-family:inherit;resize:vertical}
 .generating .gen-frame.p4 .l-photo{filter:none;transform:none}
 .generating .gen-frame .l-glass{opacity:1;background:color-mix(in srgb,var(--surface) 14%,transparent)}
 .generating .gen-frame .l-glass::after{display:none}
-/* Generating: the photo stays softly out of focus while a wine scan line with a soft glow sweeps up and down it,
-   under a small "Generating" pill. */
+/* Generating: the photo stays softly out of focus while a wine scan line with a soft glow sweeps up and down it. */
 .l-beam{--wine:#6B1F35;overflow:hidden}
-.gen-tag{position:absolute;top:16px;left:16px;z-index:1;padding:8px 15px;border-radius:999px;background:var(--wine);color:#fff;font-size:11px;font-weight:700;line-height:1;letter-spacing:.24em;text-transform:uppercase;box-shadow:0 6px 18px -6px rgba(60,10,25,.55);animation:gen-tag 2.4s ease-in-out infinite}
-@keyframes gen-tag{50%{opacity:.78}}
 .l-beam .beam{position:absolute;left:0;right:0;top:10%;height:124px;margin-top:-62px;animation:gen-beam 3.4s cubic-bezier(.45,0,.55,1) infinite alternate}
 .l-beam .beam::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent,color-mix(in srgb,var(--wine) 40%,transparent) 36%,color-mix(in srgb,var(--wine) 60%,transparent) 50%,color-mix(in srgb,var(--wine) 40%,transparent) 64%,transparent)}
 .l-beam .beam::after{content:"";position:absolute;left:0;right:0;top:50%;height:1.5px;margin-top:-.75px;background:#F6CFD7;box-shadow:0 0 6px 1px rgba(246,207,215,.9),0 0 16px 2px color-mix(in srgb,var(--wine) 70%,transparent)}
@@ -881,7 +878,7 @@ textarea.input{font-family:inherit;resize:vertical}
 .sk-seg span{display:flex;align-items:center;justify-content:center;gap:10px;min-height:44px;border-radius:6px;color:var(--muted)}
 .sk-seg span.on{background:var(--surface)}
 @media (min-width:960px){.generating .result-visual .gen-frame{height:min(calc(100vh - 230px),760px);min-height:520px;width:auto;max-width:100%;margin-inline:auto}}
-@media (prefers-reduced-motion:reduce){.l-beam .beam,.gen-tag{animation:none}.l-beam .beam{top:50%}}
+@media (prefers-reduced-motion:reduce){.l-beam .beam{animation:none}.l-beam .beam{top:50%}}
 
 /* Plan lists: only what the plan includes, each line with a small ticked box, separated from the price by a rule. */
 .tier ul.perks{gap:10px;padding-top:16px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-2)}

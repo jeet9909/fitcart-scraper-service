@@ -249,3 +249,93 @@ def test_activity_cost_uses_counted_model_calls() -> None:
     settings = _settings()
     assert estimated_cost({"gemini_image": 2, "vertex": 1}, settings) == round(2 * 6.40 + 5.30, 2)
     assert json.dumps(admin.DEFAULT_SETTINGS)  # settings stay JSON for the app_settings table
+
+
+def _wait_for(service: FakeService, table: str) -> list:
+    for _ in range(50):
+        found = [body for method, name, body in service.writes if name == table]
+        if found:
+            return found
+        asyncio.run(asyncio.sleep(0.01))
+    return []
+
+
+def test_failed_request_shows_up_as_an_alert(monkeypatch) -> None:
+    from app import alerts
+
+    class FailingScraper:
+        async def scrape(self, url, country):
+            raise ScrapeProviderError("Store blocked the request")
+
+    alerts._recent.clear()
+    service = FakeService(_settings(ALLOWED_PRODUCT_HOSTS=""), {"app_settings": []})
+    monkeypatch.setattr("app.main.validate_public_url", lambda url, hosts=(): url)
+    app.dependency_overrides[get_scraper] = lambda: FailingScraper()
+    app.dependency_overrides[get_runtime_settings] = lambda: service.settings
+    try:
+        with TestClient(app) as client:
+            app.state.settings = service.settings
+            app.state.tryon = service
+            app.state.admin_state = admin.AdminState(service)
+            response = client.post("/v1/products/scrape", json={"url": "https://www.myntra.com/shirts/123"})
+            found = _wait_for(service, "api_alerts")
+    finally:
+        app.dependency_overrides.clear()
+        app.state.settings = Settings(brightdata_api_token="test")
+    assert response.status_code == 502 and "blocked" in str(response.json()["detail"]).lower()  # the user still gets the real error
+    alert = found[0]
+    assert alert["title"] == "Product import failed (502)" and alert["severity"] == "error"
+    assert alert["path"] == "/v1/products/scrape" and "blocked" in alert["detail"].lower()
+
+
+def test_a_server_that_died_is_reported_as_a_crash() -> None:
+    from app import alerts
+
+    alerts._recent.clear()
+    stale = (NOW - timedelta(minutes=10)).isoformat()
+    service = FakeService(_settings(), {"app_settings": [{"key": alerts.INSTANCES_KEY, "value": {
+        "old-server": {"at": stale, "clean": False, "memory_mb": 480, "limit_mb": 512,
+                       "inflight": [{"kind": "spin", "email": "asha@example.com", "seconds": 40}]},
+        "deployed-server": {"at": stale, "clean": True},
+    }}]})
+
+    class App:
+        class state:
+            tryon = service
+
+    async def run() -> None:
+        await alerts._check_others(App, service, starting=True)
+        await asyncio.gather(*alerts._pending)
+
+    asyncio.run(run())
+    rows = [body for method, table, body in service.writes if table == "api_alerts"]
+    crash = next(r for r in rows if r["kind"] == "server_crash")
+    assert crash["severity"] == "error" and "480 MB of 512 MB" in crash["detail"] and "ran out of memory" in crash["detail"]
+    assert "360° view for asha@example.com" in crash["detail"]
+    assert any(r["kind"] == "server_restart" and r["severity"] == "info" for r in rows)
+    saved = next(body for method, table, body in service.writes if table == "app_settings")[0]["value"]
+    assert set(saved) == {alerts.INSTANCE}  # the dead and the stopped servers are cleared, this one is listed
+
+
+def test_alerts_page_counts_new_alerts_since_last_read(monkeypatch) -> None:
+    read_at = (NOW - timedelta(hours=1)).isoformat()
+    service = FakeService(_settings(), {
+        "api_alerts": [
+            {"id": "a1", "kind": "server_crash", "severity": "error", "title": "Server crashed and restarted", "created_at": NOW.isoformat()},
+            {"id": "a2", "kind": "server_restart", "severity": "info", "title": "Server restarted", "created_at": NOW.isoformat()},
+            {"id": "a3", "kind": "request_failed", "severity": "error", "title": "Look failed (500)", "created_at": (NOW - timedelta(hours=3)).isoformat()},
+        ],
+        "app_settings": [{"key": "alerts_read:boss@mydripcheck.com", "value": read_at}],
+    })
+    _client(monkeypatch, service)
+    try:
+        with TestClient(app) as client:
+            headers = _login(client)
+            body = client.get("/v1/admin/alerts", headers=headers).json()
+            marked = client.post("/v1/admin/alerts/read", headers=headers)
+    finally:
+        app.dependency_overrides.clear()
+    assert body["unread"] == 1 and body["crashes"] == 1 and body["errors_24h"] == 2 and len(body["alerts"]) == 3
+    assert marked.status_code == 200
+    saved = next(body for method, table, body in service.writes if table == "app_settings")
+    assert saved[0]["key"] == "alerts_read:boss@mydripcheck.com"

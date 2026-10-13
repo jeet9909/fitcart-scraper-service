@@ -195,5 +195,23 @@ alter table public.admin_audit enable row level security;
 
 -- The API uses the service role. Grant it the admin tables explicitly (some projects do not expose new
 -- tables automatically), then make Supabase's API reload its table list so it sees them at once.
-grant select, insert, update, delete on public.activity_events, public.support_tickets, public.app_settings, public.admin_audit to service_role;
+-- Alerts for the admin console: failed API requests, server crashes and restarts, high memory.
+create table if not exists public.api_alerts (
+  id uuid primary key default gen_random_uuid(),
+  kind text not null,
+  severity text not null default 'error' check (severity in ('error', 'warning', 'info')),
+  title text not null,
+  detail text,
+  method text,
+  path text,
+  http_status integer,
+  user_id uuid,
+  email text,
+  meta jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists api_alerts_created_idx on public.api_alerts (created_at desc);
+alter table public.api_alerts enable row level security;
+
+grant select, insert, update, delete on public.activity_events, public.support_tickets, public.app_settings, public.admin_audit, public.api_alerts to service_role;
 notify pgrst, 'reload schema';

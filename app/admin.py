@@ -33,7 +33,7 @@ from app.tryon import TryOnService
 log = logging.getLogger(__name__)
 
 IST = ZoneInfo("Asia/Kolkata")
-ADMIN_TABLES = ("activity_events", "support_tickets", "app_settings", "admin_audit")
+ADMIN_TABLES = ("activity_events", "support_tickets", "app_settings", "admin_audit", "api_alerts")
 SETTINGS_TTL_SECONDS = 30
 USERS_TTL_SECONDS = 60
 BAN_FOREVER = "876000h"  # 100 years: Supabase's way of saying "suspended"
@@ -765,6 +765,51 @@ async def integrations(actor: str = Depends(require_admin_access), service: TryO
                                  "failed": usage.failed, "last_error": usage.last_error},
         "checked_at": _now().isoformat(),
     }
+
+
+# ---------------------------------------------------------------- alerts
+
+
+def _read_key(actor: str) -> str:
+    return f"alerts_read:{actor.lower()}"
+
+
+@router.get("/alerts")
+async def list_alerts(days: int = 7, limit: int = 200, actor: str = Depends(require_admin_access), service: TryOnService = Depends(get_service),
+                      settings: Settings = Depends(get_settings)) -> dict:
+    """Failed requests, crashes, restarts and memory warnings, newest first, with how many are new for this admin."""
+    _require_supabase(settings)
+    days = max(1, min(days, 30))
+    missing: set[str] = set()
+    params = {"select": "*", "created_at": f"gte.{(_now() - timedelta(days=days)).isoformat()}", "order": "created_at.desc",
+              "limit": str(max(1, min(limit, 500)))}
+    rows, read = await asyncio.gather(
+        _rows(service, "api_alerts", params, missing),
+        _rows(service, "app_settings", {"select": "key,value", "key": f"eq.{_read_key(actor)}"}, set()),
+    )
+    read_at = read[0].get("value") if read else None
+    since = _parse_time(read_at) or (_now() - timedelta(days=1))
+    unread = [r for r in rows if r.get("severity") != "info" and (_parse_time(r.get("created_at")) or _now()) > since]
+    day_ago = _now() - timedelta(days=1)
+    return {
+        "alerts": rows,
+        "unread": len(unread),
+        "read_at": read_at,
+        "errors_24h": sum(1 for r in rows if r.get("severity") == "error" and _in_window(r.get("created_at"), day_ago)),
+        "crashes": sum(1 for r in rows if r.get("kind") == "server_crash"),
+        "days": days,
+        "setup_needed": "api_alerts" in missing,
+    }
+
+
+@router.post("/alerts/read")
+async def mark_alerts_read(actor: str = Depends(require_admin_access), service: TryOnService = Depends(get_service),
+                           settings: Settings = Depends(get_settings)) -> dict:
+    _require_supabase(settings)
+    now = _now().isoformat()
+    await service.rest("POST", "app_settings", params={"on_conflict": "key"}, json_body=[{"key": _read_key(actor), "value": now, "updated_at": now}],
+                       prefer="resolution=merge-duplicates,return=minimal")
+    return {"read_at": now}
 
 
 # ---------------------------------------------------------------- support

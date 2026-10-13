@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import TypeAdapter, ValidationError
 
-from app import activity, admin
+from app import activity, admin, alerts
 from app.anonymous_auth import create_anonymous_session, create_email_session, verify_session_token
 from app import email_auth
 from app.billing import Billing
@@ -67,7 +67,10 @@ async def lifespan(app: FastAPI):
     app.state.tryon = TryOnService(settings)
     app.state.wardrobe = WardrobeService(app.state.tryon)
     app.state.admin_state = admin.AdminState(app.state.tryon)
+    watcher = asyncio.create_task(alerts.watch(app))
     yield
+    watcher.cancel()
+    await alerts.stopped(app)
 
 
 # The interactive API docs list every endpoint (admin ones included). Off in production; API_DOCS=true shows them.
@@ -107,6 +110,8 @@ def _allow_scrape(request: Request) -> None:
 
 # Logs try-ons, 360° views, poses and product imports for the admin dashboard, and pauses them in maintenance mode.
 app.middleware("http")(activity.middleware)
+# Records failed requests for the admin console's Alerts page (crashes are found by the heartbeat in app.alerts).
+app.middleware("http")(alerts.middleware)
 
 # Sites allowed to call the API from a browser. Add your own domain with the CORS_ORIGINS variable,
 # e.g. CORS_ORIGINS=https://mydripcheck.com,https://www.mydripcheck.com

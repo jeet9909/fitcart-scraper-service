@@ -853,20 +853,13 @@ textarea.input{font-family:inherit;resize:vertical}
 .l-beam .beam::after{content:"";position:absolute;left:0;right:0;top:50%;height:1.5px;margin-top:-.75px;background:#F6CFD7;box-shadow:0 0 6px 1px rgba(246,207,215,.9),0 0 16px 2px color-mix(in srgb,var(--wine) 70%,transparent)}
 @keyframes gen-beam{from{top:10%}to{top:90%}}
 .gen-frame.p4 .l-beam,.gen-frame.p4 .l-glass{opacity:0;transition:opacity .4s var(--ease)}
+/* Everything except the photo waits greyed out, not clickable, until the look is ready. */
+.gen-wait{opacity:.45;filter:grayscale(1);pointer-events:none;user-select:none}
+.gen-wait .btn,.gen-wait .action,.gen-wait .pose-chip{box-shadow:none}
 .gen-status{display:grid;gap:10px;justify-items:stretch;text-align:center}
 .gen-step{font-weight:700;color:var(--ink-2);min-height:1.5em}
 .gen-status .gen-foot-row{text-align:left}
 .gen-status .private{margin-left:6px;vertical-align:middle}
-.gen-skeleton{display:grid;gap:14px;align-content:start}
-.gen-skeleton .action{color:var(--muted)}
-.gen-skeleton .action .sk,.gen-skeleton .pose-chip .sk,.gen-skeleton .btn .sk,.sk-pill .sk,.sk-seg .sk{display:inline-block}
-.gen-skeleton .pose-chip{pointer-events:none;color:var(--muted)}
-.gen-skeleton .btn{pointer-events:none}
-.sk-thumb{width:56px;aspect-ratio:3/4}
-.gen-pills{display:flex;gap:8px}
-.sk-pill{display:inline-flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;background:var(--surface-2);color:var(--muted)}
-.sk-pill.ok{background:var(--ok-soft);color:var(--ok)}
-.sk-pill.gold{background:var(--gold-soft);color:var(--gold)}
 .sk-seg{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;border-radius:8px;background:var(--surface-2)}
 .sk-seg span{display:flex;align-items:center;justify-content:center;gap:10px;min-height:44px;border-radius:6px;color:var(--muted)}
 .sk-seg span.on{background:var(--surface)}

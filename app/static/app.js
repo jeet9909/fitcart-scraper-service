@@ -599,11 +599,12 @@ function generating(){
       </div>
     </section>`;
   }
-  const bar = (w, h = 12) => `<span class="sk" style="width:${w};height:${h}px"></span>`;
+  // The real result page, greyed out and not clickable until the look arrives.
   const pieces = orderedLook();
+  const pending = {id:'pending', spin:[], poses:[]};
   return `<section class="result generating" aria-labelledby="genTitle" aria-busy="true">
     <div class="result-head"><div><p class="eyebrow">Your look</p><h1 id="genTitle" style="margin-top:4px">Putting your look together</h1></div>
-      <div class="gen-pills" aria-hidden="true"><span class="sk-pill ok">${icon('lock','s')}${bar('70px', 10)}</span><span class="sk-pill gold">${icon('body','s')}${bar('70px', 10)}</span></div></div>
+      <div class="gen-wait" inert style="display:flex;flex-wrap:wrap;gap:8px">${privatePill()}<span class="tag ai">${icon('body','s')} ${state.pose === 'keep' ? 'Your pose' : 'Standard pose'}</span></div></div>
     <div class="result-visual">
       <div class="gen-visual gen-frame p1" id="genVisual" aria-hidden="true">
         <div class="layer l-photo"><img src="${state.photo || ''}" alt=""></div>
@@ -613,13 +614,22 @@ function generating(){
         <div class="layer l-sharp"><img id="genSharp" alt=""></div>
       </div>
     </div>
-    <div class="gen-skeleton" aria-hidden="true">
-      <div class="card shop">${bar('52%', 22)}${bar('38%')}${pieces.map(() => `<div class="shop-row"><span class="sk sk-thumb"></span><div style="display:grid;gap:8px">${bar('82%', 14)}${bar('46%')}</div><span></span></div>`).join('')}</div>
-      <div class="actions">${['share','redo','edit','body'].map(i => `<div class="action">${icon(i)}${bar('58%', 10)}</div>`).join('')}</div>
-      <div class="card spin-card"><div class="spin-card-art">${icon('spin')}</div><div style="display:grid;gap:8px">${bar('70%', 14)}${bar('92%')}</div>${bar('96px', 34)}</div>
-      <div class="card poses-card">${bar('46%', 16)}${bar('88%')}<div class="pose-chips">${SOCIAL_POSES.map(() => `<span class="pose-chip">${icon('body','s')}${bar('64px', 10)}</span>`).join('')}</div></div>
-      <div class="card feedback">${bar('40%', 14)}<div class="thumbs"><span class="btn ghost small">${icon('up','s')}${bar('26px', 10)}</span><span class="btn ghost small">${icon('down','s')}${bar('34px', 10)}</span></div></div>
-      ${bar('100%', 10)}
+    <div class="gen-wait" inert aria-hidden="true" style="display:grid;gap:14px;align-content:start">
+      <div class="card shop">
+        <h2>Shop this look</h2>
+        <p class="small muted" style="margin-bottom:4px">Each piece opens at its own store.</p>
+        ${pieces.map(p => `<div class="shop-row">${p.item.img ? `<img src="${esc(img(p.item.img))}" alt="">` : `<span class="ph-slot">${icon('bag')}</span>`}<div><p class="n">${esc(p.item.name)}</p><p class="small muted num">${esc(SLOT_LABEL[p.item.slot] || '')}${p.item.store && !p.item.sample ? ' · ' + esc(p.item.store) : ''}${p.item.price ? ' · ' + inr(p.item.price) : ''}</p></div>${p.item.url && !p.item.sample && p.item.source !== 'owned' ? `<span class="btn small">Buy ${icon('arrow','s')}</span>` : ''}</div>`).join('')}
+      </div>
+      <div class="actions">
+        <button class="action" disabled>${icon('share')}Share</button>
+        <button class="action" disabled>${icon('redo')}Try again</button>
+        <button class="action" disabled>${icon('edit')}Edit look</button>
+        <button class="action" disabled>${icon('body')}${state.pose === 'keep' ? 'Standard pose' : 'My pose'}</button>
+      </div>
+      ${spinCard(pending)}
+      ${posesCard(pending)}
+      <div class="card feedback"><span style="font-weight:700">Does this look like you?</span><div class="thumbs"><button class="btn ghost small" disabled>${icon('up','s')} Yes</button><button class="btn ghost small" disabled>${icon('down','s')} Not quite</button></div></div>
+      <p class="tiny muted">AI preview of appearance only. Check each store's size chart before buying.</p>
     </div>
   </section>`;
 }

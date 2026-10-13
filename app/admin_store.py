@@ -1,4 +1,4 @@
-"""Backup storage for the admin tables (activity_events, support_tickets, app_settings, admin_audit).
+"""Backup storage for the admin tables (activity_events, support_tickets, app_settings, admin_audit, api_alerts).
 
 The admin console depends on four tables from supabase/schema.sql. When Supabase's REST API cannot use them
 (the SQL was not run, PostgREST's schema cache is stale, grants are missing), every admin feature would stop.
@@ -19,15 +19,16 @@ import httpx
 
 log = logging.getLogger(__name__)
 
-BACKED_UP_TABLES = ("activity_events", "support_tickets", "app_settings", "admin_audit")
+BACKED_UP_TABLES = ("activity_events", "support_tickets", "app_settings", "admin_audit", "api_alerts")
 BUCKET = "mydripcheck-admin"
-MAX_ROWS = {"activity_events": 5000, "admin_audit": 500, "support_tickets": 5000, "app_settings": 100}
+MAX_ROWS = {"activity_events": 5000, "admin_audit": 500, "support_tickets": 5000, "app_settings": 100, "api_alerts": 2000}
 SAVE_DELAY_SECONDS = 2.0
 DEFAULTS: dict[str, dict[str, Any]] = {
     "activity_events": {"image_calls": 0, "vertex_calls": 0, "cost_inr": 0, "meta": {}},
     "support_tickets": {"status": "open", "priority": "normal", "note": None},
     "admin_audit": {"detail": {}},
     "app_settings": {},
+    "api_alerts": {"severity": "error", "meta": {}},
 }
 
 

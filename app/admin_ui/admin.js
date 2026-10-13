@@ -8,15 +8,16 @@ const inr = n => n == null ? '–' : '₹' + Number(n).toLocaleString('en-IN', {
 const num = n => n == null ? '–' : Number(n).toLocaleString('en-IN');
 const pct = n => n == null ? '–' : n + '%';
 
-const S = {token: null, email: null, page: 'overview', days: 7, query: '', filter: 'All', cache: {}, notices: []};
+const S = {token: null, email: null, page: 'overview', days: 7, query: '', filter: 'All', cache: {}, notices: [], alerts: null, seenAlerts: null};
 const SECTIONS = [
-  ['overview', 'overview', 'Overview'], ['users', 'users', 'Users & looks'], ['tryons', 'camera', 'Try-on activity'],
+  ['overview', 'overview', 'Overview'], ['alerts', 'bell', 'Alerts'], ['users', 'users', 'Users & looks'], ['tryons', 'camera', 'Try-on activity'],
   ['products', 'hanger', 'Products'], ['revenue', 'revenue', 'Revenue & plans'], ['integrations', 'plug', 'Integrations'],
   ['support', 'inbox', 'Support inbox'], ['settings', 'sliders', 'Settings'],
 ];
 /* Our own line icons: 24px grid, square line ends. */
 const ICONS = {
   overview: 'M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z',
+  bell: 'M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 21h4',
   users: 'M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM3 20v-1a6 6 0 0 1 12 0v1M16 4.5a3.5 3.5 0 0 1 0 6.5M21 20v-1a6 6 0 0 0-3.5-5.4',
   camera: 'M4 7h4l2-3h4l2 3h4v13H4zM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
   hanger: 'M12 7a2 2 0 1 1 2-2M12 7v2L3 16v2h18v-2l-9-7',
@@ -75,9 +76,9 @@ const fullDate = iso => iso ? new Date(iso).toLocaleString('en-IN', {dateStyle: 
 
 function badge(s, label) {
   const v = String(s || '').toLowerCase();
-  const cls = ['failed', 'suspended', 'offline', 'high'].includes(v) ? 'bad'
-    : ['queued', 'review', 'open', 'degraded', 'rejected', 'not set up', 'warn'].includes(v) ? 'warn'
-    : ['free', 'normal', 'off', 'resolved'].includes(v) ? 'neutral'
+  const cls = ['failed', 'suspended', 'offline', 'high', 'error'].includes(v) ? 'bad'
+    : ['queued', 'review', 'open', 'degraded', 'rejected', 'not set up', 'warn', 'warning'].includes(v) ? 'warn'
+    : ['free', 'normal', 'off', 'resolved', 'info'].includes(v) ? 'neutral'
     : ['pro', 'plus', 'pass', 'unlimited', 'bonus', 'admin'].includes(v) ? 'plan' : '';
   return `<span class="status ${cls}">${esc(label || PLAN[v] || s)}</span>`;
 }
@@ -119,7 +120,7 @@ function showLogin(msg) {
   $('#loginError').textContent = msg || '';
   setTimeout(() => $('#loginEmail').focus(), 50);
 }
-function logout(msg) { S.token = null; store(null); S.cache = {}; showLogin(msg); }
+function logout(msg) { S.token = null; store(null); S.cache = {}; S.alerts = null; S.seenAlerts = null; document.title = 'MyDripCheck · Admin Console'; showLogin(msg); }
 
 $('#loginForm').addEventListener('submit', async e => {
   e.preventDefault();
@@ -132,7 +133,32 @@ $('#loginForm').addEventListener('submit', async e => {
   finally { btn.disabled = false; btn.textContent = 'Sign in'; }
 });
 
+/* New alerts reach the admin without a reload: the bell, the Alerts menu count, the tab title, a toast and,
+   when allowed, a desktop notification. */
+async function pollAlerts() {
+  if (!S.token) return;
+  let d;
+  try { d = await api('/v1/admin/alerts?days=7&limit=300'); } catch { return; }
+  const known = S.seenAlerts;
+  S.seenAlerts = new Set(d.alerts.map(a => a.id));
+  S.alerts = d;
+  if (known) {
+    const fresh = d.alerts.filter(a => !known.has(a.id) && a.severity !== 'info');
+    if (fresh.length) {
+      toast(fresh.length === 1 ? 'New alert: ' + fresh[0].title : fresh.length + ' new alerts: ' + fresh[0].title, true);
+      if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
+        try { new Notification('MyDripCheck: ' + fresh[0].title, {body: fresh[0].detail || '', icon: 'favicon.png', tag: 'mdc-alert'}); } catch {}
+      }
+      if (S.page === 'alerts') { S.cache['alerts' + S.days] = d; rerender(); }
+    }
+  }
+  nav(); notices();
+}
+setInterval(pollAlerts, 30000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) pollAlerts(); });
+
 function start() {
+  pollAlerts();
   $('#login').hidden = true; $('#app').hidden = false;
   $('#whoami').textContent = S.email || ''; $('#avatar').textContent = initials(S.email);
   const fromHash = location.hash.slice(1);
@@ -142,7 +168,9 @@ function start() {
 /* ---------- navigation ---------- */
 function nav() {
   const open = overviewData()?.open_tickets;
-  $('#nav').innerHTML = SECTIONS.map(([k, i, t]) => `<button class="${S.page === k ? 'active' : ''}" ${S.page === k ? 'aria-current="page"' : ''} data-go="${k}">${ico(i)}${t}${k === 'support' && open ? `<span class="nav-count">${open}</span>` : ''}</button>`).join('');
+  const fresh = S.alerts?.unread;
+  const count = k => k === 'support' && open ? `<span class="nav-count">${open}</span>` : k === 'alerts' && fresh ? `<span class="nav-count">${fresh}</span>` : '';
+  $('#nav').innerHTML = SECTIONS.map(([k, i, t]) => `<button class="${S.page === k ? 'active' : ''}" ${S.page === k ? 'aria-current="page"' : ''} data-go="${k}">${ico(i)}${t}${count(k)}</button>`).join('');
   $('#crumb').textContent = SECTIONS.find(s => s[0] === S.page)[2];
 }
 
@@ -179,6 +207,7 @@ const LOADERS = {
   products: () => api('/v1/admin/products'),
   revenue: () => api(`/v1/admin/revenue?days=${S.days}`),
   integrations: () => api('/v1/admin/integrations'),
+  alerts: async () => { const d = await api('/v1/admin/alerts?days=7&limit=300'); S.alerts = d; return d; },
   support: () => api('/v1/admin/support'),
   settings: () => api('/v1/admin/settings'),
 };
@@ -289,6 +318,26 @@ const VIEWS = {
       <section class="panel"><h2>Gemini since the last restart</h2><p class="sub">Counted by this server; resets on every deploy</p><div class="kv" style="margin-top:14px"><span>Since</span><b>${fullDate(d.gemini_since_restart.since)}</b><span>Requests</span><b>${num(d.gemini_since_restart.requests)}</b><span>Succeeded</span><b>${num(d.gemini_since_restart.succeeded)}</b><span>Failed</span><b>${num(d.gemini_since_restart.failed)}</b><span>Last error</span><b>${esc(d.gemini_since_restart.last_error || 'None')}</b></div><p class="sub" style="margin-top:14px">Google does not show remaining credit through the API. See <a href="https://aistudio.google.com/usage" target="_blank" rel="noopener noreferrer">AI Studio usage</a>.</p></section></div>`;
   },
 
+  alerts(d) {
+    const KINDS = {request_failed: 'Failed request', quota: 'Gemini quota', server_crash: 'Server crash', server_restart: 'Restart', memory: 'Memory'};
+    const since = d.read_at ? new Date(d.read_at) : new Date(Date.now() - 86400000);
+    const rows = d.alerts.filter(a => matches(a) && (S.filter === 'All' || a.severity === S.filter || a.kind === S.filter));
+    const isNew = a => a.severity !== 'info' && new Date(a.created_at) > since;
+    const notify = 'Notification' in window && Notification.permission !== 'granted'
+      ? `<button data-act="alerts-notify">${ico('bell')}Desktop notifications</button>` : '';
+    return title('RELIABILITY', 'Alerts', 'Every failed request, server crash and restart, as it happens. This page and the bell update by themselves every 30 seconds.',
+      `${notify}<button class="primary" data-act="alerts-read" ${d.unread ? '' : 'disabled'}>Mark all as read</button>`)
+      + S.notices.map(a => `<div class="alert ${a.level === 'bad' ? 'bad' : ''}">${ico(a.level === 'bad' ? 'warn' : 'info')}<p><b>${esc(a.title)}</b>${esc(a.message)}</p><button class="small" data-go="${a.page}">Open</button></div>`).join('')
+      + stats([['New', num(d.unread), '<small>Since you last marked them read</small>'], ['Errors (24 h)', num(d.errors_24h), '<small>Failed requests and crashes</small>'],
+        ['Crashes (7 days)', num(d.crashes), '<small>Server stopped without shutting down</small>'], ['Last alert', d.alerts.length ? when(d.alerts[0].created_at) : 'None', '<small>Last 7 days</small>']])
+      + `<section class="panel flush">${toolbar('Search alert, email or endpoint…', [['All', 'All alerts'], ['error', 'Errors'], ['warning', 'Warnings'], ['info', 'Info'], ['server_crash', 'Crashes'], ['request_failed', 'Failed requests'], ['quota', 'Gemini quota']])}
+      <div class="table-wrap"><table><thead><tr><th>Alert</th><th>Where / who</th><th>Severity</th><th>When</th></tr></thead><tbody>${rows.map(a => `<tr class="${isNew(a) ? 'unread' : ''}">
+        <td class="wrap"><b>${isNew(a) ? '<span class="new-dot" aria-label="New"></span>' : ''}${esc(a.title)}</b><small>${esc(a.detail || '')}${a.meta?.repeats_before ? ` · happened ${a.meta.repeats_before + 1} times in a minute` : ''}</small></td>
+        <td class="wrap"><small>${esc(KINDS[a.kind] || a.kind)}${a.path ? ' · ' + esc((a.method || '') + ' ' + a.path) : ''}${a.http_status ? ' · ' + a.http_status : ''}</small>${a.email ? `<small>${esc(a.email)}</small>` : ''}</td>
+        <td>${badge(a.severity, a.severity === 'error' ? 'Error' : a.severity === 'warning' ? 'Warning' : 'Info')}</td>
+        <td title="${esc(fullDate(a.created_at))}">${when(a.created_at)}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">No alerts. Everything is running smoothly.</td></tr>'}</tbody></table></div></section>`;
+  },
+
   support(d) {
     const rows = d.tickets.filter(t => matches(t) && (S.filter === 'All' || t.status === S.filter || t.priority === S.filter));
     const open = d.tickets.filter(t => t.status === 'open');
@@ -383,8 +432,10 @@ function ticketDialog(id) {
 function notices() {
   const o = overviewData();
   S.notices = o ? o.alerts : [];
-  const n = S.notices.length + (o?.open_tickets ? 1 : 0);
+  const n = S.notices.length + (o?.open_tickets ? 1 : 0) + (S.alerts?.unread || 0);
   $('#notice').textContent = n;
+  $('#notice').classList.toggle('hot', !!S.alerts?.unread);
+  document.title = (S.alerts?.unread ? `(${S.alerts.unread}) ` : '') + 'MyDripCheck · Admin Console';
   const badgeEl = $('#modeBadge');
   if (o) { badgeEl.hidden = false; badgeEl.textContent = o.test_mode ? 'PAYMENTS · TEST MODE' : 'PAYMENTS · LIVE'; badgeEl.classList.toggle('warn', o.test_mode); }
 }
@@ -407,10 +458,16 @@ document.addEventListener('click', async e => {
       case 'user': userDialog(id); break;
       case 'event': eventDialog(id); break;
       case 'ticket': ticketDialog(id); break;
-      case 'notifications':
-        modal('Needs your attention', (S.notices.map(a => `<div class="row"><span class="tile">${ico(a.level === 'bad' ? 'warn' : 'info')}</span><div><b>${esc(a.title)}</b><small>${esc(a.message)}</small></div><button class="small" data-go="${a.page}">Open</button></div>`).join('')
-          + (overviewData()?.open_tickets ? `<div class="row"><span class="tile">${ico('inbox')}</span><div><b>${overviewData().open_tickets} open support tickets</b><small>Customers waiting for a reply</small></div><button class="small" data-go="support">Open</button></div>` : '')) || '<p class="sub">All clear. Nothing needs you right now.</p>');
-        break;
+      case 'notifications': go('alerts'); break;
+      case 'alerts-read': {
+        await api('/v1/admin/alerts/read', {method: 'POST'});
+        delete S.cache['alerts' + S.days]; await pollAlerts(); if (S.page === 'alerts') render(); toast('All alerts marked as read.'); break;
+      }
+      case 'alerts-notify': {
+        const answer = await Notification.requestPermission();
+        toast(answer === 'granted' ? 'Desktop notifications are on for this browser.' : 'Notifications are blocked in this browser\'s settings.', answer !== 'granted');
+        if (S.page === 'alerts') rerender(); break;
+      }
       case 'give-looks': {
         const looks = +$('#giveLooks').value, days = +$('#giveDays').value;
         if (!Number.isInteger(looks) || looks < 1 || looks > 1000) return toast('Enter 1 to 1,000 looks.', true);

@@ -206,3 +206,8 @@ td small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
   .heading{align-items:flex-start;flex-direction:column}.two{grid-template-columns:1fr}}
 @media(max-width:520px){main{padding:20px 16px}.panel{padding:16px}h1{font-size:23px}.stat strong{font-size:20px}.alert{align-items:flex-start;flex-wrap:wrap}
   .top-right .badge,.top-right .label{display:none}.dialog{padding:18px}}
+
+/* Alerts */
+tr.unread td{background:#FFF8F6}
+.new-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--bad);margin-right:8px;vertical-align:1px}
+#notice.hot{background:var(--bad);color:#fff;border-radius:4px;padding:0 6px;line-height:18px}

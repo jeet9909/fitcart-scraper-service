@@ -109,7 +109,7 @@ async function api(path, opts = {}, auth = true){
     } else res = await fetch(apiUrl(path), opts);
   } catch (err){
     if (err.name === 'AbortError') throw err;
-    throw Error('Could not reach MyDripCheck. Check your connection and try again.');
+    throw Error('We lost the connection to MyDripCheck. Nothing was used from your plan. Please try again in a moment.');
   }
   const payload = res.status === 204 ? {} : await res.json().catch(() => ({}));
   if (res.status === 503 && payload?.detail?.code === 'maintenance') showMaintenance({maintenance: true, maintenance_message: payload.detail.message});

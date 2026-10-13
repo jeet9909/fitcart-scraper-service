@@ -283,6 +283,81 @@ def shrink_to_share(image_bytes: bytes, share_now: float, share_wanted: float) -
     return encoded.tobytes() if ok else None
 
 
+ALIGN_WORK_SIDE = 1024  # features are matched on a copy this size; the warp itself runs at full size
+ALIGN_MIN_INLIERS = 25  # background points that must agree before a picture is moved
+ALIGN_MAX_ROTATION_DEG = 4
+ALIGN_SCALE_RANGE = (0.6, 1.5)
+ALIGN_SKIP_SCALE = 0.015  # closer than this (and a tiny shift) already lines up; leave it untouched
+ALIGN_SKIP_SHIFT = 0.006
+
+
+def align_to_reference(reference: bytes, generated: bytes, output_mime: str = "image/png") -> bytes | None:
+    """Put a generated picture back into the reference photo's framing: same aspect ratio, and the scene (the
+    person's own background) at the same size and position, so a before/after slider lines up and the person is
+    not zoomed in. The match comes from background details both pictures share (ORB features, RANSAC), so it
+    needs the same place in both: in the person's own pose the background is kept. Any strip the moved picture no
+    longer covers is filled from the reference. Returns None when the pictures do not match well enough, or
+    already line up."""
+    try:
+        ref = cv2.imdecode(np.frombuffer(reference, np.uint8), cv2.IMREAD_COLOR)
+        gen = cv2.imdecode(np.frombuffer(generated, np.uint8), cv2.IMREAD_COLOR)
+        if ref is None or gen is None:
+            return None
+        ref_scale = min(1.0, ALIGN_WORK_SIDE / max(ref.shape[:2]))
+        gen_scale = min(1.0, ALIGN_WORK_SIDE / max(gen.shape[:2]))
+        small_ref = cv2.cvtColor(cv2.resize(ref, None, fx=ref_scale, fy=ref_scale, interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
+        small_gen = cv2.cvtColor(cv2.resize(gen, None, fx=gen_scale, fy=gen_scale, interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
+        orb = cv2.ORB_create(nfeatures=4000)
+        ref_points, ref_desc = orb.detectAndCompute(small_ref, None)
+        gen_points, gen_desc = orb.detectAndCompute(small_gen, None)
+        if ref_desc is None or gen_desc is None or len(ref_points) < ALIGN_MIN_INLIERS or len(gen_points) < ALIGN_MIN_INLIERS:
+            return None
+        pairs = cv2.BFMatcher(cv2.NORM_HAMMING).knnMatch(gen_desc, ref_desc, k=2)
+        good = [m for m, *rest in pairs if rest and m.distance < 0.75 * rest[0].distance]
+        if len(good) < ALIGN_MIN_INLIERS:
+            log.info("Framing match skipped: only %d matching background points", len(good))
+            return None
+        src = np.float32([gen_points[m.queryIdx].pt for m in good]) / gen_scale
+        dst = np.float32([ref_points[m.trainIdx].pt for m in good]) / ref_scale
+        matrix, inliers = cv2.estimateAffinePartial2D(src, dst, method=cv2.RANSAC, ransacReprojThreshold=3.0 / ref_scale)
+        count = int(inliers.sum()) if inliers is not None else 0
+        if matrix is None or count < ALIGN_MIN_INLIERS:
+            log.info("Framing match skipped: %d background points agree", count)
+            return None
+        scale = float(np.hypot(matrix[0, 0], matrix[1, 0]))
+        rotation = float(np.degrees(np.arctan2(matrix[1, 0], matrix[0, 0])))
+        if abs(rotation) > ALIGN_MAX_ROTATION_DEG:
+            return None
+        # The output keeps the generated picture's resolution but the reference photo's shape.
+        out_scale = max(gen.shape[:2]) / max(ref.shape[:2])
+        height, width = round(ref.shape[0] * out_scale), round(ref.shape[1] * out_scale)
+        matrix = matrix * out_scale  # generated pixels -> output pixels
+        zoom = max(ref.shape[:2]) / (scale * max(gen.shape[:2]))  # how much bigger the scene was drawn than in the photo
+        if not ALIGN_SCALE_RANGE[0] < zoom < ALIGN_SCALE_RANGE[1]:
+            log.info("Framing match skipped: implausible zoom %.2f", zoom)
+            return None
+        same_shape = abs(gen.shape[0] / gen.shape[1] - ref.shape[0] / ref.shape[1]) < 0.01
+        shift = float(np.hypot(matrix[0, 2], matrix[1, 2])) / max(width, height)
+        if same_shape and abs(zoom - 1) < ALIGN_SKIP_SCALE and abs(rotation) < 0.5 and shift < ALIGN_SKIP_SHIFT:
+            return None
+        warped = cv2.warpAffine(gen, matrix, (width, height), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT)
+        covered = cv2.warpAffine(np.full(gen.shape[:2], 255, np.uint8), matrix, (width, height), flags=cv2.INTER_NEAREST)
+        covered = cv2.erode(covered, np.ones((3, 3), np.uint8), iterations=2)
+        gap = covered < 255
+        if gap.any():
+            filler = cv2.resize(ref, (width, height), interpolation=cv2.INTER_CUBIC if out_scale > 1 else cv2.INTER_AREA)
+            warped[gap] = filler[gap]
+            del filler
+        log.info("Framing matched to the photo: person drawn at %.0f%% of the photo's size, %d background points", zoom * 100, count)
+        extension = ".jpg" if output_mime == "image/jpeg" else ".png"
+        params = [cv2.IMWRITE_JPEG_QUALITY, 92] if extension == ".jpg" else []
+        ok, encoded = cv2.imencode(extension, warped, params)
+        return encoded.tobytes() if ok else None
+    except cv2.error:
+        log.exception("Framing match failed")
+        return None
+
+
 def is_plain_backdrop(image_bytes: bytes) -> bool:
     """True when the picture's left and right edges are a smooth studio backdrop rather than a real place."""
     image = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)

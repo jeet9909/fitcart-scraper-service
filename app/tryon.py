@@ -7,6 +7,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 from uuid import uuid4
@@ -65,6 +66,21 @@ def _aspect_of(image: tuple[bytes, str, str]) -> str:
     with Image.open(io.BytesIO(image[0])) as picture:
         ratio = picture.width / max(picture.height, 1)
     return min(ASPECT_RATIOS, key=lambda name: abs(ASPECT_RATIOS[name] - ratio))
+
+
+FULL_RES_4K_MIN_MEMORY = 1536 * 2**20  # below this, paid looks are drawn at 2K (see TryOnService.full_size)
+
+
+def _memory_limit() -> int | None:
+    """The container's memory limit in bytes (cgroup v2 or v1), or None when there is none or it cannot be read."""
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            value = Path(path).read_text().strip()
+        except OSError:
+            continue
+        if value.isdigit() and int(value) < 2**50:
+            return int(value)
+    return None
 
 
 FULL_RES_TIMEOUT_SECONDS = 300  # 4K drawings take longer than the normal 3 minutes allow
@@ -417,6 +433,20 @@ def _keep_person_size(result: tuple[bytes, str, str], target: float) -> tuple[by
         return result
 
 
+
+def _match_framing(reference: tuple[bytes, str, str], image: tuple[bytes, str, str], label: str) -> tuple[bytes, str, str]:
+    """Line a drawing up with the picture it was made from (see identity.align_to_reference); unchanged when they
+    cannot be matched or already line up."""
+    try:
+        mime = "image/jpeg" if image[1] == "image/jpeg" else "image/png"
+        aligned = identity.align_to_reference(reference[0], image[0], mime)
+    except Exception:  # framing is a polish step; never lose a finished look over it
+        log.warning("Could not match the framing of the %s", label, exc_info=True)
+        return image
+    if aligned is None:
+        return image
+    return aligned, mime, "jpg" if mime == "image/jpeg" else "png"
+
 FRONT_BACKDROP_PROMPT = (
     "Image 1 is a fashion photo of a person. Return the same photo with only the background replaced by a plain, seamless, light "
     "warm-grey studio backdrop, flat and even from edge to edge, with a faint soft shadow at the feet. Change nothing about the "
@@ -461,6 +491,7 @@ class TryOnService:
         # One full-resolution image at a time, server-wide: a 4K answer arrives as 30 to 40 MB of base64 text and
         # is several copies of that in memory while it is decoded, so two at once could exhaust a small server.
         self._full_res = asyncio.Semaphore(1)
+        self._warned_small_memory = False
         self._full_size_refused = False
 
     @asynccontextmanager
@@ -549,10 +580,14 @@ class TryOnService:
             }],
             "generationConfig": {
                 "responseModalities": ["TEXT", "IMAGE"],
-                "imageConfig": {"aspectRatio": "3:4"},
+                "imageConfig": {"aspectRatio": _aspect_of(person) if pose == "keep" else "3:4"},
             },
         }
         result = await self._generated_image(payload, "Gemini image generation failed")
+        if pose == "keep":
+            # The model tends to zoom in on the person; put the drawing back into the photo's own framing so the
+            # person keeps their real size and the before/after slider lines up.
+            result = await asyncio.to_thread(_match_framing, person, result, "my pose")
         if pose == "standard" and face and self.settings.face_refine_enabled:
             # Re-posing redraws the whole person, so faces drift (often slimmer, a smaller head). A second,
             # edit-only pass fixes just the head against the real references; everything else stays.
@@ -615,6 +650,14 @@ class TryOnService:
         if self._full_size_refused:
             return None
         size = self.settings.paid_image_size.strip().upper()
+        if size == "4K" and (limit := _memory_limit()) and limit < FULL_RES_4K_MIN_MEMORY:
+            # One 4K picture needs about 370 MB while it is decoded; on a small server that crashes the process and
+            # every look in progress with it. 2K needs a quarter of that.
+            if not self._warned_small_memory:
+                self._warned_small_memory = True
+                log.error("Server memory is %d MB: drawing paid looks at 2K instead of 4K (4K needs a server with at least %d MB)",
+                          limit // 2**20, FULL_RES_4K_MIN_MEMORY // 2**20)
+            return "2K"
         return size if size in ("2K", "4K") else None
 
     async def upscale(self, image: tuple[bytes, str, str], label: str = "look") -> tuple[bytes, str, str]:
@@ -629,6 +672,8 @@ class TryOnService:
         try:
             sharp = await self._generated_image(payload, f"Gemini {size} pass failed")
             result = await asyncio.to_thread(_as_jpeg, sharp)
+            del sharp
+            result = await asyncio.to_thread(_match_framing, image, result, f"{size} {label}")
         except Exception as exc:  # a failed polish step keeps the finished look
             log.warning("%s pass for the %s failed, keeping the normal-resolution image: %r", size, label, exc)
             return image

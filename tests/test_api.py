@@ -2607,3 +2607,53 @@ def test_product_imports_are_rate_limited_per_address_and_api_docs_are_hidden(mo
         app_main._scrape_times.clear()
     assert codes == [200, 200, 429] and other == 200
     assert docs == (404, 404)
+
+
+def test_paid_looks_drop_to_2k_on_a_small_server(monkeypatch) -> None:
+    from app import tryon
+
+    service = tryon.TryOnService(LIMIT_SETTINGS.model_copy(update={"paid_image_size": "4K"}))
+    monkeypatch.setattr(tryon, "_memory_limit", lambda: 512 * 2**20)
+    assert service.full_size == "2K"
+    monkeypatch.setattr(tryon, "_memory_limit", lambda: 2048 * 2**20)
+    assert service.full_size == "4K"
+
+
+def _scene(width: int = 900, height: int = 1200) -> "np.ndarray":
+    import numpy as np
+    import cv2
+
+    rng = np.random.default_rng(7)
+    scene = np.full((height, width, 3), 200, np.uint8)
+    for _ in range(260):  # a busy real-world background: lots of distinct shapes
+        x, y = int(rng.integers(0, width)), int(rng.integers(0, height))
+        color = tuple(int(c) for c in rng.integers(0, 255, 3))
+        if rng.random() < 0.5:
+            cv2.rectangle(scene, (x, y), (x + int(rng.integers(8, 60)), y + int(rng.integers(8, 60))), color, -1)
+        else:
+            cv2.circle(scene, (x, y), int(rng.integers(5, 30)), color, -1)
+    return scene
+
+
+def test_my_pose_drawing_is_put_back_into_the_photo_framing() -> None:
+    import numpy as np
+    import cv2
+    from app import identity
+
+    photo = _scene()
+    height, width = photo.shape[:2]
+    # The model zoomed in about 20% and returned a 3:4 picture at another size.
+    crop = photo[100:100 + 1000, 75:75 + 750]
+    drawn = cv2.resize(crop, (768, 1024))
+    aligned = identity.align_to_reference(cv2.imencode(".png", photo)[1].tobytes(), cv2.imencode(".png", drawn)[1].tobytes())
+    assert aligned is not None
+    out = cv2.imdecode(np.frombuffer(aligned, np.uint8), cv2.IMREAD_COLOR)
+    assert abs(out.shape[0] / out.shape[1] - height / width) < 0.01
+    expected = cv2.resize(photo, (out.shape[1], out.shape[0]), interpolation=cv2.INTER_AREA)
+    unaligned = cv2.resize(drawn, (out.shape[1], out.shape[0]))
+    assert np.abs(out.astype(int) - expected).mean() < np.abs(unaligned.astype(int) - expected).mean() / 3
+    # A picture that already lines up, and one with nothing in common, are left alone.
+    same = cv2.imencode(".png", photo)[1].tobytes()
+    assert identity.align_to_reference(same, same) is None
+    blank = cv2.imencode(".png", np.full_like(photo, 128))[1].tobytes()
+    assert identity.align_to_reference(same, blank) is None

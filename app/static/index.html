@@ -325,23 +325,16 @@ dialog.sheet.closing::backdrop{animation:fade .22s var(--ease-in) reverse forwar
 /* Shutter: the finished look arrives over the photo as eight slats opening from the top, one after another. */
 .l-shutter i{position:absolute;left:0;right:0;top:calc(var(--i) * 12.5%);height:12.6%;background:var(--img) 0 calc(var(--i) * 100% / 7) / 100% 800% no-repeat;transform:scaleY(0);transform-origin:top;box-shadow:0 1px 0 rgba(255,255,255,.35)}
 @keyframes slat{80%{box-shadow:0 1px 0 rgba(255,255,255,.35)}to{transform:scaleY(1);box-shadow:none}}
-.l-scan{opacity:0;pointer-events:none}
-.l-scan::before{content:"";position:absolute;left:0;right:0;top:0;height:26%;background:linear-gradient(180deg,transparent,color-mix(in srgb,var(--accent) 32%,transparent) 70%,color-mix(in srgb,#fff 70%,transparent) 96%,transparent);filter:blur(2px)}
 .gen-visual.p2 .l-photo{filter:blur(1.5px) saturate(.9)}
 .gen-visual.p2 .l-glass,.gen-visual.p3 .l-glass{opacity:1}
 .gen-visual.p2 .l-aura{opacity:.8}
 .gen-visual.p3 .l-photo{filter:blur(2px) saturate(.88)}
 .gen-visual.p3 .l-aura{opacity:1}
-.gen-visual.p3 .l-scan{opacity:.55}
-.gen-visual.p3 .l-scan::before{animation:scan 2.6s var(--ease) infinite}
 .gen-visual.p4 .l-glass,.gen-visual.p4 .l-aura{opacity:0}
 .gen-visual.p4 .l-photo{filter:none}
 .gen-visual.p4 .l-sharp,.gen-visual.p4 .l-shutter{visibility:visible}
 .gen-visual.p4 .l-sharp{opacity:1}
 .gen-visual.p4 .l-shutter i{animation:slat .5s var(--ease) calc(var(--i) * 95ms) forwards}
-.gen-visual.p4 .l-scan{opacity:1;animation:scan 1.1s var(--ease) forwards}
-.gen-visual.p4 .l-scan::before{animation:none}
-@keyframes scan{from{transform:translateY(-26%)}to{transform:translateY(100%)}}
 .gen-visual.done{transform:scale(1.02);box-shadow:0 0 0 1px var(--accent-line),0 24px 60px -18px color-mix(in srgb,var(--accent) 55%,transparent)}
 .confetti{position:absolute;inset:0;pointer-events:none;z-index:3}
 .confetti i{position:absolute;left:50%;top:48%;width:8px;height:12px;border-radius:2px;background:var(--c);opacity:0}
@@ -457,7 +450,7 @@ dialog.sheet.closing::backdrop{animation:fade .22s var(--ease-in) reverse forwar
 }
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;animation-delay:0s!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
-  .l-glass::after,.l-aura i,.gen-visual .confetti,.l-scan{display:none}
+  .l-glass::after,.l-aura i,.gen-visual .confetti{display:none}
   .l-shutter i{animation:none!important;transform:none}
   .l-sharp{transition:none}
 }

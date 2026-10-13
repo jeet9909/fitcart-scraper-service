@@ -611,7 +611,6 @@ function generating(){
         <div class="layer l-beam"><i class="beam"></i></div>
         <div class="layer l-shutter" id="genShutter"></div>
         <div class="layer l-sharp"><img id="genSharp" alt=""></div>
-        <div class="layer l-scan"></div>
       </div>
     </div>
     <div class="gen-skeleton" aria-hidden="true">

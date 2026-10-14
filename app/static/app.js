@@ -1110,48 +1110,382 @@ function startAccountSession(payload){
   state.wardrobe = null; state.gallery = null; state.ideas = [];
 }
 function openSignin(reason = null){
-  state.signin = state.account ? {step:'account'} : {step:'form', mode:'login', email:'', busy:false, error:'', reason};
-  renderSignin(); openSheet($('#signinSheet'));
-  setTimeout(() => $('#signinEmail')?.focus(), 80);
+  if (state.account){
+    state.signin = {step:'account'};
+    renderSignin(); openSheet($('#signinSheet'));
+    return;
+  }
+  openAuth(reason === 'free' ? 'signup' : 'signin', reason);
 }
 function renderSignin(){
-  const s = state.signin, a = state.account;
-  let body;
-  if (s.step === 'account'){
-    body = `<div class="account-card"><span class="small muted">Signed in as</span><strong>${esc(a.email)}</strong>${a.unlimited ? `<span class="tag" style="justify-self:start">${icon('ticket','s')} Unlimited looks</span>` : `<span class="small muted">${looksLeft() === null ? 'Checking your looks…' : looksLeft() === Infinity ? 'Looks available' : `${looksLeft()} ${looksLeft() === 1 ? 'look' : 'looks'} left`}</span>`}</div>
+  const a = state.account;
+  if (!a) return;
+  const body = `<div class="account-card"><span class="small muted">Signed in as</span><strong>${esc(a.email)}</strong>${a.unlimited ? `<span class="tag" style="justify-self:start">${icon('ticket','s')} Unlimited looks</span>` : `<span class="small muted">${looksLeft() === null ? 'Checking your looks…' : looksLeft() === Infinity ? 'Looks available' : `${looksLeft()} ${looksLeft() === 1 ? 'look' : 'looks'} left`}</span>`}</div>
       <p class="small muted">Your wardrobe and looks are saved to this account, so they follow you to any device you sign in on.</p>
       <button class="btn ghost wide" data-act="help">Help &amp; support</button>
       <button class="btn ghost wide" data-act="sign-out">Sign out</button>`;
-  } else {
-    const signup = s.mode === 'signup';
-    body = `<form id="signinForm" novalidate style="display:grid;gap:14px">
-      ${s.reason === 'free' ? `<div class="notice">${icon('user')}<span>Sign in to get <strong>${state.balance?.free_looks_per_month ?? 2} free looks every month</strong>. Your looks and wardrobe are saved to your account.</span></div>` : s.reason === 'wardrobe' ? `<div class="notice">${icon('hanger')}<span>Sign in to save clothes. Your wardrobe is kept in your account, so it follows you to every device.</span></div>` : s.reason === 'buy' ? `<div class="notice">${icon('lock')}<span>Sign in first so your pass or plan is added to your account.</span></div>` : ''}
-      <div class="seg" role="tablist" aria-label="Sign in or create an account"><button type="button" role="tab" aria-selected="${!signup}" data-act="signin-mode" data-mode="login">Log in</button><button type="button" role="tab" aria-selected="${signup}" data-act="signin-mode" data-mode="signup">Create account</button></div>
-      <label class="field" for="signinEmail">Email<input class="input" id="signinEmail" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="you@example.com" value="${esc(s.email)}" required></label>
-      <label class="field" for="signinPassword">Password<span class="pw-wrap"><input class="input" id="signinPassword" type="password" autocomplete="${signup ? 'new-password' : 'current-password'}" minlength="8" maxlength="72" placeholder="${signup ? 'At least 8 characters' : 'Your password'}" required><button type="button" class="pw-toggle" data-act="toggle-password" aria-label="Show password">Show</button></span></label>
-      <p class="error" role="alert">${esc(s.error)}</p>
-      <button class="btn brand wide" type="submit" ${s.busy ? 'disabled' : ''}>${s.busy ? `<span class="spin" aria-hidden="true"></span> ${signup ? 'Creating your account…' : 'Signing in…'}` : signup ? 'Create account' : 'Log in'}</button>
-      <p class="tiny muted" style="text-align:center">${signup ? 'Already have an account? Use Log in above.' : 'New to MyDripCheck? Choose Create account above.'}</p>
-    </form>`;
-  }
-  $('#signinSheet').innerHTML = `<div class="grabber" aria-hidden="true"></div><div class="sheet-head"><h2 id="signinTitle">${s.step === 'account' ? 'Your account' : s.mode === 'signup' ? 'Create your account' : 'Log in'}</h2><button class="iconbtn" data-act="close-sheet" aria-label="Close">${icon('x')}</button></div><div class="sheet-body">${body}</div>`;
-  const form = $('#signinForm');
-  if (form) form.onsubmit = e => { e.preventDefault(); submitSignin($('#signinEmail').value, $('#signinPassword').value); };
+  $('#signinSheet').innerHTML = `<div class="grabber" aria-hidden="true"></div><div class="sheet-head"><h2 id="signinTitle">Your account</h2><button class="iconbtn" data-act="close-sheet" aria-label="Close">${icon('x')}</button></div><div class="sheet-body">${body}</div>`;
 }
-async function submitSignin(rawEmail, password){
-  const s = state.signin, email = String(rawEmail || '').trim().toLowerCase(), signup = s.mode === 'signup';
-  const fail = (error, field = '#signinPassword') => { state.signin = {...s, email, busy:false, error}; renderSignin(); $(field)?.focus(); };
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail('Enter a valid email address.', '#signinEmail');
-  if (password.length < (signup ? 8 : 1)) return fail(signup ? 'Use at least 8 characters for your password.' : 'Enter your password.');
-  state.signin = {...s, email, busy:true, error:''}; renderSignin();
-  try {
-    const payload = await api(signup ? '/v1/auth/signup' : '/v1/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email, password})}, false);
-    signedIn(payload);
-  } catch (err){
-    if (err.status === 409 && signup){ state.signin = {...s, mode:'login', email, busy:false, error:err.message}; renderSignin(); $('#signinPassword')?.focus(); return; }
-    fail(err.message);
-  }
+
+/* ---------- Sign in / create account (full screen) ----------
+   Sign in, create account, confirm email with a code, forgot password and reset with a code. With email
+   verification on (EMAIL_VERIFICATION_ENABLED on the API), a new account gets a code by email before it can
+   sign in; with it off, sign-up signs in straight away. The page stays inside the app, so a look in progress,
+   the uploaded photo and the action that asked for sign-in carry on afterwards. */
+const AUTH_SCREENS = ['signin', 'signup', 'verify', 'forgot', 'reset'];
+const AUTH_REASON = {
+  free: 'Sign in to get your free looks every month. Your looks and wardrobe are saved to your account.',
+  wardrobe: 'Sign in to save clothes. Your wardrobe is kept in your account, so it follows you to every device.',
+  buy: 'Sign in first so your pass or plan is added to your account.',
+};
+const AUTH_ICON = {
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
+  lock: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
+  lockCheck: '<path d="m9 12 2 2 4-4"/><path d="M19 10V7a4 4 0 0 0-8 0v2"/><rect x="5" y="10" width="14" height="11" rx="2"/>',
+  eye: '<path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
+  eyeOff: '<path d="m3 3 18 18"/><path d="M10.6 6.1c.46-.07.93-.1 1.4-.1 6.4 0 10 6 10 6a16.4 16.4 0 0 1-4 4.1"/><path d="M6.6 7.5A17 17 0 0 0 2 12s3.6 6 10 6c1.15 0 2.21-.2 3.2-.54"/><path d="M10.9 10.9a2 2 0 0 0 2.2 2.2"/>',
+  arrow: '<path d="M5 12h14m-6-6 6 6-6 6"/>',
+  back: '<path d="M19 12H5m7-7-7 7 7 7"/>',
+  spark: '<path d="m12 3 2.5 5.5L20 11l-5.5 2.5L12 19l-2.5-5.5L4 11l5.5-2.5z"/>',
+  check: '<path d="M5 12.5 10 17l9-10"/>',
+  key: '<path d="M4 9a8 8 0 0 1 16 0v4"/><rect x="4" y="12" width="16" height="9" rx="2"/><path d="M12 15v3"/>',
+  inbox: '<path d="M3 13l3-8h12l3 8v7H3z"/><path d="M3 13h5l1 3h6l1-3h5"/>',
+  shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',
+  moon: '<path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  alert: '<path d="M12 3 2 21h20L12 3Zm0 7v4m0 3h.01"/>',
+};
+const aIcon = (name, cls = 'icon') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${AUTH_ICON[name]}</svg>`;
+const AUTH_LOGO = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 255.24 134.96"><path fill="#094B7F" fill-rule="evenodd" d="M22.94 118.68L0 118.68L0 16.56L19.62 16.56L58.34 76.07L98.18 16.18L150.52 16.18C150.52 16.18 167.68 17.56 175.29 23.64C175.29 23.64 164.11 29.03 161.03 39.54C161.03 39.54 155.92 35.49 149.46 36.65L110.43 36.65L62.93 106.02L54.4 106.02L22.72 58.85L22.94 118.68"/><path fill="#094B7F" fill-rule="evenodd" d="M117.26 41C117.26 41 111.73 41.76 112.37 41.56C113 41.36 94.74 67.59 94.74 67.59L94.74 117.59L157.91 117.59C157.91 117.59 188.77 115.97 201.15 83.12C201.15 83.12 209.55 63.56 197.63 43.24C197.63 43.24 183.88 50.26 183.12 67.22C183.12 67.22 180.52 97.94 152.71 97.17C152.71 97.17 117.41 96.71 117.41 97.17C117.41 97.63 117.26 41 117.26 41"/><path fill="#094B7F" fill-rule="evenodd" d="M255.24 33.39L240.35 48.58C240.35 48.58 230.47 30.5 205.86 35.36C205.86 35.36 179.98 41.05 178.13 64.51C178.13 64.51 180.79 81.84 162.54 91.2C162.54 91.2 139.16 52.5 184.29 22.32C184.29 22.32 224.37 0 255.24 33.39"/><path fill="#094B7F" fill-rule="evenodd" d="M254.95 101.85L240.7 87.5C240.7 87.5 226.65 107.08 199.69 96.73C199.69 96.73 198.16 102.36 185.75 111.8C185.75 111.8 219.48 134.96 254.95 101.85"/></svg>';
+
+function authField(id, label, type, placeholder, iconName, extra = ''){
+  const pw = type === 'password';
+  return `<div class="field"><div class="label-row"><label for="${id}">${label}</label>${extra}</div>
+    <div class="control" id="${id}Wrap">${aIcon(iconName)}<input id="${id}" type="${type}" ${type === 'email' ? 'inputmode="email" autocomplete="email" maxlength="254"' : ''} ${pw ? `autocomplete="${id === 'authLoginPassword' ? 'current-password' : 'new-password'}" maxlength="72"` : ''} placeholder="${placeholder}" required aria-describedby="${id}Error">${pw ? `<button type="button" class="pw-button" data-auth="toggle" data-target="${id}" aria-label="Show password" title="Show or hide password">${aIcon('eye')}</button>` : ''}</div>
+    <div class="field-error" id="${id}Error" aria-live="polite"></div></div>`;
 }
+function authSubmit(id, label){
+  return `<button class="submit" type="submit" id="${id}" data-label="${label}"><span class="button-label">${label}</span>${aIcon('arrow', 'icon arrow')}<span class="spinner" hidden></span></button>`;
+}
+function authCodeField(id){
+  return `<div class="field"><div class="label-row"><label for="${id}">Code from the email</label></div>
+    <div class="control code-control" id="${id}Wrap"><input id="${id}" class="code-input" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="10" placeholder="••••••" required aria-describedby="${id}Error"></div>
+    <div class="field-error" id="${id}Error" aria-live="polite"></div></div>`;
+}
+function authMarkup(){
+  return `<div class="auth-shell">
+    <aside class="story" aria-label="About MyDripCheck">
+      <div class="story-top">
+        <span class="brand"><span class="logo-box" aria-hidden="true">${AUTH_LOGO}</span><span class="brand-name">my<span>drip</span>check</span></span>
+        <button type="button" class="story-return" data-auth="close">${aIcon('back')}<span>Back to explore</span></button>
+      </div>
+      <div class="story-content">
+        <span class="kicker"><span class="dot"></span> The fitting room, reimagined</span>
+        <h1>See it on you.<br><em>Before it’s yours.</em></h1>
+        <p class="lead">Turn pieces from your favourite stores into a look that feels like you. Your style, your way, before checkout.</p>
+        <div class="look-scene" aria-label="Preview of a MyDripCheck virtual try-on">
+          <div class="floating-piece piece-a"><img class="piece-img" alt="" src="static/img/shirt.jpg"><span class="piece-label"><small>YOUR TOP</small>Everyday essential</span></div>
+          <div class="look-frame"><div class="look-art"><img id="authLook" alt="Example virtual try-on look" src="static/img/after.jpg"><span class="art-caption" id="authLookCaption">Your outfit · visualised</span></div></div>
+          <div class="visual-label">${aIcon('spark')} Your new look</div>
+          <div class="floating-piece piece-b"><img class="piece-img" alt="" src="static/img/sneakers.jpg"><span class="piece-label"><small>FINISH THE FIT</small>The right details</span></div>
+          <div class="mini-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div class="preview-switch" aria-label="Example image"><button type="button" data-auth="look" data-look="after" aria-pressed="true">Styled look</button><button type="button" data-auth="look" data-look="before" aria-pressed="false">Original</button></div>
+        </div>
+      </div>
+      <div class="story-foot"><span>${aIcon('spark', 'icon star')} Style confidence starts here.</span><span>Discover · Try on · Decide</span></div>
+    </aside>
+    <div class="right">
+      <div class="right-head">
+        <span id="authPrompt">New to MyDripCheck?</span>
+        <button type="button" class="switch-link" id="authSwitch" data-auth="go" data-screen="signup">Create an account</button>
+        <button class="theme-btn" type="button" data-act="theme" data-auth="theme" aria-label="Switch appearance" title="Switch appearance"></button>
+      </div>
+      <div class="right-body">
+        <section class="form-card" data-screen="signin" aria-labelledby="authSigninTitle">
+          <div class="mobile-brand">Your virtual fitting room</div>
+          <div class="form-overline">Your style journey</div>
+          <h2 id="authSigninTitle">Welcome back<span class="dot-accent">.</span></h2>
+          <p class="form-desc">Good to have you back. Sign in to pick up right where your style left off.</p>
+          <div class="benefit-note" data-reason hidden>${aIcon('spark')}<span></span></div>
+          <div class="form-alert" id="authSigninAlert" role="alert" hidden></div>
+          <form data-form="signin" novalidate>
+            ${authField('authLoginEmail', 'Email address', 'email', 'you@example.com', 'mail')}
+            ${authField('authLoginPassword', 'Password', 'password', 'Enter your password', 'lock', '<button type="button" class="forgot-link" data-auth="go" data-screen="forgot">Forgot password?</button>')}
+            <div class="remember-row">${aIcon('check')}Your looks and wardrobe, securely saved.</div>
+            ${authSubmit('authSigninSubmit', 'Sign in to MyDripCheck')}
+          </form>
+          <p class="under-cta">Don't have an account? <button type="button" class="link-btn" data-auth="go" data-screen="signup">Create one for free</button></p>
+        </section>
+
+        <section class="form-card" data-screen="signup" aria-labelledby="authSignupTitle" hidden>
+          <div class="mobile-brand">Your virtual fitting room</div>
+          <div class="form-overline">Start your style journey</div>
+          <h2 id="authSignupTitle">Make it yours<span class="dot-accent">.</span></h2>
+          <p class="form-desc">Your next favourite outfit starts here. Create an account and save every look you love.</p>
+          <div class="benefit-note" data-reason>${aIcon('spark')}<span>Get free looks to start, plus a private space for your wardrobe and saved try-ons.</span></div>
+          <div class="form-alert" id="authSignupAlert" role="alert" hidden></div>
+          <form data-form="signup" novalidate>
+            ${authField('authSignupEmail', 'Email address', 'email', 'you@example.com', 'mail')}
+            <div class="field"><div class="label-row"><label for="authSignupPassword">Create a password</label></div>
+              <div class="control" id="authSignupPasswordWrap">${aIcon('lock')}<input id="authSignupPassword" type="password" autocomplete="new-password" maxlength="72" placeholder="At least 8 characters" required aria-describedby="authSignupPasswordError authStrengthText"><button type="button" class="pw-button" data-auth="toggle" data-target="authSignupPassword" aria-label="Show password" title="Show or hide password">${aIcon('eye')}</button></div>
+              <div class="strength" aria-live="polite"><div class="strength-bars" id="authStrength" data-level="0"><span></span><span></span><span></span><span></span></div><div class="strength-copy"><span id="authStrengthText">Use at least 8 characters</span><span id="authStrengthBadge">Password strength</span></div></div>
+              <div class="field-error" id="authSignupPasswordError" aria-live="polite"></div></div>
+            ${authField('authSignupConfirm', 'Confirm password', 'password', 'Enter password again', 'lockCheck')}
+            <label class="terms" for="authTerms"><input id="authTerms" type="checkbox" required><p>I agree to the <a href="legal/terms.html" target="_blank" rel="noopener">Terms of Service</a> and <a href="legal/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</p></label>
+            <div class="field-error" id="authTermsError" role="alert"></div>
+            ${authSubmit('authSignupSubmit', 'Create my free account')}
+          </form>
+          <p class="under-cta">Already a member? <button type="button" class="link-btn" data-auth="go" data-screen="signin">Sign in instead</button></p>
+        </section>
+
+        <section class="form-card" data-screen="verify" aria-labelledby="authVerifyTitle" hidden>
+          <button type="button" class="back-link" data-auth="go" data-screen="signup">${aIcon('back')}Use a different email</button>
+          <div class="success-icon">${aIcon('inbox')}</div>
+          <div class="form-overline">Confirm your email</div>
+          <h2 id="authVerifyTitle">Check your inbox<span class="dot-accent">.</span></h2>
+          <p class="form-desc">We sent a code to <strong id="authVerifyEmail"></strong>. Enter it below to finish creating your account.</p>
+          <div class="form-alert" id="authVerifyAlert" role="alert" hidden></div>
+          <form data-form="verify" novalidate>
+            ${authCodeField('authVerifyCode')}
+            ${authSubmit('authVerifySubmit', 'Confirm and continue')}
+          </form>
+          <p class="under-cta">Didn't get it? Check spam, or <button type="button" class="link-btn" data-auth="resend" id="authResend">send a new code</button></p>
+          <p class="under-cta small-note">Opened a link in the email instead? <button type="button" class="link-btn" data-auth="go" data-screen="signin">Sign in</button></p>
+        </section>
+
+        <section class="form-card" data-screen="forgot" aria-labelledby="authForgotTitle" hidden>
+          <button type="button" class="back-link" data-auth="go" data-screen="signin">${aIcon('back')}Back to sign in</button>
+          <div class="success-icon">${aIcon('key')}</div>
+          <div class="form-overline">Account recovery</div>
+          <h2 id="authForgotTitle">Reset your password<span class="dot-accent">.</span></h2>
+          <p class="form-desc">Enter your account email and we'll send you a code to set a new password.</p>
+          <div class="form-alert" id="authForgotAlert" role="alert" hidden></div>
+          <form data-form="forgot" novalidate>
+            ${authField('authForgotEmail', 'Email address', 'email', 'you@example.com', 'mail')}
+            ${authSubmit('authForgotSubmit', 'Email me a code')}
+          </form>
+          <p class="under-cta">Remembered it? <button type="button" class="link-btn" data-auth="go" data-screen="signin">Back to sign in</button></p>
+        </section>
+
+        <section class="form-card" data-screen="reset" aria-labelledby="authResetTitle" hidden>
+          <button type="button" class="back-link" data-auth="go" data-screen="forgot">${aIcon('back')}Use a different email</button>
+          <div class="success-icon">${aIcon('lockCheck')}</div>
+          <div class="form-overline">Account recovery</div>
+          <h2 id="authResetTitle">Choose a new password<span class="dot-accent">.</span></h2>
+          <p class="form-desc">If <strong id="authResetEmail"></strong> has an account, we've emailed it a code. Enter the code and your new password.</p>
+          <div class="form-alert" id="authResetAlert" role="alert" hidden></div>
+          <form data-form="reset" novalidate>
+            ${authCodeField('authResetCode')}
+            ${authField('authResetPassword', 'New password', 'password', 'At least 8 characters', 'lock')}
+            ${authField('authResetConfirm', 'Confirm new password', 'password', 'Enter password again', 'lockCheck')}
+            ${authSubmit('authResetSubmit', 'Save password and sign in')}
+          </form>
+          <p class="under-cta">No email? Check spam, or <button type="button" class="link-btn" data-auth="go" data-screen="forgot">send it again</button></p>
+        </section>
+      </div>
+      <footer class="right-footer">
+        <span class="privacy-inline">${aIcon('shield')}A private place for your looks.</span>
+        <span class="footer-links"><a href="legal/privacy.html" target="_blank" rel="noopener">Privacy</a><a href="legal/terms.html" target="_blank" rel="noopener">Terms</a><span>© ${new Date().getFullYear()}</span></span>
+      </footer>
+    </div>
+  </div>`;
+}
+
+const authBox = () => $('#authView');
+const af = id => document.getElementById(id);
+let authResendTimer = null;
+function openAuth(screen = 'signin', reason = null){
+  const box = authBox();
+  if (!box.dataset.ready){ box.innerHTML = authMarkup(); box.dataset.ready = '1'; bindAuth(box); }
+  state.auth = {...(state.auth || {}), reason};
+  const note = AUTH_REASON[reason];
+  box.querySelectorAll('[data-reason]').forEach(el => {
+    const signupNote = el.closest('[data-screen="signup"]');
+    el.querySelector('span').textContent = note || (signupNote ? 'Get free looks to start, plus a private space for your wardrobe and saved try-ons.' : '');
+    el.hidden = !note && !signupNote;
+  });
+  showAuth(screen);
+  if (!box.open){ box.showModal(); document.body.classList.add('auth-open'); }
+  syncAuthTheme();
+}
+function closeAuth(){
+  const box = authBox();
+  if (box?.open) box.close();
+  document.body.classList.remove('auth-open');
+}
+function showAuth(screen){
+  const box = authBox();
+  if (!AUTH_SCREENS.includes(screen)) screen = 'signin';
+  box.querySelectorAll('.form-card').forEach(card => { card.hidden = card.dataset.screen !== screen; });
+  const prompt = af('authPrompt'), sw = af('authSwitch');
+  const switchable = screen === 'signin' || screen === 'signup';
+  prompt.hidden = sw.hidden = !switchable;
+  prompt.textContent = screen === 'signup' ? 'Already have an account?' : 'New to MyDripCheck?';
+  sw.textContent = screen === 'signup' ? 'Sign in' : 'Create an account';
+  sw.dataset.screen = screen === 'signup' ? 'signin' : 'signup';
+  ['authSigninAlert', 'authSignupAlert', 'authVerifyAlert', 'authForgotAlert', 'authResetAlert'].forEach(hideAuthAlert);
+  const email = state.auth?.email || '';
+  if (email){ ['authLoginEmail', 'authSignupEmail', 'authForgotEmail'].forEach(id => { if (!af(id).value) af(id).value = email; }); }
+  af('authVerifyEmail').textContent = email;
+  af('authResetEmail').textContent = email;
+  state.auth = {...state.auth, screen};
+  box.scrollTo?.(0, 0);
+  const first = {signin: email ? 'authLoginPassword' : 'authLoginEmail', signup: 'authSignupEmail', verify: 'authVerifyCode', forgot: 'authForgotEmail', reset: 'authResetCode'}[screen];
+  setTimeout(() => af(first)?.focus({preventScroll:true}), 60);
+}
+function syncAuthTheme(){
+  const root = document.documentElement;
+  const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+  const btn = authBox()?.querySelector('[data-auth="theme"]');
+  if (btn){ btn.innerHTML = aIcon(dark ? 'sun' : 'moon'); btn.setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode'); }
+}
+function showAuthAlert(id, message, ok = false){
+  const el = af(id); el.innerHTML = `${aIcon(ok ? 'check' : 'alert')}<span></span>`; el.querySelector('span').textContent = message;
+  el.classList.toggle('ok', ok); el.setAttribute('role', ok ? 'status' : 'alert'); el.hidden = false;
+}
+function hideAuthAlert(id){ const el = af(id); if (el){ el.hidden = true; el.textContent = ''; } }
+function authFieldError(id, message){ af(id + 'Error').textContent = message; af(id).setAttribute('aria-invalid', 'true'); af(id + 'Wrap')?.classList.add('invalid'); }
+function clearAuthError(id){ const e = af(id + 'Error'); if (e) e.textContent = ''; af(id)?.setAttribute('aria-invalid', 'false'); af(id + 'Wrap')?.classList.remove('invalid'); }
+function authBusy(id, busy, label){
+  const btn = af(id); btn.disabled = busy; btn.setAttribute('aria-busy', String(busy));
+  btn.querySelector('.spinner').hidden = !busy; btn.querySelector('.arrow').hidden = busy;
+  btn.querySelector('.button-label').textContent = busy ? label : btn.dataset.label;
+}
+const authEmailOk = v => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v) && v.length <= 254;
+function checkAuthEmail(id){ const v = af(id).value.trim().toLowerCase(); if (!authEmailOk(v)){ authFieldError(id, 'Enter a valid email address.'); return null; } return v; }
+function checkNewPassword(id, confirmId){
+  const p = af(id).value;
+  if (p.length < 8){ authFieldError(id, 'Password must be at least 8 characters.'); return null; }
+  if (new TextEncoder().encode(p).length > 72){ authFieldError(id, 'Password must be at most 72 bytes.'); return null; }
+  if (confirmId && af(confirmId).value !== p){ authFieldError(confirmId, 'Passwords do not match.'); return null; }
+  return p;
+}
+function checkCode(id){ const v = af(id).value.replace(/\s/g, ''); if (!/^\d{6,10}$/.test(v)){ authFieldError(id, 'Enter the code from the email (numbers only).'); return null; } return v; }
+function strengthOf(p){ if (!p) return 0; let s = 0; if (p.length >= 8) s++; if (p.length >= 12) s++; if (/[A-Z]/.test(p) && /[a-z]/.test(p)) s++; if (/\d/.test(p) && /[^\w\s]/.test(p)) s++; return Math.max(1, s); }
+function startResendTimer(seconds = 60){
+  clearInterval(authResendTimer);
+  const btn = af('authResend'); let left = seconds;
+  const tick = () => { btn.disabled = left > 0; btn.textContent = left > 0 ? `send a new code (${left} s)` : 'send a new code'; left -= 1; if (left < -1) clearInterval(authResendTimer); };
+  tick(); authResendTimer = setInterval(tick, 1000);
+}
+function toVerify(email, message){
+  state.auth = {...state.auth, email};
+  af('authVerifyCode').value = ''; clearAuthError('authVerifyCode');
+  showAuth('verify');
+  if (message) showAuthAlert('authVerifyAlert', message, true);
+  startResendTimer();
+}
+async function authPost(path, body){
+  return api(path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}, false);
+}
+function authDone(payload){
+  closeAuth();
+  signedIn(payload);
+}
+function bindAuth(box){
+  box.addEventListener('cancel', e => { e.preventDefault(); closeAuth(); });
+  box.addEventListener('input', e => {
+    if (e.target.id) clearAuthError(e.target.id);
+    if (e.target.id === 'authSignupPassword'){
+      const level = strengthOf(e.target.value);
+      af('authStrength').dataset.level = String(level);
+      af('authStrengthBadge').textContent = ['Password strength', 'Needs work', 'Fair', 'Good', 'Strong'][level];
+      af('authStrengthText').textContent = level < 3 ? 'Try 12+ characters, with a mix of letters, numbers and symbols' : 'Looking good. Keep this password private.';
+    }
+    if (e.target.classList.contains('code-input')) e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10);
+    if (e.target.id === 'authTerms') af('authTermsError').textContent = '';
+  });
+  box.addEventListener('click', async e => {
+    const t = e.target.closest('[data-auth]');
+    if (!t) return;
+    const what = t.dataset.auth;
+    if (what === 'close') closeAuth();
+    else if (what === 'go'){
+      const email = [af('authLoginEmail'), af('authSignupEmail'), af('authForgotEmail')].map(i => i.value.trim()).find(Boolean);
+      if (email) state.auth = {...state.auth, email: email.toLowerCase()};
+      showAuth(t.dataset.screen);
+    }
+    else if (what === 'toggle'){
+      const input = af(t.dataset.target), show = input.type === 'password';
+      input.type = show ? 'text' : 'password'; t.innerHTML = aIcon(show ? 'eyeOff' : 'eye');
+      t.setAttribute('aria-label', show ? 'Hide password' : 'Show password'); input.focus({preventScroll:true});
+    }
+    else if (what === 'theme') setTimeout(syncAuthTheme);
+    else if (what === 'look'){
+      const after = t.dataset.look === 'after';
+      af('authLook').src = after ? 'static/img/after.jpg' : 'static/img/before.jpg';
+      af('authLookCaption').textContent = after ? 'Your outfit · visualised' : 'Your original photo';
+      box.querySelectorAll('[data-auth="look"]').forEach(b => b.setAttribute('aria-pressed', String(b === t)));
+    }
+    else if (what === 'resend'){
+      hideAuthAlert('authVerifyAlert');
+      try { await authPost('/v1/auth/resend', {email: state.auth.email}); showAuthAlert('authVerifyAlert', 'A new code is on its way. It can take a minute to arrive.', true); startResendTimer(); }
+      catch (err){ showAuthAlert('authVerifyAlert', err.message); }
+    }
+  });
+  box.addEventListener('submit', async e => {
+    e.preventDefault();
+    const form = e.target.dataset.form;
+    if (form === 'signin'){
+      hideAuthAlert('authSigninAlert');
+      const email = checkAuthEmail('authLoginEmail'), password = af('authLoginPassword').value;
+      if (!password) authFieldError('authLoginPassword', 'Enter your password.');
+      if (!email || !password) return (email ? af('authLoginPassword') : af('authLoginEmail')).focus();
+      authBusy('authSigninSubmit', true, 'Signing you in…');
+      try { authDone(await authPost('/v1/auth/login', {email, password})); }
+      catch (err){
+        if (err.code === 'email_not_verified') return toVerify(email, 'Confirm your email to finish signing in. We\'ve sent a new code.');
+        showAuthAlert('authSigninAlert', err.status === 429 ? 'Too many sign-in attempts. Please wait and try again.' : err.message);
+      } finally { authBusy('authSigninSubmit', false); }
+    }
+    if (form === 'signup'){
+      hideAuthAlert('authSignupAlert'); af('authTermsError').textContent = '';
+      const email = checkAuthEmail('authSignupEmail'), password = checkNewPassword('authSignupPassword', 'authSignupConfirm');
+      const terms = af('authTerms').checked;
+      if (!terms) af('authTermsError').textContent = 'Please agree to the Terms and Privacy Policy to continue.';
+      if (!email || !password || !terms) return (!email ? af('authSignupEmail') : !password ? (af('authSignupPassword').getAttribute('aria-invalid') === 'true' ? af('authSignupPassword') : af('authSignupConfirm')) : af('authTerms')).focus();
+      authBusy('authSignupSubmit', true, 'Creating your account…');
+      try {
+        const payload = await authPost('/v1/auth/signup', {email, password});
+        if (payload.verification_required) toVerify(email, null);
+        else authDone(payload);
+      } catch (err){
+        if (err.status === 409){ state.auth = {...state.auth, email}; af('authLoginEmail').value = email; showAuth('signin'); showAuthAlert('authSigninAlert', 'An account with this email already exists. Sign in instead.'); }
+        else showAuthAlert('authSignupAlert', err.message);
+      } finally { authBusy('authSignupSubmit', false); }
+    }
+    if (form === 'verify'){
+      hideAuthAlert('authVerifyAlert');
+      const code = checkCode('authVerifyCode'); if (!code) return af('authVerifyCode').focus();
+      authBusy('authVerifySubmit', true, 'Confirming…');
+      try { authDone(await authPost('/v1/auth/verify', {email: state.auth.email, code})); toast('Email confirmed. Welcome to MyDripCheck!'); }
+      catch (err){ showAuthAlert('authVerifyAlert', err.message); af('authVerifyCode').select(); }
+      finally { authBusy('authVerifySubmit', false); }
+    }
+    if (form === 'forgot'){
+      hideAuthAlert('authForgotAlert');
+      const email = checkAuthEmail('authForgotEmail'); if (!email) return af('authForgotEmail').focus();
+      authBusy('authForgotSubmit', true, 'Sending…');
+      try {
+        await authPost('/v1/auth/password/forgot', {email});
+        state.auth = {...state.auth, email};
+        ['authResetCode', 'authResetPassword', 'authResetConfirm'].forEach(id => { af(id).value = ''; clearAuthError(id); });
+        showAuth('reset');
+      } catch (err){ showAuthAlert('authForgotAlert', err.message); }
+      finally { authBusy('authForgotSubmit', false); }
+    }
+    if (form === 'reset'){
+      hideAuthAlert('authResetAlert');
+      const code = checkCode('authResetCode'), password = checkNewPassword('authResetPassword', 'authResetConfirm');
+      if (!code || !password) return (!code ? af('authResetCode') : af('authResetPassword')).focus();
+      authBusy('authResetSubmit', true, 'Saving…');
+      try { authDone(await authPost('/v1/auth/password/reset', {email: state.auth.email, code, password})); toast('Password changed. You\'re signed in.'); }
+      catch (err){ showAuthAlert('authResetAlert', err.message); }
+      finally { authBusy('authResetSubmit', false); }
+    }
+  });
+}
+
 function signedIn(payload){
   startAccountSession(payload);
   Object.assign(state, {wardrobe:null, wardrobeError:'', ideas:[], ideasError:'', gallery:null, savedLooks:null});
@@ -1720,8 +2054,6 @@ document.addEventListener('click', e => {
       break;
     }
     case 'account': openSignin(t.dataset.reason || null); break;
-    case 'signin-mode': state.signin = {...state.signin, mode:t.dataset.mode, email:$('#signinEmail')?.value.trim() || state.signin.email, error:''}; renderSignin(); $('#signinEmail')?.value ? $('#signinPassword')?.focus() : $('#signinEmail')?.focus(); break;
-    case 'toggle-password': { const input = $('#signinPassword'); const show = input.type === 'password'; input.type = show ? 'text' : 'password'; t.textContent = show ? 'Hide' : 'Show'; t.setAttribute('aria-label', show ? 'Hide password' : 'Show password'); break; }
     case 'sign-out': signOut(); break;
     case 'help': e.preventDefault(); openHelp(); break;
     case 'toast-action': { const act = toastAction; dismissToast(); act?.run(); break; }

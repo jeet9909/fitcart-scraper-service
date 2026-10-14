@@ -35,6 +35,8 @@ from app.models import (
     EmailCodeRequest,
     EmailOnlyRequest,
     EmailSessionResponse,
+    LinkPasswordRequest,
+    LinkTokenRequest,
     PasswordResetRequest,
     PasswordSignInRequest,
     GalleryItem,
@@ -119,19 +121,20 @@ app.middleware("http")(alerts.middleware)
 # Sites allowed to call the API from a browser. Add your own domain with the CORS_ORIGINS variable,
 # e.g. CORS_ORIGINS=https://mydripcheck.com,https://www.mydripcheck.com
 EXTRA_ORIGINS = [origin.strip().rstrip("/") for origin in os.environ.get("CORS_ORIGINS", "").split(",") if origin.strip()]
+ALLOWED_ORIGINS = [
+    "https://jeet9909.github.io",
+    "https://mydripcheck.com",
+    "https://www.mydripcheck.com",
+    # Until GitHub Pages "Enforce HTTPS" is on, visitors can land on the plain http address.
+    "http://mydripcheck.com",
+    "http://www.mydripcheck.com",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    *EXTRA_ORIGINS,
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://jeet9909.github.io",
-        "https://mydripcheck.com",
-        "https://www.mydripcheck.com",
-        # Until GitHub Pages "Enforce HTTPS" is on, visitors can land on the plain http address.
-        "http://mydripcheck.com",
-        "http://www.mydripcheck.com",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        *EXTRA_ORIGINS,
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Admin-Token"],
@@ -288,7 +291,7 @@ async def sign_up(body: PasswordSignInRequest, settings: Settings = Depends(get_
     email = email_auth.normalize_email(body.email)
     password = email_auth.check_password(body.password)
     if settings.email_verification_enabled:
-        await email_auth.start_sign_up(email, password, settings)
+        await email_auth.start_sign_up(email, password, settings, email_auth.safe_redirect(body.redirect_to, ALLOWED_ORIGINS))
         return JSONResponse(status_code=202, content={"verification_required": True, "email": email})
     user_id, email = await email_auth.sign_up(email, password, settings)
     return create_email_session(user_id, email, settings)
@@ -305,15 +308,29 @@ async def verify_email(body: EmailCodeRequest, settings: Settings = Depends(get_
 @app.post("/v1/auth/resend", status_code=202, tags=["sessions"])
 async def resend_email_code(body: EmailOnlyRequest, settings: Settings = Depends(get_runtime_settings)) -> dict:
     email_auth._verification_on(settings)
-    await email_auth.resend_code(email_auth.normalize_email(body.email), settings)
+    await email_auth.resend_code(email_auth.normalize_email(body.email), settings, email_auth.safe_redirect(body.redirect_to, ALLOWED_ORIGINS))
     return {"sent": True}
+
+
+@app.post("/v1/auth/confirmed", response_model=EmailSessionResponse, tags=["sessions"])
+async def email_link_confirmed(body: LinkTokenRequest, settings: Settings = Depends(get_runtime_settings)) -> EmailSessionResponse:
+    """Sign in from the confirmation link: the site sends the access_token Supabase put in the link's #fragment."""
+    user_id, email = await email_auth.user_from_link(body.access_token, settings)
+    return create_email_session(user_id, email, settings)
+
+
+@app.post("/v1/auth/password/update", response_model=EmailSessionResponse, tags=["sessions"])
+async def password_from_link(body: LinkPasswordRequest, settings: Settings = Depends(get_runtime_settings)) -> EmailSessionResponse:
+    """Set a new password from a password-reset link (its access_token), and sign in."""
+    user_id, email = await email_auth.set_password_from_link(body.access_token, email_auth.check_password(body.password), settings)
+    return create_email_session(user_id, email, settings)
 
 
 @app.post("/v1/auth/password/forgot", status_code=202, tags=["sessions"])
 async def forgot_password(body: EmailOnlyRequest, settings: Settings = Depends(get_runtime_settings)) -> dict:
     """Email a password-reset code. The answer is the same whether or not the email has an account."""
     email_auth._verification_on(settings)
-    await email_auth.send_reset_code(email_auth.normalize_email(body.email), settings)
+    await email_auth.send_reset_code(email_auth.normalize_email(body.email), settings, email_auth.safe_redirect(body.redirect_to, ALLOWED_ORIGINS))
     return {"sent": True}
 
 
@@ -328,7 +345,8 @@ async def reset_password(body: PasswordResetRequest, settings: Settings = Depend
 
 @app.post("/v1/auth/login", response_model=EmailSessionResponse, tags=["sessions"])
 async def log_in(body: PasswordSignInRequest, settings: Settings = Depends(get_runtime_settings)) -> EmailSessionResponse:
-    user_id, email = await email_auth.log_in(email_auth.normalize_email(body.email), body.password, settings)
+    user_id, email = await email_auth.log_in(email_auth.normalize_email(body.email), body.password, settings, resend=body.resend,
+                                             redirect_to=email_auth.safe_redirect(body.redirect_to, ALLOWED_ORIGINS))
     return create_email_session(user_id, email, settings)
 
 

@@ -1,9 +1,10 @@
 """Email + password accounts in Supabase Auth, exchanged for a FitCart session token.
 
 With EMAIL_VERIFICATION_ENABLED off, accounts are created through Supabase's admin API as already confirmed
-and no email is sent. With it on, sign-up goes through Supabase's own /signup: Supabase emails a one-time
-code (the {{ .Token }} in its "Confirm signup" template) and the account can sign in once the code is
-verified. Forgotten passwords use the same mechanism (/recover, "Reset password" template). Supabase sends
+and no email is sent. With it on, sign-up goes through Supabase's own /signup: Supabase emails a confirmation
+link (or a code, if {{ .Token }} is in its "Confirm signup" template) and the account can sign in once it is
+confirmed. The link leads back to the site with an access token in the #fragment, which /v1/auth/confirmed
+trades for a FitCart session. Forgotten passwords work the same way (/recover, "Reset password" template). Supabase sends
 the emails through the project's SMTP settings, so a custom SMTP provider must be set up first; its built-in
 sender only delivers to the project's own team. Passwords are checked by Supabase (grant_type=password);
 FitCart never stores them. Repeated wrong passwords and wrong codes for one email are slowed down here.
@@ -12,6 +13,7 @@ FitCart never stores them. Repeated wrong passwords and wrong codes for one emai
 import logging
 import re
 import time
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import HTTPException, status
@@ -55,9 +57,10 @@ def _auth_config(settings: Settings) -> tuple[str, str]:
     return url, key
 
 
-async def _auth_request(settings: Settings, method: str, path: str, *, json: dict | None = None, params: dict | None = None) -> httpx.Response:
+async def _auth_request(settings: Settings, method: str, path: str, *, json: dict | None = None, params: dict | None = None,
+                        bearer: str | None = None) -> httpx.Response:
     url, key = _auth_config(settings)
-    headers = {"apikey": key, "Authorization": f"Bearer {key}"}
+    headers = {"apikey": key, "Authorization": f"Bearer {bearer or key}"}
     try:
         async with httpx.AsyncClient(timeout=SUPABASE_AUTH_TIMEOUT_SECONDS) as client:
             return await client.request(method, f"{url}/auth/v1{path}", json=json, headers=headers, params=params)
@@ -100,20 +103,38 @@ async def sign_up(email: str, password: str, settings: Settings) -> tuple[str, s
     return _user_from(response.json())
 
 
-async def log_in(email: str, password: str, settings: Settings) -> tuple[str, str]:
+def safe_redirect(redirect_to: str | None, allowed_origins: list[str]) -> str | None:
+    """A page of this site to send email links back to; anything else is dropped (Supabase then uses its Site URL)."""
+    if not redirect_to:
+        return None
+    parts = urlsplit(redirect_to)
+    origin = f"{parts.scheme}://{parts.netloc}".lower()
+    if parts.scheme not in ("https", "http") or origin not in {o.lower().rstrip("/") for o in allowed_origins}:
+        return None
+    return f"{origin}{parts.path or '/'}"
+
+
+def _redirect_params(redirect_to: str | None) -> dict | None:
+    return {"redirect_to": redirect_to} if redirect_to else None
+
+
+async def log_in(email: str, password: str, settings: Settings, resend: bool = True, redirect_to: str | None = None) -> tuple[str, str]:
     now = time.monotonic()
     recent = [failed for failed in _failed_logins.get(email, []) if now - failed < FAILED_LOGIN_WINDOW_SECONDS]
     if len(recent) >= MAX_FAILED_LOGINS:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many wrong passwords. Please try again in 15 minutes.")
     response = await _auth_request(settings, "POST", "/token", params={"grant_type": "password"}, json={"email": email, "password": password})
     if response.status_code in (400, 401, 403) and (_error_code(response) == "email_not_confirmed" or "not confirmed" in _error_text(response).lower()):
-        # Right password, email not verified yet: send a fresh code and let the app show the code screen.
-        try:
-            await resend_code(email, settings)
-        except HTTPException:
-            pass  # a code was sent moments ago; the one in the inbox still works
+        # Right password, email not confirmed yet: send a fresh link (unless the app is only checking) and let the
+        # app show the "verify your email" page.
+        if resend:
+            try:
+                await resend_code(email, settings, redirect_to)
+            except HTTPException:
+                pass  # an email was sent moments ago; the one in the inbox still works
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                            detail={"code": "email_not_verified", "message": "Confirm your email first. We've sent you a new code."})
+                            detail={"code": "email_not_verified", "message": "Please verify your email first. Open the link we emailed you."
+                                    if resend else "Your email is not verified yet."})
     if response.status_code in (400, 401):
         _failed_logins[email] = [*recent, now]
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="That email and password don't match.")
@@ -170,9 +191,9 @@ def _email_limit(response: httpx.Response) -> HTTPException | None:
     return None
 
 
-async def start_sign_up(email: str, password: str, settings: Settings) -> None:
-    """Create an unconfirmed account; Supabase emails the confirmation code."""
-    response = await _auth_request(settings, "POST", "/signup", json={"email": email, "password": password})
+async def start_sign_up(email: str, password: str, settings: Settings, redirect_to: str | None = None) -> None:
+    """Create an unconfirmed account; Supabase emails the confirmation link (or code)."""
+    response = await _auth_request(settings, "POST", "/signup", json={"email": email, "password": password}, params=_redirect_params(redirect_to))
     if limited := _email_limit(response):
         raise limited
     if response.status_code == 422 and ("exist" in _error_code(response) or "already" in _error_text(response).lower()):
@@ -189,8 +210,8 @@ async def start_sign_up(email: str, password: str, settings: Settings) -> None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="An account with this email already exists. Log in instead.")
 
 
-async def resend_code(email: str, settings: Settings) -> None:
-    response = await _auth_request(settings, "POST", "/resend", json={"type": "signup", "email": email})
+async def resend_code(email: str, settings: Settings, redirect_to: str | None = None) -> None:
+    response = await _auth_request(settings, "POST", "/resend", json={"type": "signup", "email": email}, params=_redirect_params(redirect_to))
     if limited := _email_limit(response):
         raise limited
     if response.status_code >= 400:  # unknown or already confirmed emails are not revealed
@@ -218,8 +239,8 @@ async def verify_sign_up(email: str, code: str, settings: Settings) -> tuple[str
     return await _verify(email, code, ("email", "signup"), settings)
 
 
-async def send_reset_code(email: str, settings: Settings) -> None:
-    response = await _auth_request(settings, "POST", "/recover", json={"email": email})
+async def send_reset_code(email: str, settings: Settings, redirect_to: str | None = None) -> None:
+    response = await _auth_request(settings, "POST", "/recover", json={"email": email}, params=_redirect_params(redirect_to))
     if limited := _email_limit(response):
         raise limited
     if response.status_code >= 400:  # never reveal whether the email has an account
@@ -228,6 +249,34 @@ async def send_reset_code(email: str, settings: Settings) -> None:
 
 async def reset_password(email: str, code: str, password: str, settings: Settings) -> tuple[str, str]:
     user_id, email = await _verify(email, code, ("recovery",), settings)
+    response = await _auth_request(settings, "PUT", f"/admin/users/{user_id}", json={"password": password})
+    if response.status_code >= 400:
+        log.warning("Password reset could not be saved: %s %s", response.status_code, response.text[:300])
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Could not save your new password. Please try again.")
+    _failed_logins.pop(email, None)
+    return user_id, email
+
+
+# ---------------------------------------------------------------- email links
+
+
+async def user_from_link(access_token: str, settings: Settings) -> tuple[str, str]:
+    """The confirmed account behind the access token that a Supabase email link put in the site's #fragment."""
+    response = await _auth_request(settings, "GET", "/user", bearer=access_token)
+    if response.status_code in (401, 403) or (response.status_code == 400 and "expired" in (_error_code(response) + _error_text(response)).lower()):
+        raise HTTPException(status_code=401, detail={"code": "link_expired", "message": "This link has expired or was already used. Sign in, or ask for a new link."})
+    if response.status_code >= 400:
+        log.warning("Supabase user lookup for an email link failed: %s %s", response.status_code, response.text[:300])
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Could not check the link. Please try again.")
+    user = response.json()
+    if not user.get("email_confirmed_at") and not user.get("confirmed_at"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "email_not_verified", "message": "Your email is not verified yet."})
+    return _user_from(user)
+
+
+async def set_password_from_link(access_token: str, password: str, settings: Settings) -> tuple[str, str]:
+    """Save a new password for the account behind a password-reset link."""
+    user_id, email = await user_from_link(access_token, settings)
     response = await _auth_request(settings, "PUT", f"/admin/users/{user_id}", json={"password": password})
     if response.status_code >= 400:
         log.warning("Password reset could not be saved: %s %s", response.status_code, response.text[:300])

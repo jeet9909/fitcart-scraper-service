@@ -2757,3 +2757,59 @@ def test_reset_password_with_an_email_code(monkeypatch) -> None:
     assert guesses == [400] * 8 + [429]
     assert reset.status_code == 200 and accounts["a@example.com"]["password"] == "brand new pw"
     assert login.status_code == 200
+
+
+def test_sign_up_with_an_email_link(monkeypatch) -> None:
+    import json as _json
+    import httpx as _httpx
+    from app import email_auth
+
+    calls: list = []
+    users = {"good-token-0123456789": {"id": AUTH_USER_ID, "email": "new@example.com", "email_confirmed_at": "2026-10-14T10:00:00Z"},
+             "early-token-0123456789": {"id": AUTH_USER_ID, "email": "new@example.com", "email_confirmed_at": None}}
+    passwords = {}
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        body = _json.loads(request.content or b"{}")
+        calls.append((request.method, request.url.path, dict(request.url.params), body, request.headers["authorization"]))
+        path = request.url.path
+        if path == "/auth/v1/signup":
+            return _httpx.Response(200, json={"id": AUTH_USER_ID, "email": body["email"], "identities": [{"id": "x"}]})
+        if path == "/auth/v1/user":
+            user = users.get(request.headers["authorization"].removeprefix("Bearer "))
+            return _httpx.Response(200, json=user) if user else _httpx.Response(401, json={"msg": "invalid JWT"})
+        if path == "/auth/v1/token":
+            return _httpx.Response(400, json={"error_code": "email_not_confirmed", "msg": "Email not confirmed"})
+        if path == "/auth/v1/resend":
+            return _httpx.Response(200, json={})
+        if path.startswith("/auth/v1/admin/users/") and request.method == "PUT":
+            passwords[path.rsplit("/", 1)[1]] = body["password"]
+            return _httpx.Response(200, json={"id": AUTH_USER_ID, "email": "new@example.com"})
+        return _httpx.Response(404)
+
+    _mock_supabase_auth(monkeypatch, handler)
+    email_auth._failed_logins.clear()
+    settings = AUTH_SETTINGS.model_copy(update={"email_verification_enabled": True})
+    app.dependency_overrides[get_runtime_settings] = lambda: settings
+    try:
+        with TestClient(app) as client:
+            started = client.post("/v1/auth/signup", json={"email": "new@example.com", "password": "correct horse", "redirect_to": "https://mydripcheck.com/?x=1#y"})
+            evil = client.post("/v1/auth/signup", json={"email": "new@example.com", "password": "correct horse", "redirect_to": "https://evil.example/"})
+            checking = client.post("/v1/auth/login", json={"email": "new@example.com", "password": "correct horse", "resend": False})
+            early = client.post("/v1/auth/confirmed", json={"access_token": "early-token-0123456789"})
+            bad = client.post("/v1/auth/confirmed", json={"access_token": "expired-token-0123456789"})
+            confirmed = client.post("/v1/auth/confirmed", json={"access_token": "good-token-0123456789"})
+            reset = client.post("/v1/auth/password/update", json={"access_token": "good-token-0123456789", "password": "brand new pw"})
+    finally:
+        app.dependency_overrides.clear()
+    assert started.status_code == 202 and evil.status_code == 202
+    signups = [c for c in calls if c[1] == "/auth/v1/signup"]
+    assert signups[0][2] == {"redirect_to": "https://mydripcheck.com/"}  # back to the site, query and fragment dropped
+    assert signups[1][2] == {}  # other sites are never used as the link target
+    assert checking.status_code == 403 and checking.json()["detail"]["code"] == "email_not_verified"
+    assert not any(c[1] == "/auth/v1/resend" for c in calls)  # the waiting page checks without sending more emails
+    assert early.status_code == 403 and bad.status_code == 401 and bad.json()["detail"]["code"] == "link_expired"
+    assert confirmed.status_code == 200 and confirmed.json()["email"] == "new@example.com"
+    user_call = next(c for c in calls if c[1] == "/auth/v1/user")
+    assert user_call[4] == "Bearer early-token-0123456789"  # the link's own token, not the service key
+    assert reset.status_code == 200 and passwords[AUTH_USER_ID] == "brand new pw"

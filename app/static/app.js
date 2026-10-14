@@ -529,6 +529,10 @@ function poseHtml(prefix){
   </div></fieldset>`;
 }
 function consentHtml(){ return `<label class="consent"><input type="checkbox" data-act="consent" ${state.consent ? 'checked' : ''}>I have permission to use this photo. It is used only to create my try-on.</label>`; }
+// Signed out, the same button leads to Create account; the look and photo are kept for after sign-up.
+function generateButton(){
+  return `<button class="btn brand wide" data-act="generate" ${canGenerate() ? '' : 'disabled'}>${state.account ? `${icon('camera')} Generate my look` : `${icon('user')} Create free account to try on`}</button>`;
+}
 function canGenerate(){ return state.look.length > 0 && Boolean(state.photo) && state.consent; }
 function personHtml(){
   if (!state.photo) return `<button class="photo-drop" data-act="pick-photo" data-drop="photo">
@@ -552,7 +556,7 @@ function tryPanel(){
     ${poseHtml('side')}
     ${state.look.length ? `<div class="panel-total"><span class="small muted num">${state.look.length} ${state.look.length === 1 ? 'piece' : 'pieces'} · ${stores.size} ${stores.size === 1 ? 'store' : 'stores'}</span><span class="total">${inr(lookTotal())}</span></div>` : ''}
     ${consentHtml()}
-    <button class="btn brand wide" data-act="generate" ${canGenerate() ? '' : 'disabled'}>${icon('camera')} Generate my look</button>
+    ${generateButton()}
     <p class="tiny muted gen-hint">${generateHint()}</p>
   </div>`;
 }
@@ -1132,7 +1136,7 @@ function renderSignin(){
    verification on (EMAIL_VERIFICATION_ENABLED on the API), a new account gets a code by email before it can
    sign in; with it off, sign-up signs in straight away. The page stays inside the app, so a look in progress,
    the uploaded photo and the action that asked for sign-in carry on afterwards. */
-const AUTH_SCREENS = ['signin', 'signup', 'verify', 'forgot', 'reset'];
+const AUTH_SCREENS = ['signin', 'signup', 'verify', 'forgot', 'newpass'];
 const AUTH_REASON = {
   free: 'Sign in to get your free looks every month. Your looks and wardrobe are saved to your account.',
   wardrobe: 'Sign in to save clothes. Your wardrobe is kept in your account, so it follows you to every device.',
@@ -1166,11 +1170,6 @@ function authField(id, label, type, placeholder, iconName, extra = ''){
 }
 function authSubmit(id, label){
   return `<button class="submit" type="submit" id="${id}" data-label="${label}"><span class="button-label">${label}</span>${aIcon('arrow', 'icon arrow')}<span class="spinner" hidden></span></button>`;
-}
-function authCodeField(id){
-  return `<div class="field"><div class="label-row"><label for="${id}">Code from the email</label></div>
-    <div class="control code-control" id="${id}Wrap"><input id="${id}" class="code-input" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="10" placeholder="••••••" required aria-describedby="${id}Error"></div>
-    <div class="field-error" id="${id}Error" aria-live="polite"></div></div>`;
 }
 function authMarkup(){
   return `<div class="auth-shell">
@@ -1239,18 +1238,15 @@ function authMarkup(){
         </section>
 
         <section class="form-card" data-screen="verify" aria-labelledby="authVerifyTitle" hidden>
-          <button type="button" class="back-link" data-auth="go" data-screen="signup">${aIcon('back')}Use a different email</button>
           <div class="success-icon">${aIcon('inbox')}</div>
-          <div class="form-overline">Confirm your email</div>
-          <h2 id="authVerifyTitle">Check your inbox<span class="dot-accent">.</span></h2>
-          <p class="form-desc">We sent a code to <strong id="authVerifyEmail"></strong>. Enter it below to finish creating your account.</p>
+          <div class="form-overline">One last step</div>
+          <h2 id="authVerifyTitle">Please verify your email first<span class="dot-accent">.</span></h2>
+          <p class="form-desc">We've sent a confirmation link to <strong id="authVerifyEmail"></strong>. Open the email and tap the link to activate your account.</p>
+          <div class="wait-row" id="authWaitRow"><span class="spinner dark" aria-hidden="true"></span><span>This page continues by itself once your email is verified. Your look and photo are saved.</span></div>
           <div class="form-alert" id="authVerifyAlert" role="alert" hidden></div>
-          <form data-form="verify" novalidate>
-            ${authCodeField('authVerifyCode')}
-            ${authSubmit('authVerifySubmit', 'Confirm and continue')}
-          </form>
-          <p class="under-cta">Didn't get it? Check spam, or <button type="button" class="link-btn" data-auth="resend" id="authResend">send a new code</button></p>
-          <p class="under-cta small-note">Opened a link in the email instead? <button type="button" class="link-btn" data-auth="go" data-screen="signin">Sign in</button></p>
+          <button type="button" class="submit" id="authVerifyCheck" data-auth="check" data-label="I've verified my email"><span class="button-label">I've verified my email</span>${aIcon('arrow', 'icon arrow')}<span class="spinner" hidden></span></button>
+          <p class="under-cta">Didn't get it? Check spam, or <button type="button" class="link-btn" data-auth="resend" id="authResend">send the email again</button></p>
+          <p class="under-cta small-note">Wrong email? <button type="button" class="link-btn" data-auth="go" data-screen="signup">Create the account again</button> · <button type="button" class="link-btn" data-auth="go" data-screen="signin">Sign in</button></p>
         </section>
 
         <section class="form-card" data-screen="forgot" aria-labelledby="authForgotTitle" hidden>
@@ -1258,29 +1254,26 @@ function authMarkup(){
           <div class="success-icon">${aIcon('key')}</div>
           <div class="form-overline">Account recovery</div>
           <h2 id="authForgotTitle">Reset your password<span class="dot-accent">.</span></h2>
-          <p class="form-desc">Enter your account email and we'll send you a code to set a new password.</p>
+          <p class="form-desc">Enter your account email and we'll send you a link to set a new password.</p>
           <div class="form-alert" id="authForgotAlert" role="alert" hidden></div>
           <form data-form="forgot" novalidate>
             ${authField('authForgotEmail', 'Email address', 'email', 'you@example.com', 'mail')}
-            ${authSubmit('authForgotSubmit', 'Email me a code')}
+            ${authSubmit('authForgotSubmit', 'Email me a reset link')}
           </form>
           <p class="under-cta">Remembered it? <button type="button" class="link-btn" data-auth="go" data-screen="signin">Back to sign in</button></p>
         </section>
 
-        <section class="form-card" data-screen="reset" aria-labelledby="authResetTitle" hidden>
-          <button type="button" class="back-link" data-auth="go" data-screen="forgot">${aIcon('back')}Use a different email</button>
+        <section class="form-card" data-screen="newpass" aria-labelledby="authNewpassTitle" hidden>
           <div class="success-icon">${aIcon('lockCheck')}</div>
           <div class="form-overline">Account recovery</div>
-          <h2 id="authResetTitle">Choose a new password<span class="dot-accent">.</span></h2>
-          <p class="form-desc">If <strong id="authResetEmail"></strong> has an account, we've emailed it a code. Enter the code and your new password.</p>
-          <div class="form-alert" id="authResetAlert" role="alert" hidden></div>
-          <form data-form="reset" novalidate>
-            ${authCodeField('authResetCode')}
-            ${authField('authResetPassword', 'New password', 'password', 'At least 8 characters', 'lock')}
-            ${authField('authResetConfirm', 'Confirm new password', 'password', 'Enter password again', 'lockCheck')}
-            ${authSubmit('authResetSubmit', 'Save password and sign in')}
+          <h2 id="authNewpassTitle">Choose a new password<span class="dot-accent">.</span></h2>
+          <p class="form-desc">Set a new password for <strong id="authNewpassEmail">your account</strong>. You'll be signed in straight after.</p>
+          <div class="form-alert" id="authNewpassAlert" role="alert" hidden></div>
+          <form data-form="newpass" novalidate>
+            ${authField('authNewPassword', 'New password', 'password', 'At least 8 characters', 'lock')}
+            ${authField('authNewConfirm', 'Confirm new password', 'password', 'Enter password again', 'lockCheck')}
+            ${authSubmit('authNewpassSubmit', 'Save password and sign in')}
           </form>
-          <p class="under-cta">No email? Check spam, or <button type="button" class="link-btn" data-auth="go" data-screen="forgot">send it again</button></p>
         </section>
       </div>
       <footer class="right-footer">
@@ -1308,7 +1301,8 @@ function openAuth(screen = 'signin', reason = null){
   if (!box.open){ box.showModal(); document.body.classList.add('auth-open'); }
   syncAuthTheme();
 }
-function closeAuth(){
+function closeAuth(force = false){
+  if (!force && state.auth?.screen === 'verify') return;  // verify your email first
   const box = authBox();
   if (box?.open) box.close();
   document.body.classList.remove('auth-open');
@@ -1323,14 +1317,17 @@ function showAuth(screen){
   prompt.textContent = screen === 'signup' ? 'Already have an account?' : 'New to MyDripCheck?';
   sw.textContent = screen === 'signup' ? 'Sign in' : 'Create an account';
   sw.dataset.screen = screen === 'signup' ? 'signin' : 'signup';
-  ['authSigninAlert', 'authSignupAlert', 'authVerifyAlert', 'authForgotAlert', 'authResetAlert'].forEach(hideAuthAlert);
+  ['authSigninAlert', 'authSignupAlert', 'authVerifyAlert', 'authForgotAlert', 'authNewpassAlert'].forEach(hideAuthAlert);
   const email = state.auth?.email || '';
   if (email){ ['authLoginEmail', 'authSignupEmail', 'authForgotEmail'].forEach(id => { if (!af(id).value) af(id).value = email; }); }
   af('authVerifyEmail').textContent = email;
-  af('authResetEmail').textContent = email;
+  if (email) af('authNewpassEmail').textContent = email;
+  // "Please verify your email first" cannot be closed: the only ways on are verifying, or another account.
+  box.querySelectorAll('[data-auth="close"]').forEach(btn => { btn.hidden = screen === 'verify'; });
+  if (screen !== 'verify') stopVerifyWatch();
   state.auth = {...state.auth, screen};
   box.scrollTo?.(0, 0);
-  const first = {signin: email ? 'authLoginPassword' : 'authLoginEmail', signup: 'authSignupEmail', verify: 'authVerifyCode', forgot: 'authForgotEmail', reset: 'authResetCode'}[screen];
+  const first = {signin: email ? 'authLoginPassword' : 'authLoginEmail', signup: 'authSignupEmail', verify: 'authVerifyCheck', forgot: 'authForgotEmail', newpass: 'authNewPassword'}[screen];
   setTimeout(() => af(first)?.focus({preventScroll:true}), 60);
 }
 function syncAuthTheme(){
@@ -1360,30 +1357,134 @@ function checkNewPassword(id, confirmId){
   if (confirmId && af(confirmId).value !== p){ authFieldError(confirmId, 'Passwords do not match.'); return null; }
   return p;
 }
-function checkCode(id){ const v = af(id).value.replace(/\s/g, ''); if (!/^\d{6,10}$/.test(v)){ authFieldError(id, 'Enter the code from the email (numbers only).'); return null; } return v; }
 function strengthOf(p){ if (!p) return 0; let s = 0; if (p.length >= 8) s++; if (p.length >= 12) s++; if (/[A-Z]/.test(p) && /[a-z]/.test(p)) s++; if (/\d/.test(p) && /[^\w\s]/.test(p)) s++; return Math.max(1, s); }
 function startResendTimer(seconds = 60){
   clearInterval(authResendTimer);
   const btn = af('authResend'); let left = seconds;
-  const tick = () => { btn.disabled = left > 0; btn.textContent = left > 0 ? `send a new code (${left} s)` : 'send a new code'; left -= 1; if (left < -1) clearInterval(authResendTimer); };
+  const tick = () => { btn.disabled = left > 0; btn.textContent = left > 0 ? `send the email again (${left} s)` : 'send the email again'; left -= 1; if (left < -1) clearInterval(authResendTimer); };
   tick(); authResendTimer = setInterval(tick, 1000);
 }
-function toVerify(email, message){
+/* After sign-up the account needs its email confirmed. This tab waits on "Please verify your email first",
+   checking every few seconds (and whenever the tab comes back into view) with the password typed here, kept
+   in memory only; once the link in the email is opened it signs in and carries on with everything as it was.
+   The look, photo and pose are also saved in the browser, so opening the link in another tab or after a
+   reload loses nothing either. */
+const VERIFY_KEY = 'mdc-verify-pending';
+const VERIFY_CHECK_MS = 12000;
+let verifyWatch = null;
+function toVerify(email, password, message){
+  if (!authBox().open) openAuth('verify');
   state.auth = {...state.auth, email};
-  af('authVerifyCode').value = ''; clearAuthError('authVerifyCode');
+  if (password) authPendingLogin = {email, password};
+  persist(VERIFY_KEY, {email, at: Date.now()});
+  saveDraft();
   showAuth('verify');
+  af('authWaitRow').hidden = !authPendingLogin;
   if (message) showAuthAlert('authVerifyAlert', message, true);
   startResendTimer();
+  startVerifyWatch();
 }
+let authPendingLogin = null;
+function startVerifyWatch(){
+  stopVerifyWatch();
+  if (!authPendingLogin) return;
+  verifyWatch = setInterval(() => checkVerified(false), VERIFY_CHECK_MS);
+  document.addEventListener('visibilitychange', onVerifyVisible);
+}
+function stopVerifyWatch(){ clearInterval(verifyWatch); verifyWatch = null; document.removeEventListener('visibilitychange', onVerifyVisible); }
+function onVerifyVisible(){ if (!document.hidden) checkVerified(false); }
+async function checkVerified(fromButton){
+  if (!authPendingLogin){ if (fromButton) showAuth('signin'); return; }
+  if (fromButton) authBusy('authVerifyCheck', true, 'Checking…');
+  try {
+    const payload = await authPost('/v1/auth/login', {...authPendingLogin, resend:false});
+    verifiedAndBack(payload);
+  } catch (err){
+    if (fromButton) showAuthAlert('authVerifyAlert', err.code === 'email_not_verified' ? 'Not verified yet. Open the link in the email we sent, then come back here.' : err.message);
+  } finally { if (fromButton) authBusy('authVerifyCheck', false); }
+}
+function verifiedAndBack(payload){
+  stopVerifyWatch(); authPendingLogin = null;
+  try { localStorage.removeItem(VERIFY_KEY); } catch {}
+  state.pending = null;  // land on the try-on page instead of spending a look straight away
+  authDone(payload);
+  restoreDraft().then(() => { go('tryon'); toast('Email verified. Welcome to MyDripCheck! Your look is just as you left it.'); });
+}
+
+/* The look in progress, kept in IndexedDB (photos are too big for localStorage) while the email is verified. */
+const DRAFT_DB = 'mdc-draft', DRAFT_STORE = 'draft';
+function draftDb(){
+  return new Promise((resolve, reject) => {
+    const open = indexedDB.open(DRAFT_DB, 1);
+    open.onupgradeneeded = () => open.result.createObjectStore(DRAFT_STORE);
+    open.onsuccess = () => resolve(open.result); open.onerror = () => reject(open.error);
+  });
+}
+async function saveDraft(){
+  try {
+    const db = await draftDb();
+    db.transaction(DRAFT_STORE, 'readwrite').objectStore(DRAFT_STORE).put({photo: state.photo, look: state.look, pose: state.pose, consent: state.consent, at: Date.now()}, 'look');
+  } catch {}
+}
+async function restoreDraft(){
+  try {
+    const db = await draftDb();
+    const draft = await new Promise(resolve => { const req = db.transaction(DRAFT_STORE).objectStore(DRAFT_STORE).get('look'); req.onsuccess = () => resolve(req.result); req.onerror = () => resolve(null); });
+    if (!draft || Date.now() - draft.at > 7 * 86400000) return;
+    if (!state.photo && draft.photo) state.photo = draft.photo;
+    if (!state.look.length && draft.look?.length){ state.look = draft.look; saveLook(); }
+    if (draft.pose) state.pose = draft.pose;
+    if (draft.consent) state.consent = true;
+    db.transaction(DRAFT_STORE, 'readwrite').objectStore(DRAFT_STORE).delete('look');
+  } catch {}
+}
+
+/* Email links from Supabase come back to the site with the result in the #fragment:
+   #access_token=…&type=signup (email confirmed), #access_token=…&type=recovery (set a new password),
+   or #error=…&error_code=otp_expired (link expired or already used). */
+let recoveryToken = null;
+async function handleAuthLink(){
+  const hash = location.hash.slice(1);
+  if (!/(^|&)(access_token|error_code|error)=/.test(hash)) return false;
+  const params = new URLSearchParams(hash);
+  history.replaceState(null, '', location.pathname + location.search);
+  if (params.get('error') || params.get('error_code')){
+    openAuth('signin');
+    showAuthAlert('authSigninAlert', 'That email link has expired or was already used. Sign in, and we will send you a fresh one if your email still needs verifying.');
+    return true;
+  }
+  const token = params.get('access_token'), type = params.get('type');
+  if (type === 'recovery'){
+    recoveryToken = token;
+    openAuth('newpass');
+    return true;
+  }
+  try {
+    const payload = await authPost('/v1/auth/confirmed', {access_token: token});
+    try { localStorage.removeItem(VERIFY_KEY); } catch {}
+    startAccountSession(payload);
+    await restoreDraft();
+    state.pending = null;
+    signedIn(payload);
+    go('tryon');
+    toast('Email verified. Welcome to MyDripCheck! Your look is just as you left it.');
+  } catch (err){
+    openAuth('signin');
+    showAuthAlert('authSigninAlert', err.message);
+  }
+  return true;
+}
+const siteHome = () => location.origin + location.pathname;
+
 async function authPost(path, body){
   return api(path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}, false);
 }
 function authDone(payload){
-  closeAuth();
+  closeAuth(true);
   signedIn(payload);
 }
 function bindAuth(box){
-  box.addEventListener('cancel', e => { e.preventDefault(); closeAuth(); });
+  box.addEventListener('cancel', e => { e.preventDefault(); closeAuth(); });  // Esc; ignored while verifying
   box.addEventListener('input', e => {
     if (e.target.id) clearAuthError(e.target.id);
     if (e.target.id === 'authSignupPassword'){
@@ -1392,7 +1493,6 @@ function bindAuth(box){
       af('authStrengthBadge').textContent = ['Password strength', 'Needs work', 'Fair', 'Good', 'Strong'][level];
       af('authStrengthText').textContent = level < 3 ? 'Try 12+ characters, with a mix of letters, numbers and symbols' : 'Looking good. Keep this password private.';
     }
-    if (e.target.classList.contains('code-input')) e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10);
     if (e.target.id === 'authTerms') af('authTermsError').textContent = '';
   });
   box.addEventListener('click', async e => {
@@ -1411,6 +1511,7 @@ function bindAuth(box){
       t.setAttribute('aria-label', show ? 'Hide password' : 'Show password'); input.focus({preventScroll:true});
     }
     else if (what === 'theme') setTimeout(syncAuthTheme);
+    else if (what === 'check') checkVerified(true);
     else if (what === 'look'){
       const after = t.dataset.look === 'after';
       af('authLook').src = after ? 'static/img/after.jpg' : 'static/img/before.jpg';
@@ -1419,7 +1520,7 @@ function bindAuth(box){
     }
     else if (what === 'resend'){
       hideAuthAlert('authVerifyAlert');
-      try { await authPost('/v1/auth/resend', {email: state.auth.email}); showAuthAlert('authVerifyAlert', 'A new code is on its way. It can take a minute to arrive.', true); startResendTimer(); }
+      try { await authPost('/v1/auth/resend', {email: state.auth.email, redirect_to: siteHome()}); showAuthAlert('authVerifyAlert', 'A new email is on its way. It can take a minute to arrive.', true); startResendTimer(); }
       catch (err){ showAuthAlert('authVerifyAlert', err.message); }
     }
   });
@@ -1432,9 +1533,9 @@ function bindAuth(box){
       if (!password) authFieldError('authLoginPassword', 'Enter your password.');
       if (!email || !password) return (email ? af('authLoginPassword') : af('authLoginEmail')).focus();
       authBusy('authSigninSubmit', true, 'Signing you in…');
-      try { authDone(await authPost('/v1/auth/login', {email, password})); }
+      try { authDone(await authPost('/v1/auth/login', {email, password, redirect_to: siteHome()})); }
       catch (err){
-        if (err.code === 'email_not_verified') return toVerify(email, 'Confirm your email to finish signing in. We\'ve sent a new code.');
+        if (err.code === 'email_not_verified') return toVerify(email, password, 'Your email is not verified yet. We\'ve sent you a new link.');
         showAuthAlert('authSigninAlert', err.status === 429 ? 'Too many sign-in attempts. Please wait and try again.' : err.message);
       } finally { authBusy('authSigninSubmit', false); }
     }
@@ -1446,42 +1547,33 @@ function bindAuth(box){
       if (!email || !password || !terms) return (!email ? af('authSignupEmail') : !password ? (af('authSignupPassword').getAttribute('aria-invalid') === 'true' ? af('authSignupPassword') : af('authSignupConfirm')) : af('authTerms')).focus();
       authBusy('authSignupSubmit', true, 'Creating your account…');
       try {
-        const payload = await authPost('/v1/auth/signup', {email, password});
-        if (payload.verification_required) toVerify(email, null);
+        const payload = await authPost('/v1/auth/signup', {email, password, redirect_to: siteHome()});
+        if (payload.verification_required) toVerify(email, password, null);
         else authDone(payload);
       } catch (err){
         if (err.status === 409){ state.auth = {...state.auth, email}; af('authLoginEmail').value = email; showAuth('signin'); showAuthAlert('authSigninAlert', 'An account with this email already exists. Sign in instead.'); }
         else showAuthAlert('authSignupAlert', err.message);
       } finally { authBusy('authSignupSubmit', false); }
     }
-    if (form === 'verify'){
-      hideAuthAlert('authVerifyAlert');
-      const code = checkCode('authVerifyCode'); if (!code) return af('authVerifyCode').focus();
-      authBusy('authVerifySubmit', true, 'Confirming…');
-      try { authDone(await authPost('/v1/auth/verify', {email: state.auth.email, code})); toast('Email confirmed. Welcome to MyDripCheck!'); }
-      catch (err){ showAuthAlert('authVerifyAlert', err.message); af('authVerifyCode').select(); }
-      finally { authBusy('authVerifySubmit', false); }
-    }
     if (form === 'forgot'){
       hideAuthAlert('authForgotAlert');
       const email = checkAuthEmail('authForgotEmail'); if (!email) return af('authForgotEmail').focus();
       authBusy('authForgotSubmit', true, 'Sending…');
       try {
-        await authPost('/v1/auth/password/forgot', {email});
+        await authPost('/v1/auth/password/forgot', {email, redirect_to: siteHome()});
         state.auth = {...state.auth, email};
-        ['authResetCode', 'authResetPassword', 'authResetConfirm'].forEach(id => { af(id).value = ''; clearAuthError(id); });
-        showAuth('reset');
+        showAuthAlert('authForgotAlert', `If ${email} has an account, a reset link is on its way. Open it to choose a new password.`, true);
       } catch (err){ showAuthAlert('authForgotAlert', err.message); }
       finally { authBusy('authForgotSubmit', false); }
     }
-    if (form === 'reset'){
-      hideAuthAlert('authResetAlert');
-      const code = checkCode('authResetCode'), password = checkNewPassword('authResetPassword', 'authResetConfirm');
-      if (!code || !password) return (!code ? af('authResetCode') : af('authResetPassword')).focus();
-      authBusy('authResetSubmit', true, 'Saving…');
-      try { authDone(await authPost('/v1/auth/password/reset', {email: state.auth.email, code, password})); toast('Password changed. You\'re signed in.'); }
-      catch (err){ showAuthAlert('authResetAlert', err.message); }
-      finally { authBusy('authResetSubmit', false); }
+    if (form === 'newpass'){
+      hideAuthAlert('authNewpassAlert');
+      const password = checkNewPassword('authNewPassword', 'authNewConfirm'); if (!password) return af('authNewPassword').focus();
+      if (!recoveryToken){ showAuth('forgot'); return showAuthAlert('authForgotAlert', 'Open the newest reset link from your email to set a new password.'); }
+      authBusy('authNewpassSubmit', true, 'Saving…');
+      try { const payload = await authPost('/v1/auth/password/update', {access_token: recoveryToken, password}); recoveryToken = null; authDone(payload); toast('Password changed. You\'re signed in.'); }
+      catch (err){ showAuthAlert('authNewpassAlert', err.message); if (err.code === 'link_expired'){ recoveryToken = null; } }
+      finally { authBusy('authNewpassSubmit', false); }
     }
   });
 }
@@ -1845,7 +1937,7 @@ function openPhoto(){
     <div class="tips"><div class="tip">${icon('face')}Face clearly visible</div><div class="tip">${icon('body')}Standing, head to toe is best</div><div class="tip">${icon('sun')}Good light</div></div>
     ${poseHtml('sheet')}
     ${consentHtml()}
-    <button class="btn brand wide" data-act="generate" ${canGenerate() ? '' : 'disabled'}>${icon('camera')} Generate my look</button>
+    ${generateButton()}
     <p class="tiny muted gen-hint" style="text-align:center">${state.photo && state.consent ? '' : generateHint()}</p>
     <div style="display:flex;justify-content:center">${planChip()}</div>
     <p class="tiny muted" style="display:flex;gap:6px;align-items:center">${icon('lock','s')} Saved only to your private gallery.</p>
@@ -2108,6 +2200,10 @@ document.querySelectorAll('dialog.sheet').forEach(d => {
   fetch(apiUrl('/health'), {cache:'no-store'}).catch(() => {});
   render();
   if (location.hash === '#help') setTimeout(openHelp, 300);
+  handleAuthLink().then(handled => {
+    const waiting = readStore(VERIFY_KEY, null);
+    if (!handled && waiting?.email && !state.account && Date.now() - waiting.at < 7 * 86400000){ state.auth = {email: waiting.email}; restoreDraft().then(() => { render(); toVerify(waiting.email, null, null); }); }
+  });
   checkSite();
   fetch(apiUrl('/v1/billing/config')).then(r => r.ok ? r.json() : null).then(cfg => { state.billingCfg = cfg; if (state.view === 'pricing') render(); }).catch(() => {});
   session().catch(() => {}).then(() => { refreshAccount(); if (!state.balance) loadBalance(); if (state.account) loadGallery(); syncPendingOrder(); });

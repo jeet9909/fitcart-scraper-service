@@ -889,6 +889,9 @@ dialog.auth::backdrop{background:#151110}
 .auth .code-control{padding:0 6px}
 .auth .auth-shell>*{min-width:0}
 @media (max-width:900px){.auth .auth-shell{grid-template-columns:minmax(0,1fr)}}
+.auth .wait-row{display:flex;align-items:center;gap:12px;padding:13px 15px;border-radius:8px;background:var(--surface-2);color:var(--ink-2);font-size:12.5px;line-height:1.5;margin:-6px 0 18px}
+.auth .spinner.dark{flex-shrink:0;border-color:color-mix(in srgb,var(--accent) 25%,transparent);border-top-color:var(--accent)}
+.auth [data-screen="verify"] .submit{margin-top:4px}
 .auth .code-input{width:100%;text-align:center;font-size:26px!important;font-weight:700!important;letter-spacing:.45em!important;font-variant-numeric:tabular-nums;padding-left:.45em!important}
 .auth .code-input::placeholder{letter-spacing:.35em}
 .auth .form-alert.ok{background:color-mix(in srgb,var(--ok) 10%,var(--surface));border-color:color-mix(in srgb,var(--ok) 28%,transparent);color:var(--ok)}

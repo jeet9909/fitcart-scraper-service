@@ -113,7 +113,10 @@ def _detail_of(body: bytes) -> tuple[str | None, str | None]:
     except (ValueError, AttributeError):
         return (body[:300].decode("utf-8", "replace") or None), None
     if isinstance(detail, dict):
-        return detail.get("message") or str(detail)[:300], detail.get("code")
+        message = detail.get("message") or str(detail)[:300]
+        if detail.get("reason"):  # the cause behind a friendly message, for the admin only
+            message = f"{message} — {detail['reason']}"
+        return message, detail.get("code")
     if isinstance(detail, list):
         return str(detail)[:300], None
     return (str(detail) if detail else None), None

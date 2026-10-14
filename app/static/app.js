@@ -1406,9 +1406,10 @@ async function checkVerified(fromButton){
 function verifiedAndBack(payload){
   stopVerifyWatch(); authPendingLogin = null;
   try { localStorage.removeItem(VERIFY_KEY); } catch {}
+  const tryon = Boolean(state.pending?.generate);
   state.pending = null;  // land on the try-on page instead of spending a look straight away
   authDone(payload);
-  restoreDraft().then(() => { go('tryon'); toast('Email verified. Welcome to MyDripCheck! Your look is just as you left it.'); });
+  restoreDraft().then(draft => landAfterVerify(tryon || draft?.tryon));
 }
 
 /* The look in progress, kept in IndexedDB (photos are too big for localStorage) while the email is verified. */
@@ -1423,20 +1424,30 @@ function draftDb(){
 async function saveDraft(){
   try {
     const db = await draftDb();
-    db.transaction(DRAFT_STORE, 'readwrite').objectStore(DRAFT_STORE).put({photo: state.photo, look: state.look, pose: state.pose, consent: state.consent, at: Date.now()}, 'look');
+    // tryon: sign-up was asked for by the try-on button, so the user goes back to the try-on page afterwards.
+    db.transaction(DRAFT_STORE, 'readwrite').objectStore(DRAFT_STORE).put({photo: state.photo, look: state.look, pose: state.pose, consent: state.consent,
+      tryon: Boolean(state.pending?.generate), at: Date.now()}, 'look');
   } catch {}
 }
 async function restoreDraft(){
   try {
     const db = await draftDb();
     const draft = await new Promise(resolve => { const req = db.transaction(DRAFT_STORE).objectStore(DRAFT_STORE).get('look'); req.onsuccess = () => resolve(req.result); req.onerror = () => resolve(null); });
-    if (!draft || Date.now() - draft.at > 7 * 86400000) return;
-    if (!state.photo && draft.photo) state.photo = draft.photo;
-    if (!state.look.length && draft.look?.length){ state.look = draft.look; saveLook(); }
-    if (draft.pose) state.pose = draft.pose;
-    if (draft.consent) state.consent = true;
+    if (!draft || Date.now() - draft.at > 7 * 86400000) return null;
+    // The draft is exactly what the user had when they signed up: it replaces any older look this browser kept.
+    state.look = Array.isArray(draft.look) ? draft.look : [];
+    saveLook();
+    state.photo = draft.photo || null;
+    state.pose = draft.pose || 'standard';
+    state.consent = Boolean(draft.consent);
     db.transaction(DRAFT_STORE, 'readwrite').objectStore(DRAFT_STORE).delete('look');
-  } catch {}
+    return draft;
+  } catch { return null; }
+}
+// After the email is verified: back to the try-on only when the try-on button asked for the account.
+function landAfterVerify(tryon){
+  if (tryon && state.look.length){ go('tryon'); toast('Email verified. Welcome to MyDripCheck! Your look is just as you left it.'); }
+  else { go('home'); toast('Email verified. Welcome to MyDripCheck!'); }
 }
 
 /* Email links from Supabase come back to the site with the result in the #fragment:
@@ -1463,11 +1474,10 @@ async function handleAuthLink(){
     const payload = await authPost('/v1/auth/confirmed', {access_token: token});
     try { localStorage.removeItem(VERIFY_KEY); } catch {}
     startAccountSession(payload);
-    await restoreDraft();
+    const draft = await restoreDraft();
     state.pending = null;
     signedIn(payload);
-    go('tryon');
-    toast('Email verified. Welcome to MyDripCheck! Your look is just as you left it.');
+    landAfterVerify(draft?.tryon);
   } catch (err){
     openAuth('signin');
     showAuthAlert('authSigninAlert', err.message);
@@ -1475,6 +1485,8 @@ async function handleAuthLink(){
   return true;
 }
 const siteHome = () => location.origin + location.pathname;
+// The link can also land in a tab where the site is already open.
+window.addEventListener('hashchange', () => { handleAuthLink(); });
 
 async function authPost(path, body){
   return api(path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}, false);
@@ -2202,7 +2214,7 @@ document.querySelectorAll('dialog.sheet').forEach(d => {
   if (location.hash === '#help') setTimeout(openHelp, 300);
   handleAuthLink().then(handled => {
     const waiting = readStore(VERIFY_KEY, null);
-    if (!handled && waiting?.email && !state.account && Date.now() - waiting.at < 7 * 86400000){ state.auth = {email: waiting.email}; restoreDraft().then(() => { render(); toVerify(waiting.email, null, null); }); }
+    if (!handled && waiting?.email && !state.account && Date.now() - waiting.at < 7 * 86400000){ state.auth = {email: waiting.email}; restoreDraft().then(draft => { if (draft?.tryon) state.pending = {generate:true}; render(); toVerify(waiting.email, null, null); }); }
   });
   checkSite();
   fetch(apiUrl('/v1/billing/config')).then(r => r.ok ? r.json() : null).then(cfg => { state.billingCfg = cfg; if (state.view === 'pricing') render(); }).catch(() => {});

@@ -214,4 +214,6 @@ create index if not exists api_alerts_created_idx on public.api_alerts (created_
 alter table public.api_alerts enable row level security;
 
 grant select, insert, update, delete on public.activity_events, public.support_tickets, public.app_settings, public.admin_audit, public.api_alerts to service_role;
+-- New Supabase projects may not expose new tables to the API automatically; the app tables need it too.
+grant select, insert, update, delete on public.try_on_gallery, public.wardrobe_items, public.look_grants to service_role;
 notify pgrst, 'reload schema';

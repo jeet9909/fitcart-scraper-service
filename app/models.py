@@ -72,6 +72,21 @@ class PasswordSignInRequest(BaseModel):
     password: str = Field(max_length=200)
 
 
+class EmailCodeRequest(BaseModel):
+    email: str = Field(max_length=254)
+    code: str = Field(max_length=20)
+
+
+class EmailOnlyRequest(BaseModel):
+    email: str = Field(max_length=254)
+
+
+class PasswordResetRequest(BaseModel):
+    email: str = Field(max_length=254)
+    code: str = Field(max_length=20)
+    password: str = Field(max_length=200)
+
+
 class AccountResponse(BaseModel):
     user_id: str
     email: str | None = None

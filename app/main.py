@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import TypeAdapter, ValidationError
 
@@ -32,7 +32,10 @@ from app.models import (
     OrderSyncRequest,
     CheckoutRequest,
     CheckoutResponse,
+    EmailCodeRequest,
+    EmailOnlyRequest,
     EmailSessionResponse,
+    PasswordResetRequest,
     PasswordSignInRequest,
     GalleryItem,
     GalleryResponse,
@@ -277,11 +280,49 @@ async def create_session(settings: Settings = Depends(get_runtime_settings)) -> 
     return create_anonymous_session(settings)
 
 
-@app.post("/v1/auth/signup", response_model=EmailSessionResponse, status_code=201, tags=["sessions"])
-async def sign_up(body: PasswordSignInRequest, settings: Settings = Depends(get_runtime_settings)) -> EmailSessionResponse:
-    """Create an account with email and password (no confirmation email) and sign in."""
+@app.post("/v1/auth/signup", response_model=EmailSessionResponse, status_code=201, tags=["sessions"],
+          responses={202: {"description": "Account created; confirm the email with the code that was sent ({verification_required, email})"}})
+async def sign_up(body: PasswordSignInRequest, settings: Settings = Depends(get_runtime_settings)):
+    """Create an account with email and password. With EMAIL_VERIFICATION_ENABLED, Supabase emails a code and the
+    answer is 202 {verification_required: true}; the account signs in through /v1/auth/verify. Otherwise it signs in now."""
     email = email_auth.normalize_email(body.email)
-    user_id, email = await email_auth.sign_up(email, email_auth.check_password(body.password), settings)
+    password = email_auth.check_password(body.password)
+    if settings.email_verification_enabled:
+        await email_auth.start_sign_up(email, password, settings)
+        return JSONResponse(status_code=202, content={"verification_required": True, "email": email})
+    user_id, email = await email_auth.sign_up(email, password, settings)
+    return create_email_session(user_id, email, settings)
+
+
+@app.post("/v1/auth/verify", response_model=EmailSessionResponse, tags=["sessions"])
+async def verify_email(body: EmailCodeRequest, settings: Settings = Depends(get_runtime_settings)) -> EmailSessionResponse:
+    """Confirm a new account with the code from the email, and sign in."""
+    email_auth._verification_on(settings)
+    user_id, email = await email_auth.verify_sign_up(email_auth.normalize_email(body.email), body.code, settings)
+    return create_email_session(user_id, email, settings)
+
+
+@app.post("/v1/auth/resend", status_code=202, tags=["sessions"])
+async def resend_email_code(body: EmailOnlyRequest, settings: Settings = Depends(get_runtime_settings)) -> dict:
+    email_auth._verification_on(settings)
+    await email_auth.resend_code(email_auth.normalize_email(body.email), settings)
+    return {"sent": True}
+
+
+@app.post("/v1/auth/password/forgot", status_code=202, tags=["sessions"])
+async def forgot_password(body: EmailOnlyRequest, settings: Settings = Depends(get_runtime_settings)) -> dict:
+    """Email a password-reset code. The answer is the same whether or not the email has an account."""
+    email_auth._verification_on(settings)
+    await email_auth.send_reset_code(email_auth.normalize_email(body.email), settings)
+    return {"sent": True}
+
+
+@app.post("/v1/auth/password/reset", response_model=EmailSessionResponse, tags=["sessions"])
+async def reset_password(body: PasswordResetRequest, settings: Settings = Depends(get_runtime_settings)) -> EmailSessionResponse:
+    """Set a new password with the code from the reset email, and sign in."""
+    email_auth._verification_on(settings)
+    email = email_auth.normalize_email(body.email)
+    user_id, email = await email_auth.reset_password(email, body.code, email_auth.check_password(body.password), settings)
     return create_email_session(user_id, email, settings)
 
 

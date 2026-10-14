@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     allowed_product_hosts_csv: str = Field(default="", validation_alias="ALLOWED_PRODUCT_HOSTS")
     unlimited_emails_csv: str = Field(default="", validation_alias="UNLIMITED_EMAILS")
     maintenance_mode: bool = Field(default=False, validation_alias="MAINTENANCE_MODE", description="Emergency switch: pauses try-ons even when the database is unreachable")
+    email_verification_enabled: bool = Field(default=False, validation_alias="EMAIL_VERIFICATION_ENABLED",
+                                             description="New accounts confirm their email with a code Supabase sends, and passwords can be reset by "
+                                                         "email code. Needs custom SMTP and the code in Supabase's email templates")
     look_limits_enabled: bool = True
     free_looks_per_month: int = Field(default=2, ge=0, le=100)
     razorpay_key_id: str = ""

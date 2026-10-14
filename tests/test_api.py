@@ -2657,3 +2657,103 @@ def test_my_pose_drawing_is_put_back_into_the_photo_framing() -> None:
     assert identity.align_to_reference(same, same) is None
     blank = cv2.imencode(".png", np.full_like(photo, 128))[1].tobytes()
     assert identity.align_to_reference(same, blank) is None
+
+
+def _code_world(monkeypatch, accounts: dict, calls: list, code: str = "123456") -> None:
+    """A fake Supabase Auth with /signup (unconfirmed accounts), /verify, /resend, /recover and password sign-in."""
+    import json as _json
+    import httpx as _httpx
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        body = _json.loads(request.content or b"{}")
+        path = request.url.path
+        calls.append((request.method, path, body))
+        if path == "/auth/v1/signup":
+            account = accounts.get(body["email"])
+            if account and account["confirmed"]:
+                return _httpx.Response(200, json={"id": "fake", "email": body["email"], "identities": []})
+            accounts[body["email"]] = {"id": AUTH_USER_ID, "email": body["email"], "password": body["password"], "confirmed": False}
+            return _httpx.Response(200, json={"id": AUTH_USER_ID, "email": body["email"], "identities": [{"id": "x"}]})
+        if path == "/auth/v1/verify":
+            account = accounts.get(body["email"])
+            if not account or body["token"] != code or body["type"] not in ("email", "signup", "recovery"):
+                return _httpx.Response(403, json={"error_code": "otp_expired", "msg": "Token has expired or is invalid"})
+            account["confirmed"] = True
+            return _httpx.Response(200, json={"access_token": "x", "user": {"id": account["id"], "email": account["email"]}})
+        if path in ("/auth/v1/resend", "/auth/v1/recover"):
+            return _httpx.Response(200, json={})
+        if path.startswith("/auth/v1/admin/users/") and request.method == "PUT":
+            account = next(a for a in accounts.values() if a["id"] == path.rsplit("/", 1)[1])
+            account["password"] = body["password"]
+            return _httpx.Response(200, json={"id": account["id"], "email": account["email"]})
+        if path == "/auth/v1/token":
+            account = accounts.get(body["email"])
+            if not account or account["password"] != body["password"]:
+                return _httpx.Response(400, json={"error_code": "invalid_credentials", "msg": "Invalid login credentials"})
+            if not account["confirmed"]:
+                return _httpx.Response(400, json={"error_code": "email_not_confirmed", "msg": "Email not confirmed"})
+            return _httpx.Response(200, json={"access_token": "x", "user": {"id": account["id"], "email": account["email"]}})
+        return _httpx.Response(404)
+
+    _mock_supabase_auth(monkeypatch, handler)
+
+
+def test_sign_up_with_an_email_code(monkeypatch) -> None:
+    from app import email_auth
+
+    accounts, calls = {}, []
+    _code_world(monkeypatch, accounts, calls)
+    email_auth._failed_logins.clear(); email_auth._failed_codes.clear()
+    settings = AUTH_SETTINGS.model_copy(update={"email_verification_enabled": True})
+    app.dependency_overrides[get_runtime_settings] = lambda: settings
+    try:
+        with TestClient(app) as client:
+            started = client.post("/v1/auth/signup", json={"email": "New@Example.com", "password": "correct horse"})
+            early = client.post("/v1/auth/login", json={"email": "new@example.com", "password": "correct horse"})
+            wrong = client.post("/v1/auth/verify", json={"email": "new@example.com", "code": "000000"})
+            letters = client.post("/v1/auth/verify", json={"email": "new@example.com", "code": "abc"})
+            resent = client.post("/v1/auth/resend", json={"email": "new@example.com"})
+            verified = client.post("/v1/auth/verify", json={"email": "new@example.com", "code": " 123 456 "})
+            again = client.post("/v1/auth/signup", json={"email": "new@example.com", "password": "another one"})
+            login = client.post("/v1/auth/login", json={"email": "new@example.com", "password": "correct horse"})
+    finally:
+        app.dependency_overrides.clear()
+    assert started.status_code == 202 and started.json() == {"verification_required": True, "email": "new@example.com"}
+    assert not any(c[1] == "/auth/v1/admin/users" for c in calls)  # the admin shortcut (no email) is not used
+    assert early.status_code == 403 and early.json()["detail"]["code"] == "email_not_verified"
+    assert any(c[1] == "/auth/v1/resend" for c in calls[:6])  # signing in before confirming sends a fresh code
+    assert wrong.status_code == 400 and wrong.json()["detail"]["code"] == "invalid_code"
+    assert letters.status_code == 422
+    assert resent.status_code == 202
+    assert verified.status_code == 200 and verified.json()["email"] == "new@example.com"
+    assert again.status_code == 409
+    assert login.status_code == 200
+
+
+def test_reset_password_with_an_email_code(monkeypatch) -> None:
+    from app import email_auth
+
+    accounts = {"a@example.com": {"id": AUTH_USER_ID, "email": "a@example.com", "password": "old password", "confirmed": True}}
+    calls: list = []
+    _code_world(monkeypatch, accounts, calls)
+    email_auth._failed_logins.clear(); email_auth._failed_codes.clear()
+    on = AUTH_SETTINGS.model_copy(update={"email_verification_enabled": True})
+    app.dependency_overrides[get_runtime_settings] = lambda: AUTH_SETTINGS
+    try:
+        with TestClient(app) as client:
+            off = client.post("/v1/auth/password/forgot", json={"email": "a@example.com"})
+            app.dependency_overrides[get_runtime_settings] = lambda: on
+            sent = client.post("/v1/auth/password/forgot", json={"email": "a@example.com"})
+            unknown = client.post("/v1/auth/password/forgot", json={"email": "nobody@example.com"})
+            guesses = [client.post("/v1/auth/password/reset", json={"email": "a@example.com", "code": f"99999{i}", "password": "brand new pw"}).status_code for i in range(9)]
+            email_auth._failed_codes.clear()
+            reset = client.post("/v1/auth/password/reset", json={"email": "a@example.com", "code": "123456", "password": "brand new pw"})
+            login = client.post("/v1/auth/login", json={"email": "a@example.com", "password": "brand new pw"})
+    finally:
+        app.dependency_overrides.clear()
+        email_auth._failed_codes.clear()
+    assert off.status_code == 503 and off.json()["detail"]["code"] == "email_codes_off"
+    assert sent.status_code == 202 and unknown.status_code == 202  # never reveals who has an account
+    assert guesses == [400] * 8 + [429]
+    assert reset.status_code == 200 and accounts["a@example.com"]["password"] == "brand new pw"
+    assert login.status_code == 200

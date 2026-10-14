@@ -70,6 +70,8 @@ class EmailSessionResponse(AnonymousSessionResponse):
 class PasswordSignInRequest(BaseModel):
     email: str = Field(max_length=254)
     password: str = Field(max_length=200)
+    redirect_to: str | None = Field(default=None, max_length=500, description="Where the confirmation link in the email leads back to (a page of this site)")
+    resend: bool = Field(default=True, description="Sign-in only: email a new confirmation link if the email is not confirmed yet")
 
 
 class EmailCodeRequest(BaseModel):
@@ -79,6 +81,16 @@ class EmailCodeRequest(BaseModel):
 
 class EmailOnlyRequest(BaseModel):
     email: str = Field(max_length=254)
+    redirect_to: str | None = Field(default=None, max_length=500)
+
+
+class LinkTokenRequest(BaseModel):
+    access_token: str = Field(min_length=20, max_length=4000, description="The access_token Supabase puts in the link's #fragment")
+
+
+class LinkPasswordRequest(BaseModel):
+    access_token: str = Field(min_length=20, max_length=4000)
+    password: str = Field(max_length=200)
 
 
 class PasswordResetRequest(BaseModel):

@@ -2813,3 +2813,24 @@ def test_sign_up_with_an_email_link(monkeypatch) -> None:
     user_call = next(c for c in calls if c[1] == "/auth/v1/user")
     assert user_call[4] == "Bearer early-token-0123456789"  # the link's own token, not the service key
     assert reset.status_code == 200 and passwords[AUTH_USER_ID] == "brand new pw"
+
+
+def test_sign_up_when_supabase_cannot_send_the_email(monkeypatch) -> None:
+    import httpx as _httpx
+    from app import alerts
+
+    def handler(request: _httpx.Request) -> _httpx.Response:
+        return _httpx.Response(500, json={"code": 500, "error_code": "unexpected_failure", "msg": "Error sending confirmation email"})
+
+    _mock_supabase_auth(monkeypatch, handler)
+    alerts._recent.clear()
+    settings = AUTH_SETTINGS.model_copy(update={"email_verification_enabled": True})
+    app.dependency_overrides[get_runtime_settings] = lambda: settings
+    try:
+        with TestClient(app) as client:
+            response = client.post("/v1/auth/signup", json={"email": "new@example.com", "password": "correct horse"})
+    finally:
+        app.dependency_overrides.clear()
+    detail = response.json()["detail"]
+    assert response.status_code == 503 and detail["code"] == "email_send_failed"
+    assert "couldn't send the confirmation email" in detail["message"] and "SMTP" in detail["reason"]

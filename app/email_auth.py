@@ -185,9 +185,20 @@ def _check_code(email: str, code: str) -> str:
 
 
 def _email_limit(response: httpx.Response) -> HTTPException | None:
-    if response.status_code == 429 or "rate limit" in _error_text(response).lower() or _error_code(response) in ("over_email_send_rate_limit", "over_request_rate_limit"):
+    """Supabase could not send the email: too many emails, or its SMTP server refused (a setup problem)."""
+    text, code = _error_text(response), _error_code(response)
+    if response.status_code == 429 or "rate limit" in text.lower() or code in ("over_email_send_rate_limit", "over_request_rate_limit"):
         return HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                             detail={"code": "email_rate_limited", "message": "We've just sent you a code. Please wait a minute before asking for another."})
+                             detail={"code": "email_rate_limited", "message": "We've just sent you an email. Please wait a minute before asking for another."})
+    if "sending" in text.lower() and "email" in text.lower() or code == "email_address_not_authorized":
+        # Supabase's SMTP settings are wrong or the provider refused the message. The exact reason is only in
+        # Supabase's Auth logs; the admin console's Alerts page gets this note, the shopper a plain message.
+        log.error("Supabase could not send an email: %s %s", response.status_code, response.text[:300])
+        return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={
+            "code": "email_send_failed",
+            "message": "We couldn't send the confirmation email just now. Please try again in a few minutes.",
+            "reason": f"Supabase: {text or response.status_code} ({code or 'no code'}). Check SMTP settings and Supabase Logs → Auth.",
+        })
     return None
 
 

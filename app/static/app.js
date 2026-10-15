@@ -250,6 +250,7 @@ function render(enter = false){
   const lc = $('#lookCount'); if (lc){ lc.textContent = saved ?? 0; lc.hidden = saved == null; }
   const acct = $('#accountBtn');
   acct.classList.toggle('signed', Boolean(state.account));
+  syncPlanBadge();
   acct.setAttribute('aria-label', state.account ? `Account: ${state.account.email}` : 'Sign in');
   const views = {landing, pricing:pricingPage, home, builder, generating, result, wardrobe, looks};
   const view = $('#view');
@@ -330,7 +331,7 @@ function pricingHtml(){
     const prepaid = !state.billingCfg?.autopay;
     const locked = current && p.key !== 'pass' && !prepaid;
     const cta = current && p.key !== 'pass' ? (prepaid ? `Add another ${state.billing === 'yearly' ? 'year' : 'month'}` : 'Your current plan') : p.cta;
-    return `<article class="tier${p.popular ? ' pop' : ''} reveal">${p.popular ? '<span class="ribbon">Most popular</span>' : ''}
+    return `<article class="tier${p.popular ? ' pop' : ''}${current ? ' current' : ''} reveal">${current ? '<span class="ribbon current-ribbon">Your current plan</span>' : p.popular ? '<span class="ribbon">Most popular</span>' : ''}
       <div><h3>${p.name}</h3><p class="for">${p.for}</p></div>
       <div><div class="amt">${pr.was ? `<s class="was num" aria-label="Was ₹${pr.was.toLocaleString('en-IN')}">₹${pr.was.toLocaleString('en-IN')}</s>` : ''}<b>₹${pr.amt.toLocaleString('en-IN')}</b><span>${pr.unit}</span></div>
         <p style="display:flex;gap:8px;flex-wrap:wrap;min-height:24px">${pr.off ? `<span class="save-badge num">${pr.off}% off</span>` : '<span class="per">No card needed</span>'}</p></div>
@@ -458,6 +459,48 @@ function setupReveal(){
   document.querySelectorAll('.reveal:not(.in)').forEach(el => revealObserver.observe(el));
 }
 const unlimited = () => Boolean(state.account?.unlimited);
+/* ---------- The signed-in account's plan ---------- */
+const PLAN_NAME = {free:'Free', pass:'Festival Pass', plus:'Plus', pro:'Pro'};
+// Plans run on India time (free looks reset at midnight IST on the 1st), so dates are shown in IST.
+const shortDate = iso => new Date(iso).toLocaleDateString('en-IN', {day:'numeric', month:'short', timeZone:'Asia/Kolkata', year: new Date(iso).getFullYear() === new Date().getFullYear() ? undefined : 'numeric'});
+// The plan the account is on now: unlimited, the best paid grant (Pro, then Plus, then Festival Pass), or Free.
+function currentPlan(){
+  if (!state.account) return null;
+  if (unlimited()) return {key:'unlimited', name:'Unlimited', until:null};
+  const key = state.balance?.plan || (state.balance ? 'free' : null);
+  if (!key) return null;
+  const grants = state.balance?.grants || [];
+  const own = grants.filter(g => g.kind === key);
+  const until = own.length ? own.map(g => g.expires_at).sort().at(-1) : null;
+  return {key, name:PLAN_NAME[key] || 'Free', until};
+}
+function syncPlanBadge(){
+  const b = $('#planBadge'); if (!b) return;
+  const plan = currentPlan();
+  b.hidden = !plan;
+  if (!plan) return;
+  b.className = `plan-badge tier-${plan.key}`;
+  b.textContent = plan.name;
+  b.setAttribute('aria-label', `Your plan: ${plan.name}. Open your account`);
+}
+function planCard(){
+  const plan = currentPlan();
+  if (!plan) return `<div class="plan-card"><span class="small muted">Checking your plan…</span></div>`;
+  const left = looksLeft();
+  const grants = (state.balance?.grants || []).filter(g => g.remaining > 0 || g.kind !== 'free');
+  const labels = {free:'Free looks', pass:'Festival Pass', plus:'Plus', pro:'Pro', bonus:'Bonus looks'};
+  const quality = {free:'Standard quality', pass:'HD quality', plus:'HD quality', pro:'4K quality', unlimited:'Every feature'}[plan.key];
+  const rows = plan.key === 'unlimited' ? '' : grants.map(g => `<li><span>${labels[g.kind] || g.kind}</span><span class="num">${g.remaining} of ${g.total} left · ${g.kind === 'free' ? 'resets' : 'until'} ${shortDate(g.expires_at)}</span></li>`).join('');
+  const upgrade = ['free', 'pass'].includes(plan.key) ? `<button class="btn brand small" data-act="plans">Upgrade plan</button>`
+    : plan.key === 'unlimited' ? '' : `<button class="btn ghost small" data-act="plans">${plan.key === 'pro' ? 'Extend Pro' : 'Upgrade or extend'}</button>`;
+  return `<div class="plan-card">
+    <div class="plan-card-head"><span class="small muted">Your plan</span><span class="plan-badge tier-${plan.key}">${esc(plan.name)}</span></div>
+    <strong class="plan-card-looks">${left === Infinity || plan.key === 'unlimited' ? 'Unlimited looks' : left === null ? 'Checking your looks…' : `${left} ${left === 1 ? 'look' : 'looks'} left`}</strong>
+    <span class="small muted">${quality}${plan.until && !['free', 'unlimited'].includes(plan.key) ? ` · active until ${shortDate(plan.until)}` : plan.key === 'free' ? ' · new free looks every month' : ''}</span>
+    ${rows ? `<ul class="plan-grants">${rows}</ul>` : ''}
+    ${upgrade ? `<div style="display:flex;justify-content:flex-start">${upgrade}</div>` : ''}
+  </div>`;
+}
 function planChip(){
   if (unlimited()) return `<button class="plan-chip" data-act="account">${icon('ticket','s')} Unlimited looks · ${esc(state.account.email)}</button>`;
   const free = state.balance?.free_looks_per_month ?? 3;
@@ -1139,7 +1182,8 @@ function openSignin(reason = null){
 function renderSignin(){
   const a = state.account;
   if (!a) return;
-  const body = `<div class="account-card"><span class="small muted">Signed in as</span><strong>${esc(a.email)}</strong>${a.unlimited ? `<span class="tag" style="justify-self:start">${icon('ticket','s')} Unlimited looks</span>` : `<span class="small muted">${looksLeft() === null ? 'Checking your looks…' : looksLeft() === Infinity ? 'Looks available' : `${looksLeft()} ${looksLeft() === 1 ? 'look' : 'looks'} left`}</span>`}</div>
+  const body = `<div class="account-card"><span class="small muted">Signed in as</span><strong>${esc(a.email)}</strong></div>
+      ${planCard()}
       <p class="small muted">Your wardrobe and looks are saved to this account, so they follow you to any device you sign in on.</p>
       <button class="btn ghost wide" data-act="help">Help &amp; support</button>
       <button class="btn ghost wide" data-act="sign-out">Sign out</button>`;
@@ -1655,6 +1699,7 @@ async function loadBalance(){
     if (state.balance.unlimited !== unlimited() && state.account) setAccount({...state.account, unlimited:state.balance.unlimited});
   } catch { return; }
   if (state.view !== 'generating') render();
+  syncPlanBadge();
   if ($('#signinSheet').open && state.signin?.step === 'account') renderSignin();
 }
 function outOfLooks(){
@@ -2116,6 +2161,7 @@ document.addEventListener('click', e => {
   const a = t.dataset.act;
   switch (a){
     case 'go': e.preventDefault(); closeSheet($('#addSheet')); go(t.dataset.view); break;
+    case 'plans': closeSheet($('#signinSheet')); go('pricing'); break;
     case 'theme': {
       const root = document.documentElement;
       const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;

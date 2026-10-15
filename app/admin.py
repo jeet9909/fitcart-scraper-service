@@ -889,7 +889,8 @@ async def site_status(state: AdminState = Depends(get_state)) -> dict:
     """Banner and maintenance state for the storefront."""
     current = await state.settings()
     return {"maintenance": bool(current.get("maintenance")), "maintenance_message": current.get("maintenance_message") if current.get("maintenance") else None,
-            "announcement": current.get("announcement") or None, "support_email": current.get("support_email") or None}
+            "announcement": current.get("announcement") or None, "support_email": current.get("support_email") or None,
+            "google_sign_in": bool(state.service.settings.google_sign_in_enabled and state.service.settings.supabase_url)}
 
 
 _ticket_times: dict[str, list[float]] = {}

@@ -2834,3 +2834,21 @@ def test_sign_up_when_supabase_cannot_send_the_email(monkeypatch) -> None:
     detail = response.json()["detail"]
     assert response.status_code == 503 and detail["code"] == "email_send_failed"
     assert "couldn't send the confirmation email" in detail["message"] and "SMTP" in detail["reason"]
+
+
+def test_continue_with_google_redirects_to_supabase() -> None:
+    off = AUTH_SETTINGS
+    on = AUTH_SETTINGS.model_copy(update={"google_sign_in_enabled": True})
+    try:
+        with TestClient(app) as client:
+            app.dependency_overrides[get_runtime_settings] = lambda: off
+            disabled = client.get("/v1/auth/google", follow_redirects=False)
+            app.dependency_overrides[get_runtime_settings] = lambda: on
+            started = client.get("/v1/auth/google?redirect_to=https://mydripcheck.com/%3Fx%3D1", follow_redirects=False)
+            elsewhere = client.get("/v1/auth/google?redirect_to=https://evil.example/", follow_redirects=False)
+    finally:
+        app.dependency_overrides.clear()
+    assert disabled.status_code == 404
+    assert started.status_code == 302
+    assert started.headers["location"] == "https://project.supabase.co/auth/v1/authorize?provider=google&redirect_to=https%3A%2F%2Fmydripcheck.com%2F"
+    assert "redirect_to" not in elsewhere.headers["location"]  # only pages of this site

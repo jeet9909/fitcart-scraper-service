@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     email_verification_enabled: bool = Field(default=False, validation_alias="EMAIL_VERIFICATION_ENABLED",
                                              description="New accounts confirm their email with a code Supabase sends, and passwords can be reset by "
                                                          "email code. Needs custom SMTP and the code in Supabase's email templates")
+    google_sign_in_enabled: bool = Field(default=False, validation_alias="GOOGLE_SIGN_IN_ENABLED",
+                                         description="Show 'Continue with Google'. Needs the Google provider switched on in Supabase Auth")
     look_limits_enabled: bool = True
     free_looks_per_month: int = Field(default=2, ge=0, le=100)
     razorpay_key_id: str = ""

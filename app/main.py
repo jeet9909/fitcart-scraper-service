@@ -6,6 +6,7 @@ import hmac
 import logging
 import os
 import time
+from urllib.parse import urlencode
 from uuid import UUID
 
 import httpx
@@ -317,6 +318,18 @@ async def email_link_confirmed(body: LinkTokenRequest, settings: Settings = Depe
     """Sign in from the confirmation link: the site sends the access_token Supabase put in the link's #fragment."""
     user_id, email = await email_auth.user_from_link(body.access_token, settings)
     return create_email_session(user_id, email, settings)
+
+
+@app.get("/v1/auth/google", tags=["sessions"], include_in_schema=False)
+async def google_sign_in(redirect_to: str | None = None, settings: Settings = Depends(get_runtime_settings)) -> RedirectResponse:
+    """Start 'Continue with Google': send the browser to Supabase's Google sign-in. Supabase brings it back to the
+    site with the access token in the #fragment, which the site trades for a session at /v1/auth/confirmed."""
+    if not settings.google_sign_in_enabled or not settings.supabase_url:
+        raise HTTPException(status_code=404, detail={"code": "google_off", "message": "Google sign-in is not switched on."})
+    params = {"provider": "google"}
+    if target := email_auth.safe_redirect(redirect_to, ALLOWED_ORIGINS):
+        params["redirect_to"] = target
+    return RedirectResponse(f"{settings.supabase_url.rstrip('/')}/auth/v1/authorize?{urlencode(params)}", status_code=302)
 
 
 @app.post("/v1/auth/password/update", response_model=EmailSessionResponse, tags=["sessions"])

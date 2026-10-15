@@ -20,6 +20,10 @@ const SLOTS = [
 const SLOT_LABEL = Object.fromEntries(SLOTS.map(s => [s.key, s.label]));
 const SLOT_PROMPT = {top:'top', outerwear:'jacket or layer', dress:'dress or one-piece', bottom:'bottom wear', footwear:'footwear', accessory:'accessory', jewelry:'jewelry'};
 const MULTI = ['accessory','jewelry'];
+// Pieces the try-on does not handle well yet: shown greyed out with "Coming soon" and kept out of looks.
+const SOON_SLOTS = ['outerwear','dress','accessory','jewelry'];
+const soonTag = '<span class="soon-tag">Coming soon</span>';
+const slotOption = (s, value) => `<option value="${s.key}" ${s.key === value ? 'selected' : ''} ${SOON_SLOTS.includes(s.key) ? 'disabled' : ''}>${s.label}${SOON_SLOTS.includes(s.key) ? ' (coming soon)' : ''}</option>`;
 const MAX_PIECES = 5;
 
 /* Sample pieces for the demo look. Their photos are uploaded to the API as files. */
@@ -219,11 +223,16 @@ function lookTotal(){ return state.look.reduce((sum, p) => sum + (p.item.price |
 function lookStores(){ return new Set(state.look.map(p => p.item.store).filter(Boolean)); }
 function inLook(id){ return state.look.some(p => p.item.id === id); }
 function addToLook(item, size = null){
+  if (SOON_SLOTS.includes(item.slot)){
+    toast(`${SLOT_LABEL[item.slot]} try-ons are coming soon. For now, looks use tops, bottom wear and footwear.`, {kind:'info'});
+    return false;
+  }
   const clash = other => !MULTI.includes(item.slot) && other.slot === item.slot;
   state.look = state.look.filter(p => !clash(p.item));
   if (state.look.length >= MAX_PIECES) state.look.shift();
   state.look.push({item, size});
   ['#tryCount', '#tabCount'].forEach(id => { const c = $(id); if (!c) return; c.classList.remove('bump'); void c.offsetWidth; c.classList.add('bump'); });
+  return true;
 }
 
 function render(enter = false){
@@ -238,7 +247,7 @@ function render(enter = false){
   $('#tryCount').textContent = n; $('#tryCount').hidden = !n;
   $('#tabCount').textContent = n; $('#tabCount').hidden = !n;
   const saved = state.account ? state.savedLooks : null;
-  $('#lookCount').textContent = saved ?? 0; $('#lookCount').hidden = saved == null;
+  const lc = $('#lookCount'); if (lc){ lc.textContent = saved ?? 0; lc.hidden = saved == null; }
   const acct = $('#accountBtn');
   acct.classList.toggle('signed', Boolean(state.account));
   acct.setAttribute('aria-label', state.account ? `Account: ${state.account.email}` : 'Sign in');
@@ -289,6 +298,8 @@ function bindCompare(el){
 
 
 /* ---------- Plans (prices include 18% GST) ---------- */
+// Plan features that are not built yet: listed greyed out with "Coming soon".
+const SOON_PERKS = ['Priority generation'];
 const PLANS = [
   {key:'free', name:'Free', for:'Try MyDripCheck on your next outfit.', monthly:0, yearly:0, looks:2, quality:'Standard', imports:15, stylist:1, wardrobe:25, cta:'Start free',
    perks:['2 looks a month','Standard quality','25 wardrobe items','1 AI stylist idea','Last 5 looks saved']},
@@ -324,7 +335,9 @@ function pricingHtml(){
       <div><div class="amt">${pr.was ? `<s class="was num" aria-label="Was ₹${pr.was.toLocaleString('en-IN')}">₹${pr.was.toLocaleString('en-IN')}</s>` : ''}<b>₹${pr.amt.toLocaleString('en-IN')}</b><span>${pr.unit}</span></div>
         <p style="display:flex;gap:8px;flex-wrap:wrap;min-height:24px">${pr.off ? `<span class="save-badge num">${pr.off}% off</span>` : '<span class="per">No card needed</span>'}</p></div>
       <button class="btn ${p.popular ? 'brand' : p.key === 'free' ? 'glassy' : ''} wide" data-act="choose-plan" data-plan="${p.key}" ${locked || state.checkingOut ? 'disabled' : ''}>${state.checkingOut === p.key ? '<span class="spin" aria-hidden="true"></span> Opening checkout…' : cta}</button>
-      <ul class="perks">${p.perks.map(x => `<li><svg class="tick" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="1.5" width="13" height="13" rx="3"/><path d="m5 8.2 2 2 4-4.4"/></svg>${esc(x)}</li>`).join('')}</ul>
+      <ul class="perks">${p.perks.map(x => SOON_PERKS.includes(x)
+        ? `<li class="is-soon"><svg class="tick" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="1.5" width="13" height="13" rx="3"/></svg>${esc(x)} ${soonTag}</li>`
+        : `<li><svg class="tick" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="1.5" width="13" height="13" rx="3"/><path d="m5 8.2 2 2 4-4.4"/></svg>${esc(x)}</li>`).join('')}</ul>
     </article>`;
   }).join('');
   const rows = [
@@ -335,13 +348,14 @@ function pricingHtml(){
     ['AI stylist ideas', ...PLANS.map(p => p.stylist)],
     ['Wardrobe items', ...PLANS.map(p => p.wardrobe.toLocaleString('en-IN'))],
     ['Looks history', 'Last 5', 'Last 5', 'Unlimited', 'Unlimited'],
-    ['Priority generation', 'No', 'No', 'No', 'Yes'],
-    ['Fit score (coming soon)', 'No', 'No', 'Included', 'Early access'],
+    ['Priority generation', 'No', 'No', 'No', 'Yes', true],
+    ['Fit score', 'No', 'No', 'Included', 'Early access', true],
+    ['Jackets, dresses, accessories & jewellery in looks', 'Yes', 'Yes', 'Yes', 'Yes', true],
   ];
   return `<div class="pricing">
     <div class="billing glass" role="group" aria-label="Billing period"><button data-act="billing" data-billing="monthly" aria-pressed="${state.billing === 'monthly'}">Monthly</button><button data-act="billing" data-billing="yearly" aria-pressed="${state.billing === 'yearly'}">Yearly <span class="save">Save 21%</span></button></div>
     <div class="tiers">${tiers}</div>
-    <div class="plan-table reveal"><table><caption class="sr">Compare plans</caption><thead><tr><th scope="col">Compare plans</th>${PLANS.map(p => `<th scope="col">${p.name}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr><th scope="row">${r[0]}</th>${r.slice(1).map((c, i) => `<td class="${PLANS[i].popular ? 'hi' : ''}">${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
+    <div class="plan-table reveal"><table><caption class="sr">Compare plans</caption><thead><tr><th scope="col">Compare plans</th>${PLANS.map(p => `<th scope="col">${p.name}</th>`).join('')}</tr></thead><tbody>${rows.map(r => { const soon = r[5] === true; return `<tr class="${soon ? 'is-soon' : ''}"><th scope="row">${r[0]}${soon ? ' ' + soonTag : ''}</th>${r.slice(1, 5).map((c, i) => `<td class="${PLANS[i].popular ? 'hi' : ''}">${c}</td>`).join('')}</tr>`; }).join('')}</tbody></table></div>
     <div class="plan-notes"><p>${icon('lock','s')} Prices include 18% GST. Secure checkout by Razorpay: UPI, cards and netbanking. ${state.billingCfg?.autopay ? 'Plans renew with UPI AutoPay or card until cancelled.' : 'Plus and Pro are paid for a month or a year at a time, with no autopay. Buy again to extend; new time starts when your current plan ends.'}</p><p>A look that fails is never counted. Unused looks don't carry over to the next month.</p></div>
   </div>`;
 }
@@ -509,7 +523,7 @@ function slotCard(p, index){
   return `<article class="slot" aria-label="${esc(SLOT_LABEL[i.slot])}: ${esc(i.name)}">
     <div class="thumb"><img src="${esc(img(i.img))}" alt=""></div>
     <div class="slot-body">
-      <div class="slot-top"><span style="display:flex;gap:6px;align-items:center;min-width:0"><select class="slot-cat" data-change="piece-slot" data-index="${index}" aria-label="Category for ${esc(i.name)}">${SLOTS.map(s => `<option value="${s.key}" ${s.key === i.slot ? 'selected' : ''}>${s.label}</option>`).join('')}</select><span class="tiny muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(i.sample ? 'Sample' : i.source === 'owned' ? 'My clothes' : i.store || '')}</span></span><button class="iconbtn" data-act="remove" data-index="${index}" aria-label="Remove ${esc(i.name)}">${icon('x','s')}</button></div>
+      <div class="slot-top"><span style="display:flex;gap:6px;align-items:center;min-width:0"><select class="slot-cat" data-change="piece-slot" data-index="${index}" aria-label="Category for ${esc(i.name)}">${SLOTS.map(s => slotOption(s, i.slot)).join('')}</select><span class="tiny muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(i.sample ? 'Sample' : i.source === 'owned' ? 'My clothes' : i.store || '')}</span></span><button class="iconbtn" data-act="remove" data-index="${index}" aria-label="Remove ${esc(i.name)}">${icon('x','s')}</button></div>
       <p class="slot-name">${esc(i.name)}</p>
       ${i.price ? `<div class="pricerow"><span class="price">${inr(i.price)}</span>${i.mrp ? `<span class="mrp">${inr(i.mrp)}</span>` : ''}${pct ? `<span class="off tiny">${pct}% off</span>` : ''}</div>` : ''}
       ${sizesHtml(i, p.size, 'size', index)}
@@ -565,7 +579,7 @@ function builder(){
   const open = openSlots();
   const n = state.look.length;
   const body = n ? `<div class="slots${n >= 3 ? ' compact' : ''}">${state.look.map(slotCard).join('')}</div>
-      ${open.length ? `<div class="more"><p class="small" style="font-weight:800">Complete the look <span class="muted" style="font-weight:600">· ${MAX_PIECES - n} more ${MAX_PIECES - n === 1 ? 'piece' : 'pieces'} allowed</span></p><div class="chips">${open.map(s => `<button class="chip add" data-act="add" data-slot="${s.key}">${icon('plus','s')} ${s.add}</button>`).join('')}</div></div>` : ''}
+      ${open.length ? `<div class="more"><p class="small" style="font-weight:800">Complete the look <span class="muted" style="font-weight:600">· ${MAX_PIECES - n} more ${MAX_PIECES - n === 1 ? 'piece' : 'pieces'} allowed</span></p><div class="chips">${open.map(s => SOON_SLOTS.includes(s.key) ? `<button class="chip add is-soon" disabled aria-disabled="true" title="Coming soon">${icon('plus','s')} ${s.add} ${soonTag}</button>` : `<button class="chip add" data-act="add" data-slot="${s.key}">${icon('plus','s')} ${s.add}</button>`).join('')}</div></div>` : ''}
       <div class="summary"><div><div class="total">${inr(lookTotal())}</div><div class="meta num">${n} ${n === 1 ? 'piece' : 'pieces'} · ${stores.size} ${stores.size === 1 ? 'store' : 'stores'}</div></div><button class="btn brand" data-act="open-photo">${icon('camera')} Try it on</button></div>`
     : `<div class="empty">${EMPTY_ART}<h2>Start with one piece you love</h2><p class="muted">Paste a product link from any store. We'll bring in the price, sizes and photos, then you can add the rest of the outfit.</p><div class="row"><button class="btn" data-act="add" data-slot="top">${icon('link','s')} Paste a link</button><button class="btn ghost" data-act="demo">${icon('store','s')} Try a sample look</button></div><button class="link small" data-act="go" data-view="wardrobe">Or pick from your wardrobe</button></div>`;
   return `<section class="builder">
@@ -1070,6 +1084,7 @@ function wardrobe(){
 /* ---------- Looks ---------- */
 function updateLooksPill(){
   const c = $('#lookCount'), saved = state.account ? state.savedLooks : null;
+  if (!c) return;
   c.textContent = saved ?? 0; c.hidden = saved == null;
 }
 async function loadGallery(){
@@ -1850,7 +1865,7 @@ function openAdd(slot){
 }
 const SKELETON = `<div class="skeleton" role="status" aria-label="Fetching product"><div class="sk" style="aspect-ratio:3/4"></div><div style="display:grid;gap:8px;align-content:start"><div class="sk" style="height:14px;width:40%"></div><div class="sk" style="height:18px"></div><div class="sk" style="height:18px;width:70%"></div><div class="sk" style="height:44px;width:90%"></div></div></div>`;
 function slotSelect(id, value, act){
-  return `<label class="field" for="${id}">This piece is a<select class="input" id="${id}" data-change="${act}">${SLOTS.map(s => `<option value="${s.key}" ${s.key === value ? 'selected' : ''}>${s.label}</option>`).join('')}</select></label>`;
+  return `<label class="field" for="${id}">This piece is a<select class="input" id="${id}" data-change="${act}">${SLOTS.map(s => slotOption(s, value)).join('')}</select></label>`;
 }
 function renderAdd(){
   const label = SLOT_LABEL[state.addSlot] || 'item';
@@ -2000,7 +2015,8 @@ function renderItemSheet(){
       const w = await api('/v1/wardrobe', {method:'POST', body:form});
       if (state.wardrobe) state.wardrobe.unshift(w); else state.wardrobe = [w];
       closeSheet($('#itemSheet'));
-      if (d.addAfter){ addToLook(fromWardrobe(w)); closeSheet($('#addSheet')); if (state.view !== 'builder') go('builder'); else render(); toast(`${w.name} added to your look and wardrobe`); }
+      if (d.addAfter && addToLook(fromWardrobe(w))){ closeSheet($('#addSheet')); if (state.view !== 'builder') go('builder'); else render(); toast(`${w.name} added to your look and wardrobe`); }
+      else if (d.addAfter){ closeSheet($('#addSheet')); render(); }
       else { state.wardrobeTab = 'home'; render(); toast(`${w.name} saved to My clothes`); }
     } catch (err){
       if (err.code === 'sign_in_required'){ closeSheet($('#itemSheet')); openSignin('wardrobe'); return; }
@@ -2155,7 +2171,7 @@ document.addEventListener('click', e => {
     case 'toggle-item': {
       const w = state.wardrobe.find(x => x.id === t.dataset.id);
       if (inLook('w-' + w.id)) state.look = state.look.filter(p => p.item.id !== 'w-' + w.id);
-      else { addToLook(fromWardrobe(w), w.selected_size || null); toast(`${w.name} added to your look`, {action:{label:'View look', run:() => go('builder')}}); }
+      else if (addToLook(fromWardrobe(w), w.selected_size || null)) toast(`${w.name} added to your look`, {action:{label:'View look', run:() => go('builder')}});
       render(); break;
     }
     case 'delete-item': deleteItem(t.dataset.id); break;
@@ -2193,6 +2209,7 @@ document.addEventListener('change', e => {
   if (t.dataset.change === 'item-slot' && state.itemDraft) state.itemDraft.slot = t.value;
   if (t.dataset.change === 'piece-slot'){
     const p = state.look[Number(t.dataset.index)];
+    if (p && SOON_SLOTS.includes(t.value)){ t.value = p.item.slot; toast(`${SLOT_LABEL[t.value] || 'That'} try-ons are coming soon.`, {kind:'info'}); return; }
     if (p){ p.item.slot = t.value; const clash = state.look.filter(x => x !== p && !MULTI.includes(t.value) && x.item.slot === t.value); if (clash.length){ state.look = state.look.filter(x => !clash.includes(x)); toast(`Replaced the other ${SLOT_LABEL[t.value].toLowerCase()} in your look`, {kind:'info'}); } render(); }
   }
 });

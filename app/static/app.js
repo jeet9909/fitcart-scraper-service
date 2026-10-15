@@ -1159,6 +1159,8 @@ const AUTH_ICON = {
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   alert: '<path d="M12 3 2 21h20L12 3Zm0 7v4m0 3h.01"/>',
 };
+const GOOGLE_G = '<svg class="g-logo" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>';
+const googleBlock = label => `<div class="oauth" data-google hidden><button type="button" class="google-btn" data-auth="google">${GOOGLE_G}<span>${label}</span></button><div class="or-line"><span>or use your email</span></div></div>`;
 const aIcon = (name, cls = 'icon') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${AUTH_ICON[name]}</svg>`;
 const AUTH_LOGO = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 255.24 134.96"><path fill="#094B7F" fill-rule="evenodd" d="M22.94 118.68L0 118.68L0 16.56L19.62 16.56L58.34 76.07L98.18 16.18L150.52 16.18C150.52 16.18 167.68 17.56 175.29 23.64C175.29 23.64 164.11 29.03 161.03 39.54C161.03 39.54 155.92 35.49 149.46 36.65L110.43 36.65L62.93 106.02L54.4 106.02L22.72 58.85L22.94 118.68"/><path fill="#094B7F" fill-rule="evenodd" d="M117.26 41C117.26 41 111.73 41.76 112.37 41.56C113 41.36 94.74 67.59 94.74 67.59L94.74 117.59L157.91 117.59C157.91 117.59 188.77 115.97 201.15 83.12C201.15 83.12 209.55 63.56 197.63 43.24C197.63 43.24 183.88 50.26 183.12 67.22C183.12 67.22 180.52 97.94 152.71 97.17C152.71 97.17 117.41 96.71 117.41 97.17C117.41 97.63 117.26 41 117.26 41"/><path fill="#094B7F" fill-rule="evenodd" d="M255.24 33.39L240.35 48.58C240.35 48.58 230.47 30.5 205.86 35.36C205.86 35.36 179.98 41.05 178.13 64.51C178.13 64.51 180.79 81.84 162.54 91.2C162.54 91.2 139.16 52.5 184.29 22.32C184.29 22.32 224.37 0 255.24 33.39"/><path fill="#094B7F" fill-rule="evenodd" d="M254.95 101.85L240.7 87.5C240.7 87.5 226.65 107.08 199.69 96.73C199.69 96.73 198.16 102.36 185.75 111.8C185.75 111.8 219.48 134.96 254.95 101.85"/></svg>';
 
@@ -1207,6 +1209,7 @@ function authMarkup(){
           <p class="form-desc">Good to have you back. Sign in to pick up right where your style left off.</p>
           <div class="benefit-note" data-reason hidden>${aIcon('spark')}<span></span></div>
           <div class="form-alert" id="authSigninAlert" role="alert" hidden></div>
+          ${googleBlock('Continue with Google')}
           <form data-form="signin" novalidate>
             ${authField('authLoginEmail', 'Email address', 'email', 'you@example.com', 'mail')}
             ${authField('authLoginPassword', 'Password', 'password', 'Enter your password', 'lock', '<button type="button" class="forgot-link" data-auth="go" data-screen="forgot">Forgot password?</button>')}
@@ -1223,6 +1226,7 @@ function authMarkup(){
           <p class="form-desc">Your next favourite outfit starts here. Create an account and save every look you love.</p>
           <div class="benefit-note" data-reason>${aIcon('spark')}<span>Get free looks to start, plus a private space for your wardrobe and saved try-ons.</span></div>
           <div class="form-alert" id="authSignupAlert" role="alert" hidden></div>
+          ${googleBlock('Sign up with Google')}
           <form data-form="signup" novalidate>
             ${authField('authSignupEmail', 'Email address', 'email', 'you@example.com', 'mail')}
             <div class="field"><div class="label-row"><label for="authSignupPassword">Create a password</label></div>
@@ -1297,6 +1301,7 @@ function openAuth(screen = 'signin', reason = null){
     el.querySelector('span').textContent = note || (signupNote ? 'Get free looks to start, plus a private space for your wardrobe and saved try-ons.' : '');
     el.hidden = !note && !signupNote;
   });
+  box.querySelectorAll('[data-google]').forEach(el => { el.hidden = !state.googleSignIn; });
   showAuth(screen);
   if (!box.open){ box.showModal(); document.body.classList.add('auth-open'); }
   syncAuthTheme();
@@ -1425,8 +1430,10 @@ async function saveDraft(){
   try {
     const db = await draftDb();
     // tryon: sign-up was asked for by the try-on button, so the user goes back to the try-on page afterwards.
-    db.transaction(DRAFT_STORE, 'readwrite').objectStore(DRAFT_STORE).put({photo: state.photo, look: state.look, pose: state.pose, consent: state.consent,
+    const tx = db.transaction(DRAFT_STORE, 'readwrite');
+    tx.objectStore(DRAFT_STORE).put({photo: state.photo, look: state.look, pose: state.pose, consent: state.consent,
       tryon: Boolean(state.pending?.generate), at: Date.now()}, 'look');
+    await new Promise(resolve => { tx.oncomplete = tx.onerror = tx.onabort = resolve; });
   } catch {}
 }
 async function restoreDraft(){
@@ -1445,9 +1452,10 @@ async function restoreDraft(){
   } catch { return null; }
 }
 // After the email is verified: back to the try-on only when the try-on button asked for the account.
-function landAfterVerify(tryon){
-  if (tryon && state.look.length){ go('tryon'); toast('Email verified. Welcome to MyDripCheck! Your look is just as you left it.'); }
-  else { go('home'); toast('Email verified. Welcome to MyDripCheck!'); }
+function landAfterVerify(tryon, google = false){
+  const hello = google ? `Signed in with Google as ${state.account?.email || 'you'}.` : 'Email verified. Welcome to MyDripCheck!';
+  if (tryon && state.look.length){ go('tryon'); toast(`${hello} Your look is just as you left it.`); }
+  else { go('home'); toast(hello); }
 }
 
 /* Email links from Supabase come back to the site with the result in the #fragment:
@@ -1461,7 +1469,9 @@ async function handleAuthLink(){
   history.replaceState(null, '', location.pathname + location.search);
   if (params.get('error') || params.get('error_code')){
     openAuth('signin');
-    showAuthAlert('authSigninAlert', 'That email link has expired or was already used. Sign in, and we will send you a fresh one if your email still needs verifying.');
+    const cancelled = /access_denied/.test(params.get('error') || '') && !/otp|expired/.test(params.get('error_code') || '');
+    showAuthAlert('authSigninAlert', cancelled ? 'Google sign-in was cancelled. Try again, or use your email.'
+      : 'That email link has expired or was already used. Sign in, and we will send you a fresh one if your email still needs verifying.');
     return true;
   }
   const token = params.get('access_token'), type = params.get('type');
@@ -1477,7 +1487,7 @@ async function handleAuthLink(){
     const draft = await restoreDraft();
     state.pending = null;
     signedIn(payload);
-    landAfterVerify(draft?.tryon);
+    landAfterVerify(draft?.tryon, params.has('provider_token') || !type);
   } catch (err){
     openAuth('signin');
     showAuthAlert('authSigninAlert', err.message);
@@ -1524,6 +1534,12 @@ function bindAuth(box){
     }
     else if (what === 'theme') setTimeout(syncAuthTheme);
     else if (what === 'check') checkVerified(true);
+    else if (what === 'google'){
+      // Keep the look and photo for when Google sends the user back, then hand over to Google's sign-in.
+      t.disabled = true; t.querySelector('span').textContent = 'Opening Google…';
+      await saveDraft();
+      location.href = apiUrl('/v1/auth/google?redirect_to=' + encodeURIComponent(siteHome()));
+    }
     else if (what === 'look'){
       const after = t.dataset.look === 'after';
       af('authLook').src = after ? 'static/img/after.jpg' : 'static/img/before.jpg';
@@ -1813,6 +1829,7 @@ function showMaintenance(site){
 }
 function checkSite(){
   return fetch(apiUrl('/v1/site'), {cache:'no-store'}).then(r => r.ok ? r.json() : null).then(site => {
+    if (site){ state.googleSignIn = Boolean(site.google_sign_in); authBox()?.querySelectorAll('[data-google]').forEach(el => { el.hidden = !state.googleSignIn; }); }
     if (site) showSiteBanner(site);
     else showMaintenance.timer = setTimeout(checkSite, 30000);
   }).catch(() => { showMaintenance.timer = setTimeout(checkSite, 30000); });

@@ -889,6 +889,13 @@ dialog.auth::backdrop{background:#151110}
 .auth .code-control{padding:0 6px}
 .auth .auth-shell>*{min-width:0}
 @media (max-width:900px){.auth .auth-shell{grid-template-columns:minmax(0,1fr)}}
+.auth .oauth{display:grid;gap:18px;margin-bottom:18px}
+.auth .google-btn{display:flex;align-items:center;justify-content:center;gap:12px;width:100%;min-height:54px;border-radius:8px;border:1.5px solid var(--line-strong);background:var(--surface);color:var(--ink);font-size:14px;font-weight:700;transition:background .2s,border-color .2s}
+.auth .google-btn:hover:not(:disabled){background:var(--surface-2);border-color:var(--muted)}
+.auth .google-btn:disabled{opacity:.7;cursor:wait}
+.auth .google-btn .g-logo{width:20px;height:20px;flex-shrink:0}
+.auth .or-line{display:flex;align-items:center;gap:12px;color:var(--muted);font-size:12px;font-weight:600}
+.auth .or-line::before,.auth .or-line::after{content:"";flex:1;height:1px;background:var(--line)}
 .auth .wait-row{display:flex;align-items:center;gap:12px;padding:13px 15px;border-radius:8px;background:var(--surface-2);color:var(--ink-2);font-size:12.5px;line-height:1.5;margin:-6px 0 18px}
 .auth .spinner.dark{flex-shrink:0;border-color:color-mix(in srgb,var(--accent) 25%,transparent);border-top-color:var(--accent)}
 .auth [data-screen="verify"] .submit{margin-top:4px}

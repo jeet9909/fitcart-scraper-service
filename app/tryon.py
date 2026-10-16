@@ -532,15 +532,17 @@ class TryOnService:
             raise TryOnError("MyDripCheck is being set up right now. Please try again in a few minutes.", 503)
 
     async def fetch_image(self, url: str) -> tuple[bytes, str, str]:
+        from app.security import TooLargeError, UnsafeUrlError, safe_get
         try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
-                response = await client.get(url, headers={"User-Agent": "FitCart/1.0"})
-                response.raise_for_status()
+            response = await safe_get(url, max_bytes=self.settings.max_image_bytes, headers={"User-Agent": "FitCart/1.0"})
+            response.raise_for_status()
+        except TooLargeError as exc:
+            raise TryOnError(f"The product image is larger than {self.settings.max_image_bytes // 1_000_000} MB. Try another photo of it, or upload it.", 400) from exc
+        except UnsafeUrlError as exc:
+            raise TryOnError("That image address is not allowed. Try another photo of it, or upload it.", 400) from exc
         except httpx.HTTPError as exc:
             log.warning("Product image download failed for %s: %r", url[:200], exc)
             raise TryOnError("Could not download the product image. Try another photo of it, or upload it.", 502) from exc
-        from app.security import validate_public_url
-        validate_public_url(str(response.url))
         return validate_image(response.content, response.headers.get("content-type", "").split(";")[0], self.settings.max_image_bytes)
 
     async def generate(self, person: tuple[bytes, str, str], product: tuple[bytes, str, str], category: str, product_name: str | None = None, pose: str = "standard", face_check: bool = False) -> tuple[bytes, str, str]:

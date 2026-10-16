@@ -15,3 +15,13 @@ def _no_container_memory_limit(monkeypatch):
     from app import tryon
 
     monkeypatch.setattr(tryon, "_memory_limit", lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rate_limits():
+    """Per-address limits are kept in memory; every test starts with a clean count."""
+    from app import protect
+
+    protect._hits.clear()
+    yield
+    protect._hits.clear()

@@ -1230,7 +1230,7 @@ function renderSignin(){
    verification on (EMAIL_VERIFICATION_ENABLED on the API), a new account gets a code by email before it can
    sign in; with it off, sign-up signs in straight away. The page stays inside the app, so a look in progress,
    the uploaded photo and the action that asked for sign-in carry on afterwards. */
-const AUTH_SCREENS = ['signin', 'signup', 'verify', 'forgot', 'newpass'];
+const AUTH_SCREENS = ['signin', 'signup', 'verify', 'forgot', 'newpass', 'linkconfirm'];
 const AUTH_REASON = {
   free: 'Sign in to get your free looks every month. Your looks and wardrobe are saved to your account.',
   wardrobe: 'Sign in to save clothes. Your wardrobe is kept in your account, so it follows you to every device.',
@@ -1361,11 +1361,21 @@ function authMarkup(){
           <p class="under-cta">Remembered it? <button type="button" class="link-btn" data-auth="go" data-screen="signin">Back to sign in</button></p>
         </section>
 
+        <section class="form-card" data-screen="linkconfirm" aria-labelledby="authLinkTitle" hidden>
+          <div class="success-icon">${aIcon('shield')}</div>
+          <div class="form-overline">Check the account</div>
+          <h2 id="authLinkTitle">Continue as this account?<span class="dot-accent">.</span></h2>
+          <p class="form-desc">This sign-in link is for <strong id="authLinkEmail"></strong>. Only continue if this is your account. If someone sent you this link, choose Not me.</p>
+          <button type="button" class="submit" data-auth="link-yes" data-label="Continue"><span class="button-label">Continue</span>${aIcon('arrow', 'icon arrow')}<span class="spinner" hidden></span></button>
+          <p class="under-cta"><button type="button" class="link-btn" data-auth="link-no">Not me</button></p>
+        </section>
+
         <section class="form-card" data-screen="newpass" aria-labelledby="authNewpassTitle" hidden>
           <div class="success-icon">${aIcon('lockCheck')}</div>
           <div class="form-overline">Account recovery</div>
           <h2 id="authNewpassTitle">Choose a new password<span class="dot-accent">.</span></h2>
           <p class="form-desc">Set a new password for <strong id="authNewpassEmail">your account</strong>. You'll be signed in straight after.</p>
+          <div class="form-alert" id="authNewpassWarn" role="alert" hidden></div>
           <div class="form-alert" id="authNewpassAlert" role="alert" hidden></div>
           <form data-form="newpass" novalidate>
             ${authField('authNewPassword', 'New password', 'password', 'At least 8 characters', 'lock')}
@@ -1416,7 +1426,7 @@ function showAuth(screen){
   prompt.textContent = screen === 'signup' ? 'Already have an account?' : 'New to MyDripCheck?';
   sw.textContent = screen === 'signup' ? 'Sign in' : 'Create an account';
   sw.dataset.screen = screen === 'signup' ? 'signin' : 'signup';
-  ['authSigninAlert', 'authSignupAlert', 'authVerifyAlert', 'authForgotAlert', 'authNewpassAlert'].forEach(hideAuthAlert);
+  ['authSigninAlert', 'authSignupAlert', 'authVerifyAlert', 'authForgotAlert', 'authNewpassAlert', 'authNewpassWarn'].forEach(hideAuthAlert);
   const email = state.auth?.email || '';
   if (email){ ['authLoginEmail', 'authSignupEmail', 'authForgotEmail'].forEach(id => { if (!af(id).value) af(id).value = email; }); }
   af('authVerifyEmail').textContent = email;
@@ -1556,6 +1566,16 @@ function landAfterVerify(tryon, google = false){
    #access_token=…&type=signup (email confirmed), #access_token=…&type=recovery (set a new password),
    or #error=…&error_code=otp_expired (link expired or already used). */
 let recoveryToken = null;
+/* A sign-in link only signs in straight away when this browser asked for it (Google started here, a reset was
+   requested here, or an account is waiting for its email here). Otherwise someone could send a link to their own
+   account and the visitor's photos would be saved there, so the page first asks "Continue as …?". */
+const EXPECT_KEY = 'mdc-auth-expect';
+function expectLink(kind, email = null){ persist(EXPECT_KEY, {kind, email, at: Date.now()}); }
+function expectedLink(kind, maxMinutes){
+  const e = readStore(EXPECT_KEY, null);
+  return Boolean(e && e.kind === kind && Date.now() - e.at < maxMinutes * 60000);
+}
+let pendingLink = null;
 async function handleAuthLink(){
   const hash = location.hash.slice(1);
   if (!/(^|&)(access_token|error_code|error)=/.test(hash)) return false;
@@ -1569,24 +1589,39 @@ async function handleAuthLink(){
     return true;
   }
   const token = params.get('access_token'), type = params.get('type');
+  const google = params.has('provider_token') || !type;
+  let payload;
+  try { payload = await authPost('/v1/auth/confirmed', {access_token: token}); }
+  catch (err){ openAuth('signin'); showAuthAlert('authSigninAlert', err.message); return true; }
   if (type === 'recovery'){
     recoveryToken = token;
+    const asked = expectedLink('recovery', 120);
+    try { localStorage.removeItem(EXPECT_KEY); } catch {}
+    state.auth = {...(state.auth || {}), email: payload.email};
     openAuth('newpass');
+    af('authNewpassEmail').textContent = payload.email;
+    if (!asked) showAuthAlert('authNewpassWarn', `This reset link is for ${payload.email}. If you didn't ask to reset this account's password, close this page.`);
     return true;
   }
-  try {
-    const payload = await authPost('/v1/auth/confirmed', {access_token: token});
-    try { localStorage.removeItem(VERIFY_KEY); } catch {}
-    startAccountSession(payload);
-    const draft = await restoreDraft();
-    state.pending = null;
-    signedIn(payload);
-    landAfterVerify(draft?.tryon, params.has('provider_token') || !type);
-  } catch (err){
-    openAuth('signin');
-    showAuthAlert('authSigninAlert', err.message);
+  const waiting = readStore(VERIFY_KEY, null);
+  const asked = google ? expectedLink('google', 30) : Boolean(waiting?.email && waiting.email === payload.email);
+  if (!asked){
+    pendingLink = {payload, google};
+    openAuth('linkconfirm');
+    af('authLinkEmail').textContent = payload.email;
+    return true;
   }
+  await finishLink(payload, google);
   return true;
+}
+async function finishLink(payload, google){
+  try { localStorage.removeItem(VERIFY_KEY); localStorage.removeItem(EXPECT_KEY); } catch {}
+  startAccountSession(payload);
+  const draft = await restoreDraft();
+  state.pending = null;
+  closeAuth(true);
+  signedIn(payload);
+  landAfterVerify(draft?.tryon, google);
 }
 const siteHome = () => location.origin + location.pathname;
 // The link can also land in a tab where the site is already open.
@@ -1628,9 +1663,12 @@ function bindAuth(box){
     }
     else if (what === 'theme') setTimeout(syncAuthTheme);
     else if (what === 'check') checkVerified(true);
+    else if (what === 'link-yes' && pendingLink){ const p = pendingLink; pendingLink = null; await finishLink(p.payload, p.google); }
+    else if (what === 'link-no'){ pendingLink = null; closeAuth(true); toast('Not signed in. Nothing was saved to that account.', {kind:'info'}); }
     else if (what === 'google'){
       // Keep the look and photo for when Google sends the user back, then hand over to Google's sign-in.
       t.disabled = true; t.querySelector('span').textContent = 'Opening Google…';
+      expectLink('google');
       await saveDraft();
       location.href = apiUrl('/v1/auth/google?redirect_to=' + encodeURIComponent(siteHome()));
     }
@@ -1683,6 +1721,7 @@ function bindAuth(box){
       authBusy('authForgotSubmit', true, 'Sending…');
       try {
         await authPost('/v1/auth/password/forgot', {email, redirect_to: siteHome()});
+        expectLink('recovery', email);
         state.auth = {...state.auth, email};
         showAuthAlert('authForgotAlert', `If ${email} has an account, a reset link is on its way. Open it to choose a new password.`, true);
       } catch (err){ showAuthAlert('authForgotAlert', err.message); }

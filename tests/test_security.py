@@ -1,6 +1,9 @@
 import asyncio
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+os.environ.setdefault("BRIGHTDATA_API_TOKEN", "test")
 
 import httpx
 import pytest
@@ -8,7 +11,14 @@ from fastapi.testclient import TestClient
 
 from app import protect, security
 from app.main import app, get_runtime_settings
-from tests.test_api import AUTH_SETTINGS
+from app.config import Settings
+
+AUTH_SETTINGS = Settings(
+    brightdata_api_token="test",
+    anonymous_token_secret="a-secure-test-secret-that-is-long-enough",
+    supabase_url="https://project.supabase.co",
+    supabase_service_role_key="service-key",
+)
 
 
 def _server(handler_cls):

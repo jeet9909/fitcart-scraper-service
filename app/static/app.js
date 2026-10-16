@@ -251,8 +251,9 @@ function render(enter = false){
   const acct = $('#accountBtn');
   acct.classList.toggle('signed', Boolean(state.account));
   syncPlanBadge();
-  acct.setAttribute('aria-label', state.account ? `Account: ${state.account.email}` : 'Sign in');
-  const views = {landing, pricing:pricingPage, home, builder, generating, result, wardrobe, looks};
+  acct.setAttribute('aria-label', state.account ? `My profile: ${state.account.email}` : 'Sign in');
+  acct.classList.toggle('active', state.view === 'profile');
+  const views = {landing, pricing:pricingPage, home, builder, generating, result, wardrobe, looks, profile};
   const view = $('#view');
   view.innerHTML = views[state.view]();
   if (enter && !REDUCED.matches){ view.classList.remove('view-enter'); void view.offsetWidth; view.classList.add('view-enter'); }
@@ -500,6 +501,44 @@ function planCard(){
     ${rows ? `<ul class="plan-grants">${rows}</ul>` : ''}
     ${upgrade ? `<div style="display:flex;justify-content:flex-start">${upgrade}</div>` : ''}
   </div>`;
+}
+/* ---------- My profile ---------- */
+function openProfile(){
+  if (!state.account){ openAuth('signin'); return; }
+  closeSheet($('#signinSheet'));
+  go('profile');
+  const loads = [];
+  if (!state.balance) loads.push(loadBalance());
+  if (!state.gallery && !state.galleryLoading) loads.push(loadGallery());
+  if (!state.wardrobe && !state.wardrobeLoading) loads.push(loadWardrobe());
+  Promise.allSettled(loads).then(() => { if (state.view === 'profile') render(); });
+}
+function profile(){
+  const a = state.account;
+  if (!a){ setTimeout(() => openAuth('signin'), 0); return landing(); }
+  const name = a.email.split('@')[0].replace(/[._+-]+/g, ' ').replace(/\d+/g, '').trim() || a.email.split('@')[0];
+  const initials = name.split(' ').filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || a.email[0].toUpperCase();
+  const count = n => n == null ? '…' : n.toLocaleString('en-IN');
+  const wardrobeMax = PLANS.find(p => p.key === (state.balance?.plan || 'free'))?.wardrobe;
+  const row = (act, ic, title, sub, extra = '') => `<button class="profile-row" data-act="${act}" ${extra}><span class="profile-ico">${icon(ic)}</span><span><strong>${title}</strong><span class="small muted">${sub}</span></span>${icon('arrow','s')}</button>`;
+  return `<section class="profile-page">
+    <div class="profile-head">
+      <span class="profile-avatar" aria-hidden="true">${esc(initials)}</span>
+      <div style="min-width:0"><p class="eyebrow">My profile</p><h1>${esc(name.replace(/\b\w/g, c => c.toUpperCase()))}</h1><p class="small muted profile-email">${esc(a.email)}</p></div>
+    </div>
+    ${planCard()}
+    <div class="profile-stats">
+      <button class="profile-stat" data-act="go" data-view="looks"><span class="small muted">Saved looks</span><strong class="num">${count(state.savedLooks)}</strong></button>
+      <button class="profile-stat" data-act="go" data-view="wardrobe"><span class="small muted">Wardrobe items</span><strong class="num">${count(state.wardrobe?.length)}${state.wardrobe && wardrobeMax && !unlimited() ? `<span class="small muted"> / ${wardrobeMax.toLocaleString('en-IN')}</span>` : ''}</strong></button>
+    </div>
+    <div class="profile-list">
+      ${row('go', 'camera', 'Start a new look', 'Paste links, add your photo, try it on', 'data-view="tryon"')}
+      ${row('go', 'ticket', 'Plans & pricing', 'Compare plans, upgrade or extend', 'data-view="pricing"')}
+      ${row('help', 'info', 'Help & support', 'Questions about looks, payments or your account')}
+    </div>
+    <p class="small muted">${privatePill()} Your wardrobe and looks are saved to this account, so they follow you to any device you sign in on.</p>
+    <button class="btn ghost wide" data-act="sign-out">Sign out</button>
+  </section>`;
 }
 function planChip(){
   if (unlimited()) return `<button class="plan-chip" data-act="account">${icon('ticket','s')} Unlimited looks · ${esc(state.account.email)}</button>`;
@@ -1172,11 +1211,7 @@ function startAccountSession(payload){
   state.wardrobe = null; state.gallery = null; state.ideas = [];
 }
 function openSignin(reason = null){
-  if (state.account){
-    state.signin = {step:'account'};
-    renderSignin(); openSheet($('#signinSheet'));
-    return;
-  }
+  if (state.account){ openProfile(); return; }
   openAuth(reason === 'free' ? 'signup' : 'signin', reason);
 }
 function renderSignin(){
@@ -1824,6 +1859,7 @@ function signOut(){
   state.wardrobe = null; state.gallery = null; state.savedLooks = null; state.ideas = []; state.balance = null;
   closeSheet($('#signinSheet'));
   session(true).then(loadBalance).catch(() => {});
+  if (state.view === 'profile') state.view = 'landing';
   render();
   toast('Signed out.', {kind:'info'});
 }

@@ -890,6 +890,24 @@ textarea.input{font-family:inherit;resize:vertical}
 .tier .current-ribbon{background:var(--accent);color:var(--accent-ink)}
 @media (max-width:360px){.plan-badge{padding:0 8px;font-size:11px}}
 
+/* My profile page */
+.profile-page{display:grid;gap:16px;max-width:640px;margin:0 auto;padding-top:8px;width:100%}
+.profile-head{display:flex;align-items:center;gap:16px}
+.profile-head h1{font:400 32px/1.05 var(--display);letter-spacing:-.01em;margin-top:4px}
+.profile-email{overflow-wrap:anywhere;margin-top:4px}
+.profile-avatar{width:64px;height:64px;flex-shrink:0;border-radius:50%;display:grid;place-items:center;background:var(--accent);color:var(--accent-ink);font-size:22px;font-weight:800}
+.profile-stats{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.profile-stat{display:grid;gap:4px;text-align:left;padding:14px 16px;border-radius:var(--r-m);border:1px solid var(--line);background:var(--surface);color:var(--ink)}
+.profile-stat strong{font-size:24px}
+.profile-stat:hover,.profile-row:hover{border-color:var(--accent-line)}
+.profile-list{display:grid;border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface);overflow:hidden}
+.profile-row{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:14px;padding:14px 16px;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);color:var(--ink)}
+.profile-row:last-child{border-bottom:0}
+.profile-row>span:nth-child(2){display:grid;gap:2px}
+.profile-ico{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;background:var(--surface-2);color:var(--accent-text)}
+.account-btn.active{background:var(--accent-soft);color:var(--accent-text)}
+.profile-page .plan-card{border-color:var(--accent-line)}
+
 /* "Coming soon": features and outfit pieces that are not ready yet, greyed out. */
 .soon-tag{display:inline-flex;align-items:center;margin-left:6px;padding:2px 7px;border-radius:5px;background:var(--surface-2);color:var(--muted);font-size:10.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;vertical-align:1px}
 .chip.add.is-soon{opacity:.55;filter:grayscale(1);cursor:not-allowed}
@@ -1165,7 +1183,6 @@ dialog.auth::backdrop{background:#151110}
       <button data-act="go" data-view="pricing">Pricing</button>
     </nav>
     <div class="spacer"></div>
-    <button class="plan-badge" data-act="account" id="planBadge" hidden></button>
     <button class="iconbtn account-btn" data-act="account" id="accountBtn" aria-label="Sign in"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></button>
     <button class="iconbtn" data-act="theme" aria-label="Switch light or dark theme"><svg class="icon" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/></svg></button>
   </div>

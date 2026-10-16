@@ -1,7 +1,10 @@
+import asyncio
 import ipaddress
 import re
 import socket
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
+
+import httpx
 
 
 class UnsafeUrlError(ValueError):
@@ -36,6 +39,37 @@ def validate_public_url(url: str, allowed_hosts: tuple[str, ...] = ()) -> str:
     return url
 
 
+
+
+class TooLargeError(ValueError):
+    pass
+
+
+MAX_REDIRECTS = 5
+
+
+async def safe_get(url: str, *, max_bytes: int, headers: dict | None = None, timeout: float = 30,
+                   allowed_hosts: tuple[str, ...] = ()) -> httpx.Response:
+    """GET a URL someone else gave us without letting it reach our own network: every hop of a redirect is checked
+    before it is requested (not only the final address), and the body is read in pieces and cut off at max_bytes
+    so a huge file cannot fill the server's memory."""
+    async with httpx.AsyncClient(follow_redirects=False, timeout=timeout) as client:
+        for _ in range(MAX_REDIRECTS + 1):
+            await asyncio.to_thread(validate_public_url, url, allowed_hosts)
+            async with client.stream("GET", url, headers=headers) as response:
+                if response.is_redirect and response.headers.get("location"):
+                    url = urljoin(url, response.headers["location"])
+                    continue
+                declared = response.headers.get("content-length")
+                if declared and declared.isdigit() and int(declared) > max_bytes:
+                    raise TooLargeError("The file is too large")
+                body = bytearray()
+                async for chunk in response.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > max_bytes:
+                        raise TooLargeError("The file is too large")
+                return httpx.Response(response.status_code, headers=response.headers, content=bytes(body), request=response.request)
+    raise UnsafeUrlError("Too many redirects")
 
 # Store Share buttons copy text such as "Check out this shirt on Myntra! https://www.myntra.com/...".
 _URL_IN_TEXT = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)

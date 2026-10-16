@@ -15,11 +15,12 @@ from mcp.client.streamable_http import streamablehttp_client
 from mcp.types import TextContent
 
 from app.config import Settings
-from app.security import validate_public_url
+from app.security import TooLargeError, UnsafeUrlError, safe_get
 from app.models import Money, ProductData, ScrapeResponse
 
 logger = logging.getLogger(__name__)
 
+PAGE_MAX_BYTES = 5_000_000  # store pages fetched directly are cut off here
 SHARE_HOST_DESTINATIONS = {
     "amzn.in": ("amazon.in",),
     "fkrt.it": ("flipkart.com",),
@@ -871,15 +872,11 @@ class BrightDataScraper:
             "Accept": "text/html,application/xhtml+xml",
             "Accept-Language": "en-IN,en;q=0.9",
         }
-        async with httpx.AsyncClient(follow_redirects=False, timeout=15) as client:
-            for _ in range(5):
-                await asyncio.to_thread(validate_public_url, url)
-                response = await client.get(url, headers=headers)
-                if response.is_redirect and response.headers.get("location"):
-                    url = urljoin(url, response.headers["location"])
-                    continue
-                return response.text if response.status_code < 400 else None
-        return None
+        try:
+            response = await safe_get(url, max_bytes=PAGE_MAX_BYTES, headers=headers, timeout=15)
+        except (TooLargeError, UnsafeUrlError):
+            return None
+        return response.text if response.status_code < 400 else None
 
     async def _fetch_product_html(self, url: str) -> str | None:
         """Page HTML carries structured product data (JSON-LD, store state) that markdown loses."""

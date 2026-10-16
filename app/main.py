@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import TypeAdapter, ValidationError
 
-from app import activity, admin, alerts
+from app import activity, admin, alerts, protect
 from app.anonymous_auth import create_anonymous_session, create_email_session, verify_session_token
 from app import email_auth
 from app.billing import Billing
@@ -118,6 +118,8 @@ def _allow_scrape(request: Request) -> None:
 app.middleware("http")(activity.middleware)
 # Records failed requests for the admin console's Alerts page (crashes are found by the heartbeat in app.alerts).
 app.middleware("http")(alerts.middleware)
+# Security headers on every response (and a strict content policy on the admin console).
+app.middleware("http")(protect.security_headers)
 
 # Sites allowed to call the API from a browser. Add your own domain with the CORS_ORIGINS variable,
 # e.g. CORS_ORIGINS=https://mydripcheck.com,https://www.mydripcheck.com
@@ -133,6 +135,8 @@ ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
     *EXTRA_ORIGINS,
 ]
+# Oversized uploads are refused before anything reads them (inside CORS, so the browser can read the 413).
+app.add_middleware(protect.BodyLimit)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -286,9 +290,10 @@ async def create_session(settings: Settings = Depends(get_runtime_settings)) -> 
 
 @app.post("/v1/auth/signup", response_model=EmailSessionResponse, status_code=201, tags=["sessions"],
           responses={202: {"description": "Account created; confirm the email with the code that was sent ({verification_required, email})"}})
-async def sign_up(body: PasswordSignInRequest, settings: Settings = Depends(get_runtime_settings)):
+async def sign_up(request: Request, body: PasswordSignInRequest, settings: Settings = Depends(get_runtime_settings)):
     """Create an account with email and password. With EMAIL_VERIFICATION_ENABLED, Supabase emails a code and the
     answer is 202 {verification_required: true}; the account signs in through /v1/auth/verify. Otherwise it signs in now."""
+    protect.limit(request, "signup")
     email = email_auth.normalize_email(body.email)
     password = email_auth.check_password(body.password)
     if settings.email_verification_enabled:
@@ -299,31 +304,35 @@ async def sign_up(body: PasswordSignInRequest, settings: Settings = Depends(get_
 
 
 @app.post("/v1/auth/verify", response_model=EmailSessionResponse, tags=["sessions"])
-async def verify_email(body: EmailCodeRequest, settings: Settings = Depends(get_runtime_settings)) -> EmailSessionResponse:
+async def verify_email(request: Request, body: EmailCodeRequest, settings: Settings = Depends(get_runtime_settings)) -> EmailSessionResponse:
     """Confirm a new account with the code from the email, and sign in."""
+    protect.limit(request, "link")
     email_auth._verification_on(settings)
     user_id, email = await email_auth.verify_sign_up(email_auth.normalize_email(body.email), body.code, settings)
     return create_email_session(user_id, email, settings)
 
 
 @app.post("/v1/auth/resend", status_code=202, tags=["sessions"])
-async def resend_email_code(body: EmailOnlyRequest, settings: Settings = Depends(get_runtime_settings)) -> dict:
+async def resend_email_code(request: Request, body: EmailOnlyRequest, settings: Settings = Depends(get_runtime_settings)) -> dict:
+    protect.limit(request, "email")
     email_auth._verification_on(settings)
     await email_auth.resend_code(email_auth.normalize_email(body.email), settings, email_auth.safe_redirect(body.redirect_to, ALLOWED_ORIGINS))
     return {"sent": True}
 
 
 @app.post("/v1/auth/confirmed", response_model=EmailSessionResponse, tags=["sessions"])
-async def email_link_confirmed(body: LinkTokenRequest, settings: Settings = Depends(get_runtime_settings)) -> EmailSessionResponse:
+async def email_link_confirmed(request: Request, body: LinkTokenRequest, settings: Settings = Depends(get_runtime_settings)) -> EmailSessionResponse:
     """Sign in from the confirmation link: the site sends the access_token Supabase put in the link's #fragment."""
+    protect.limit(request, "link")
     user_id, email = await email_auth.user_from_link(body.access_token, settings)
     return create_email_session(user_id, email, settings)
 
 
 @app.get("/v1/auth/google", tags=["sessions"], include_in_schema=False)
-async def google_sign_in(redirect_to: str | None = None, settings: Settings = Depends(get_runtime_settings)) -> RedirectResponse:
+async def google_sign_in(request: Request, redirect_to: str | None = None, settings: Settings = Depends(get_runtime_settings)) -> RedirectResponse:
     """Start 'Continue with Google': send the browser to Supabase's Google sign-in. Supabase brings it back to the
     site with the access token in the #fragment, which the site trades for a session at /v1/auth/confirmed."""
+    protect.limit(request, "link")
     if not settings.google_sign_in_enabled or not settings.supabase_url:
         raise HTTPException(status_code=404, detail={"code": "google_off", "message": "Google sign-in is not switched on."})
     params = {"provider": "google"}
@@ -333,23 +342,26 @@ async def google_sign_in(redirect_to: str | None = None, settings: Settings = De
 
 
 @app.post("/v1/auth/password/update", response_model=EmailSessionResponse, tags=["sessions"])
-async def password_from_link(body: LinkPasswordRequest, settings: Settings = Depends(get_runtime_settings)) -> EmailSessionResponse:
+async def password_from_link(request: Request, body: LinkPasswordRequest, settings: Settings = Depends(get_runtime_settings)) -> EmailSessionResponse:
     """Set a new password from a password-reset link (its access_token), and sign in."""
+    protect.limit(request, "link")
     user_id, email = await email_auth.set_password_from_link(body.access_token, email_auth.check_password(body.password), settings)
     return create_email_session(user_id, email, settings)
 
 
 @app.post("/v1/auth/password/forgot", status_code=202, tags=["sessions"])
-async def forgot_password(body: EmailOnlyRequest, settings: Settings = Depends(get_runtime_settings)) -> dict:
+async def forgot_password(request: Request, body: EmailOnlyRequest, settings: Settings = Depends(get_runtime_settings)) -> dict:
     """Email a password-reset code. The answer is the same whether or not the email has an account."""
+    protect.limit(request, "email")
     email_auth._verification_on(settings)
     await email_auth.send_reset_code(email_auth.normalize_email(body.email), settings, email_auth.safe_redirect(body.redirect_to, ALLOWED_ORIGINS))
     return {"sent": True}
 
 
 @app.post("/v1/auth/password/reset", response_model=EmailSessionResponse, tags=["sessions"])
-async def reset_password(body: PasswordResetRequest, settings: Settings = Depends(get_runtime_settings)) -> EmailSessionResponse:
+async def reset_password(request: Request, body: PasswordResetRequest, settings: Settings = Depends(get_runtime_settings)) -> EmailSessionResponse:
     """Set a new password with the code from the reset email, and sign in."""
+    protect.limit(request, "link")
     email_auth._verification_on(settings)
     email = email_auth.normalize_email(body.email)
     user_id, email = await email_auth.reset_password(email, body.code, email_auth.check_password(body.password), settings)
@@ -357,7 +369,8 @@ async def reset_password(body: PasswordResetRequest, settings: Settings = Depend
 
 
 @app.post("/v1/auth/login", response_model=EmailSessionResponse, tags=["sessions"])
-async def log_in(body: PasswordSignInRequest, settings: Settings = Depends(get_runtime_settings)) -> EmailSessionResponse:
+async def log_in(request: Request, body: PasswordSignInRequest, settings: Settings = Depends(get_runtime_settings)) -> EmailSessionResponse:
+    protect.limit(request, "login")
     user_id, email = await email_auth.log_in(email_auth.normalize_email(body.email), body.password, settings, resend=body.resend,
                                              redirect_to=email_auth.safe_redirect(body.redirect_to, ALLOWED_ORIGINS))
     return create_email_session(user_id, email, settings)

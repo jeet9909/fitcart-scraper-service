@@ -1276,6 +1276,23 @@ def test_live_razorpay_keys_are_refused_unless_allowed() -> None:
     assert Billing(live.model_copy(update={"razorpay_allow_live": True}), None).enabled is True
 
 
+def test_misconfigured_razorpay_key_id_says_what_is_wrong() -> None:
+    import pytest
+    from fastapi import HTTPException
+    from app.billing import Billing
+
+    def reason(key_id: str) -> str:
+        with pytest.raises(HTTPException) as caught:
+            Billing(LIMIT_SETTINGS.model_copy(update={"razorpay_key_id": key_id}), None)._require()
+        assert caught.value.status_code == 503 and caught.value.detail["code"] == "payment_keys_misconfigured"
+        return caught.value.detail["reason"]
+
+    assert "RAZORPAY_ALLOW_LIVE" in reason("rzp_live_abc")
+    swapped = reason("MzIZVJ7d9UUnpvAEBfiqrJhK")  # the secret pasted into the id field
+    assert "must start with rzp_test_" in swapped and "MzIZ" not in swapped  # never echoes any of the value
+    assert "must start with rzp_test_" in reason('"rzp_test_abc"')
+
+
 def test_pass_payment_is_verified_captured_and_granted_once(monkeypatch) -> None:
     razorpay = FakeRazorpay({
         "/orders/order_Mine": {"id": "order_Mine", "amount": 12900, "created_at": 1_790_000_000, "notes": {"user_id": AUTH_USER_ID, "plan": "pass"}},

@@ -85,8 +85,18 @@ class Billing:
     def _require(self) -> None:
         if not (self.key_id and self.secret):
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Payments are not set up yet.")
-        if not self.enabled:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="A live Razorpay key is configured but live payments are switched off.")
+        if self.enabled:
+            return
+        if self.key_id.startswith("rzp_live_"):
+            reason = "RAZORPAY_KEY_ID is a live key (rzp_live_) but RAZORPAY_ALLOW_LIVE is not true. Use the Test Mode key, or set RAZORPAY_ALLOW_LIVE=true."
+        else:
+            # Typical mistakes: the secret pasted into the id field, quotes or "NAME=" around the value.
+            reason = (f"RAZORPAY_KEY_ID must start with rzp_test_ (or rzp_live_); the value set is {len(self.key_id)} characters "
+                      "and does not. Check it is the Key ID, not the secret, with no quotes or NAME= around it.")
+        log.error("Payments refused: %s", reason)
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail={"code": "payment_keys_misconfigured", "message": "Payments are unavailable right now. Please try again later.",
+                                    "reason": reason})
 
     async def _razorpay(self, method: str, path: str, body: dict[str, Any] | None = None, params: dict[str, Any] | None = None) -> dict:
         self._require()

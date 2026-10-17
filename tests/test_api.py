@@ -2852,3 +2852,38 @@ def test_continue_with_google_redirects_to_supabase() -> None:
     assert started.status_code == 302
     assert started.headers["location"] == "https://project.supabase.co/auth/v1/authorize?provider=google&redirect_to=https%3A%2F%2Fmydripcheck.com%2F"
     assert "redirect_to" not in elsewhere.headers["location"]  # only pages of this site
+
+
+def test_standard_checkout_verification_rules(monkeypatch) -> None:
+    """Razorpay Standard Checkout: the signature is HMAC-SHA256(order_id|payment_id, key secret); a mismatch or a
+    missing field is a 400 and adds nothing; keys Razorpay refuses give a clear 503, never a 401."""
+    import httpx as _httpx
+
+    razorpay = FakeRazorpay({"/orders/order_A1": {"id": "order_A1", "amount": 12900, "status": "paid", "created_at": 1760000000,
+                                                   "notes": {"user_id": AUTH_USER_ID, "plan": "pass", "billing": "once"}},
+                             "/payments/pay_A1": {"id": "pay_A1", "order_id": "order_A1", "amount": 12900, "status": "captured"}})
+    razorpay.install(monkeypatch)
+    supabase = FakeSupabase()
+    headers = {"Authorization": f"Bearer {_email_token('buyer@example.com')}"}
+    good = {"razorpay_order_id": "order_A1", "razorpay_payment_id": "pay_A1", "razorpay_signature": _rzp_signature("order_A1|pay_A1")}
+    try:
+        with _limit_client(supabase, monkeypatch) as client:
+            forged = client.post("/v1/billing/confirm", headers=headers, json={**good, "razorpay_signature": _rzp_signature("order_A1|pay_A1", "guess")})
+            missing = client.post("/v1/billing/confirm", headers=headers, json={"razorpay_order_id": "order_A1", "razorpay_payment_id": "pay_A1"})
+            paid = client.post("/v1/billing/confirm", headers=headers, json=good)
+    finally:
+        app.dependency_overrides.clear()
+    assert forged.status_code == 400 and missing.status_code == 400
+    assert missing.json()["detail"]["code"] == "invalid_payment_response"
+    assert paid.status_code == 200
+
+    def refuse(request: _httpx.Request) -> _httpx.Response:
+        return _httpx.Response(401, json={"error": {"code": "BAD_REQUEST_ERROR", "description": "Authentication failed"}})
+
+    _install_fakes(monkeypatch, razorpay=refuse)
+    try:
+        with _limit_client(FakeSupabase(), monkeypatch) as client:
+            rejected = client.post("/v1/billing/checkout", json={"plan": "pass"}, headers=headers)
+    finally:
+        app.dependency_overrides.clear()
+    assert rejected.status_code == 503 and rejected.json()["detail"]["code"] == "payment_keys_rejected"

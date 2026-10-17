@@ -12,7 +12,8 @@ from uuid import UUID
 import httpx
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from fastapi.exception_handlers import http_exception_handler
+from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -156,6 +157,16 @@ app.include_router(admin.public)
 async def record_http_error(request: Request, exc: HTTPException):
     activity.note_error(exc.detail)
     return await http_exception_handler(request, exc)
+
+
+@app.exception_handler(RequestValidationError)
+async def invalid_request(request: Request, exc: RequestValidationError):
+    """Payment verification answers 400 for missing or malformed Razorpay fields (nothing is marked paid);
+    every other endpoint keeps FastAPI's usual 422."""
+    if request.url.path == "/v1/billing/confirm":
+        return JSONResponse(status_code=400, content={"detail": {"code": "invalid_payment_response",
+                                                                "message": "The payment response is incomplete. Your looks were not added; please contact support if you were charged."}})
+    return await request_validation_exception_handler(request, exc)
 
 
 def get_scraper(request: Request) -> BrightDataScraper:

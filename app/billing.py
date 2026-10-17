@@ -16,6 +16,7 @@ from app.looks import LookLedger
 
 log = logging.getLogger(__name__)
 
+MIN_ORDER_PAISE = 100  # Razorpay does not accept orders under ₹1
 RAZORPAY_API = "https://api.razorpay.com/v1"
 
 
@@ -95,6 +96,14 @@ class Billing:
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Could not reach Razorpay. Please try again.") from exc
         payload = response.json() if response.content else {}
+        if response.status_code in (401, 403):
+            # The key id or secret in the server's settings is wrong, revoked, or from the other mode. Not the
+            # shopper's fault: a 401 here would also look like "signed out" to the site, so it is a 503 with a note
+            # for the admin (the Alerts page shows it).
+            log.error("Razorpay refused the API keys (%s) for %s %s", response.status_code, method, path)
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={
+                "code": "payment_keys_rejected", "message": "Payments are unavailable right now. Please try again later.",
+                "reason": "Razorpay rejected RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET: check both in Render (same mode, test or live)."})
         if response.status_code >= 400:
             message = (payload.get("error") or {}).get("description") or "Razorpay rejected the request."
             log.warning("Razorpay %s %s failed: %s", method, path, message)
@@ -123,6 +132,9 @@ class Billing:
     async def create_checkout(self, user_id: str, email: str, plan_key: str, billing: str) -> dict:
         """Create the Razorpay order (pass) or subscription (plans) that the checkout window pays."""
         plan = PLANS[plan_key]
+        amount = plan.once or (plan.yearly if billing == "yearly" else plan.monthly)
+        if not amount or amount < MIN_ORDER_PAISE:  # Razorpay's minimum; prices live in PLANS, never in the request
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This plan has no price to charge.")
         notes = {"user_id": user_id, "plan": plan_key, "billing": "once" if plan.once else billing}
         options = {"key_id": self.key_id, "name": "MyDripCheck", "email": email, "currency": "INR"}
         if plan.once:
